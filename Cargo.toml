@@ -1,0 +1,11 @@
+[package]
+name    = "browser-rs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "browser"
+path = "src/main.rs"
+
+[dependencies]
+sdl2 = { version = "0.37", features = ["ttf"] }
