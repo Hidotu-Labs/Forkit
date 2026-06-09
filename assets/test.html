@@ -1,39 +1,163 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Browser Test</title>
+  <title>Forkit CSS3 Test</title>
+  <style>
+    body {
+      color: #222222;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 16px;
+    }
+
+    h1 { color: #1a1a2e; }
+    h2 { color: #16213e; }
+    h3 { color: #0f3460; }
+
+    .card {
+      background-color: #ffffff;
+      border: 1px solid #dddddd;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .highlight {
+      background-color: rgba(255, 220, 0, 0.4);
+      color: #333333;
+      padding: 4px;
+    }
+
+    .muted {
+      color: rgba(0, 0, 0, 0.45);
+    }
+
+    .badge {
+      background-color: #0f3460;
+      color: white;
+      border-radius: 999px;
+      padding: 2px;
+    }
+
+    .error-box {
+      background-color: rgba(220, 50, 50, 0.12);
+      border: 1px solid #cc0000;
+      border-radius: 8px;
+      padding: 12px;
+      color: #b00020;
+    }
+
+    .success-box {
+      background-color: rgba(30, 160, 80, 0.12);
+      border: 1px solid #009944;
+      border-radius: 8px;
+      padding: 12px;
+      color: #1a6e3c;
+    }
+  </style>
 </head>
 <body>
-  <h1>Hello from Forkit</h1>
-  <p>This is a minimal HTML5 browser written in C using SDL2 and SDL2_ttf.</p>
 
-  <h2>Features</h2>
-  <ul>
-    <li>HTML tokenizer and DOM builder</li>
-    <li>Inline CSS parser (color, font-size, background-color)</li>
-    <li>Block and inline layout</li>
-    <li>Text wrapping</li>
-    <li>Scroll with mouse wheel or arrow keys</li>
-  </ul>
-
-  <h2>Styled Text</h2>
-  <p style="color: red; font-size: 20px;">This text is red and bigger.</p>
-  <p style="color: #0066cc;">This text is blue via hex color.</p>
-  <p><b>Bold text</b> and <i>italic text</i> and normal text.</p>
-
-  <h2>A Horizontal Rule</h2>
+  <h1>Forkit CSS3 Feature Test</h1>
+  <p class="muted">This page exercises the CSS3 features added in Phase 1.</p>
   <hr>
 
-  <h3>A blockquote</h3>
-  <blockquote style="color: gray; font-size: 14px;">
-    To be, or not to be — that is the question.
-  </blockquote>
+  <h2>1. Stylesheet Cascade</h2>
+  <div class="card">
+    <p>This card gets its rounded corners, background, border and padding from a style block.</p>
+    <p class="highlight">This paragraph is highlighted via a .highlight class rule.</p>
+    <p class="muted">This text uses rgba(0,0,0,0.45) semi-transparent black via the .muted rule.</p>
+  </div>
 
-  <h2>Links (no navigation yet)</h2>
-  <p>
-    Visit <a href="https://example.com">example.com</a> — links are styled but not clickable yet.
-  </p>
+  <h2>2. Alpha-Channel Colors (rgba and hsla)</h2>
+  <div class="card">
+    <p style="color: rgba(200, 0, 0, 1.0);">rgba(200,0,0,1.0) - fully opaque red</p>
+    <p style="color: rgba(200, 0, 0, 0.6);">rgba(200,0,0,0.6) - 60 percent red</p>
+    <p style="color: rgba(200, 0, 0, 0.25);">rgba(200,0,0,0.25) - 25 percent red (faded)</p>
+    <p style="background-color: hsla(210, 80%, 55%, 0.3); padding: 6px;">
+      hsla(210,80%,55%,0.3) - translucent blue background
+    </p>
+    <p style="background-color: rgba(255, 165, 0, 0.3); padding: 6px;">
+      rgba(255,165,0,0.3) - light orange background
+    </p>
+  </div>
 
-  <p style="color: green;">Done rendering. Press Q or Escape to quit. R to reload.</p>
+  <h2>3. Border Radius</h2>
+  <div class="card">
+    <div style="background-color: #0f3460; color: white; border-radius: 12px; padding: 12px; margin-bottom: 10px;">
+      border-radius: 12px - uniform rounded box
+    </div>
+    <div style="background-color: #e94560; color: white; border-radius: 4px 20px 4px 20px; padding: 12px; margin-bottom: 10px;">
+      border-radius: 4px 20px 4px 20px - alternating corners
+    </div>
+    <div style="background-color: #16213e; color: white; border-radius: 999px; padding: 8px;">
+      border-radius: 999px - pill shape
+    </div>
+  </div>
+
+  <h2>4. CSS Math and Viewport Units</h2>
+  <div class="card">
+    <p style="background-color: #dce8ff; padding: 6px; width: calc(100% - 40px);">
+      width: calc(100% - 40px)
+    </p>
+    <p style="font-size: clamp(14px, 2vw, 22px);">
+      font-size: clamp(14px, 2vw, 22px) - responsive font size
+    </p>
+    <p style="background-color: #fff3cd; padding: 6px; max-width: min(500px, 80vw);">
+      max-width: min(500px, 80vw)
+    </p>
+    <p style="padding-left: max(8px, 2vw);">
+      padding-left: max(8px, 2vw)
+    </p>
+  </div>
+
+  <h2>5. Selector Matching</h2>
+  <div class="card">
+    <p>Tag selector: body text inherits color #222222 from the body rule.</p>
+    <p>Class selector badge: <span class="badge">New Feature</span></p>
+    <div class="error-box">Error box styled via .error-box with rgba border and background.</div>
+    <br>
+    <div class="success-box">Success box styled via .success-box.</div>
+  </div>
+
+  <h2>6. CSS Inheritance</h2>
+  <div class="card" style="color: #6a0dad; font-size: 18px;">
+    <p>Parent div has color #6a0dad and font-size 18px.</p>
+    <p>This child paragraph inherits both - no inline style needed.</p>
+    <p style="color: initial; font-size: initial;">
+      The initial keyword resets to default (black, 16px).
+    </p>
+  </div>
+
+  <h2>7. Existing Features (regression check)</h2>
+  <div class="card">
+    <p style="color: red; font-size: 20px;">Red text at 20px via inline style.</p>
+    <p style="color: #0066cc;">Blue text via hex color inline style.</p>
+    <p><b>Bold</b> and <i>italic</i> and <u>underline</u> and <s>strikethrough</s>.</p>
+    <hr>
+    <blockquote>
+      The blockquote still gets its left border accent and muted color from the UA stylesheet.
+    </blockquote>
+    <ul>
+      <li>List item one</li>
+      <li>List item two</li>
+      <li>List item three</li>
+    </ul>
+    <table>
+      <thead>
+        <tr><th>Property</th><th>Value</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>border-radius</td><td>12px</td><td>New</td></tr>
+        <tr><td>rgba()</td><td>0.4 alpha</td><td>New</td></tr>
+        <tr><td>calc()</td><td>100% - 40px</td><td>New</td></tr>
+        <tr><td>style blocks</td><td>cascade</td><td>New</td></tr>
+        <tr><td>color</td><td>#222</td><td>Existing</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="muted">Press Q or Escape to quit. R to reload.</p>
+
 </body>
 </html>

@@ -1,11 +1,12 @@
 [package]
-name    = "browser-rs"
+name    = "forkit"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "browser"
+name = "forkit"
 path = "src/main.rs"
 
 [dependencies]
-sdl2 = { version = "0.37", features = ["ttf"] }
+sdl2  = { version = "0.37", features = ["ttf", "image"] }
+ureq  = { version = "2.10", features = [] }
