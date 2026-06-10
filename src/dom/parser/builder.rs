@@ -220,3 +220,93 @@ pub fn parse(html: &str, base_url: &str) -> Node {
 
     root
 }
+
+// ---------------------------------------------------------------------------
+// Page metadata extraction
+// ---------------------------------------------------------------------------
+
+/// Extract `(page_title, favicon_url)` from raw HTML without a full parse.
+///
+/// Scans only the `<head>` portion for speed.  Falls back to empty string /
+/// `None` if the tags are absent.
+pub fn extract_page_meta(html: &str, base_url: &str) -> (String, Option<String>) {
+    // Work on a lowercase copy for case-insensitive tag/attribute matching,
+    // but keep the original for extracting text content.
+    let lower = html.to_ascii_lowercase();
+
+    // ── page title ────────────────────────────────────────────────────────
+    let title = find_title(html, &lower);
+
+    // ── favicon ───────────────────────────────────────────────────────────
+    let favicon = find_favicon(&lower, html, base_url);
+
+    (title, favicon)
+}
+
+fn find_title(html: &str, lower: &str) -> String {
+    let open = match lower.find("<title") {
+        Some(p) => p,
+        None    => return String::new(),
+    };
+    // skip to end of opening tag
+    let after_open = match lower[open..].find('>') {
+        Some(p) => open + p + 1,
+        None    => return String::new(),
+    };
+    let close = match lower[after_open..].find("</title") {
+        Some(p) => after_open + p,
+        None    => return String::new(),
+    };
+    let raw = &html[after_open..close];
+    // Decode HTML entities and collapse whitespace
+    let decoded = crate::dom::parser::decode_entities(raw);
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn find_favicon(lower: &str, html: &str, base_url: &str) -> Option<String> {
+    // We look for <link … rel="…icon…" … href="…"> tags.
+    // Iterate over all <link occurrences and pick the best one.
+    let mut best: Option<String> = None;
+
+    let mut pos = 0;
+    while let Some(rel_start) = lower[pos..].find("<link") {
+        let abs = pos + rel_start;
+        let tag_end = lower[abs..].find('>').map(|p| abs + p + 1).unwrap_or(lower.len());
+        let tag_lower = &lower[abs..tag_end];
+        let tag_orig  = &html[abs..tag_end.min(html.len())];
+
+        let rel = get_attr(tag_lower, "rel").unwrap_or("");
+        if rel.contains("icon") {
+            if let Some(href) = get_attr(tag_orig, "href") {
+                if !href.is_empty() {
+                    let resolved = crate::net::resolve_url(href, base_url);
+                    // Prefer explicit "icon" over "apple-touch-icon" etc.
+                    if best.is_none() || rel == "icon" || rel == "shortcut icon" {
+                        best = Some(resolved);
+                    }
+                }
+            }
+        }
+
+        pos = tag_end;
+        if pos >= lower.len() { break; }
+    }
+
+    // Fallback: try /favicon.ico on the same origin
+    if best.is_none() {
+        let origin = {
+            if let Some(p) = base_url.find("://") {
+                let rest = &base_url[p + 3..];
+                let end  = rest.find('/').unwrap_or(rest.len());
+                format!("{}://{}", &base_url[..p], &rest[..end])
+            } else {
+                String::new()
+            }
+        };
+        if !origin.is_empty() {
+            best = Some(format!("{}/favicon.ico", origin));
+        }
+    }
+
+    best
+}

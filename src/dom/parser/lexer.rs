@@ -104,8 +104,12 @@ impl<'a> Lexer<'a> {
             if !in_quote && c == b'/' && self.src.get(self.pos+1) == Some(&b'>') { break; }
             if !in_quote && (c == b'"' || c == b'\'') { in_quote = true;  qchar = c; }
             else if in_quote && c == qchar             { in_quote = false; }
-            attrs.push(c as char);
-            self.pos += 1;
+            // Decode the full UTF-8 character at this position instead of
+            // casting a single byte — preserves non-ASCII chars in attribute values.
+            let src_str = std::str::from_utf8(&self.src[self.pos..]).unwrap_or("");
+            let ch = src_str.chars().next().unwrap_or('\u{FFFD}');
+            attrs.push(ch);
+            self.pos += ch.len_utf8();
         }
 
         let kind = if self.peek() == Some(b'/') { self.pos += 1; TokKind::SelfClose }

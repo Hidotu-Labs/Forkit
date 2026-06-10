@@ -19,12 +19,44 @@ impl ImageCache {
     /// Return the cached bytes for `url`, fetching if not yet seen.
     /// Returns `None` if the fetch failed or the URL is unsupported.
     pub fn get_bytes(&mut self, url: &str, base_url: &str) -> Option<&[u8]> {
-        if !self.bytes.contains_key(url) {
-            let data = fetch_image(url, base_url);
-            self.bytes.insert(url.to_owned(), data);
+        // Resolve the URL first so we cache by the resolved form
+        let resolved = if url.starts_with("http://") || url.starts_with("https://")
+            || url.starts_with("file://") || url.starts_with("data:")
+        {
+            url.to_owned()
+        } else {
+            crate::net::resolve_url(url, base_url)
+        };
+
+        if !self.bytes.contains_key(&resolved) {
+            let data = fetch_image(&resolved, base_url);
+            self.bytes.insert(resolved.clone(), data);
         }
-        self.bytes.get(url)?.as_deref()
+        self.bytes.get(&resolved)?.as_deref()
     }
+}
+
+/// Detect image format from magic bytes. Returns a SDL2_image type string.
+pub fn sniff_image_type(bytes: &[u8]) -> &'static str {
+    if bytes.len() >= 4 {
+        // PNG: 89 50 4E 47
+        if bytes.starts_with(b"\x89PNG") { return "PNG"; }
+        // JPEG: FF D8
+        if bytes[0] == 0xFF && bytes[1] == 0xD8 { return "JPG"; }
+        // GIF: GIF8
+        if bytes.starts_with(b"GIF8") { return "GIF"; }
+        // BMP: BM
+        if bytes.starts_with(b"BM") { return "BMP"; }
+        // WebP: RIFF....WEBP
+        if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+            return "WEBP";
+        }
+        // AVIF / generic ISO BMFF — ftyp box
+        if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" { return "AVIF"; }
+        // ICO
+        if bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01 { return "ICO"; }
+    }
+    "PNG" // fallback guess
 }
 
 /// Fetch image bytes from a URL or local path.
@@ -33,7 +65,7 @@ fn fetch_image(url: &str, base_url: &str) -> Option<Vec<u8>> {
 
     // data: URI — decode inline
     if let Some(rest) = url.strip_prefix("data:") {
-        if let Some(b64) = rest.split(",").nth(1) {
+        if let Some(b64) = rest.split(',').nth(1) {
             return decode_base64(b64);
         }
         return None;

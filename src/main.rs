@@ -60,11 +60,13 @@ fn main() {
     'main: loop {
         // --- Process events ---
         while let Some(event) = next_event() {
-            // Q / Escape outside the bar quits
+            // Escape outside any focused widget quits
             if let sdl2::event::Event::KeyDown {
-                keycode: Some(sdl2::keyboard::Keycode::Q | sdl2::keyboard::Keycode::Escape), ..
+                keycode: Some(sdl2::keyboard::Keycode::Escape), ..
             } = &event {
-                if !browser.bar.focused { break 'main; }
+                if !browser.bar.focused && browser.tab().focused_input.is_none() {
+                    break 'main;
+                }
             }
 
             if handle_event(&mut browser, event) { break 'main; }

@@ -25,6 +25,10 @@ pub fn apply_tag_defaults(el: &mut Element) {
     if BLOCK_TAGS.contains(&t) {
         s.display_block = true;
         s.display       = Display::Block;
+    } else if t != "#document" {
+        // Inline elements must not inherit display:block from a block parent.
+        s.display_block = false;
+        if s.display == Display::Block { s.display = Display::Inline; }
     }
 
     // Pull href from attrs_raw into the style (used by the link-click handler)

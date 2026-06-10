@@ -157,6 +157,11 @@ pub fn parse_color_alpha(val: &str) -> Option<([u8; 3], u8)> {
         }
     }
 
+    // Special case: transparent = fully transparent black (alpha 0)
+    if v.eq_ignore_ascii_case("transparent") {
+        return Some(([0, 0, 0], 0));
+    }
+
     // Fall through: use parse_color, return alpha 255
     parse_color(v).map(|rgb| (rgb, 255))
 }

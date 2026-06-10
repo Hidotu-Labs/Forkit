@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // Sans-serif (default)
+// NotoSans covers Latin, Latin Extended (Turkish, etc.), Greek, Cyrillic and more.
 const SANS_REGULAR:    &str = "/usr/share/fonts/noto/NotoSans-Regular.ttf";
 const SANS_BOLD:       &str = "/usr/share/fonts/noto/NotoSans-Bold.ttf";
 const SANS_ITALIC:     &str = "/usr/share/fonts/noto/NotoSans-Italic.ttf";
@@ -13,6 +14,15 @@ const MONO_REGULAR:    &str = "/usr/share/fonts/Adwaita/AdwaitaMono-Regular.ttf"
 const MONO_BOLD:       &str = "/usr/share/fonts/Adwaita/AdwaitaMono-Bold.ttf";
 const MONO_ITALIC:     &str = "/usr/share/fonts/Adwaita/AdwaitaMono-Italic.ttf";
 const MONO_BOLDITALIC: &str = "/usr/share/fonts/Adwaita/AdwaitaMono-BoldItalic.ttf";
+
+// Noto Sans Mono — better Unicode coverage than Adwaita for code blocks
+const NOTO_MONO_REGULAR: &str = "/usr/share/fonts/noto/NotoSansMono-Regular.ttf";
+const NOTO_MONO_BOLD:    &str = "/usr/share/fonts/noto/NotoSansMono-Bold.ttf";
+
+// System-level broad-coverage fallbacks (DejaVu is almost always available)
+const DEJAVU_SANS:       &str = "/usr/share/fonts/dejavu/DejaVuSans.ttf";
+const DEJAVU_SANS_BOLD:  &str = "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf";
+const DEJAVU_MONO:       &str = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf";
 
 /// Font family hint — controls which face is loaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -90,30 +100,42 @@ impl<'ttf> FontCache<'ttf> {
         italic: bool,
         family: FontFamily,
     ) -> Option<Font<'ttf, 'static>> {
-        let (pri, fb1, fb2) = match family {
-            FontFamily::Monospace => {
-                let pri = match (bold, italic) {
+        // Each family has a primary path, a same-family fallback, then broad
+        // Unicode fallbacks (DejaVu covers Latin Extended A/B, Greek, Cyrillic,
+        // Arabic, Hebrew, and more — including all Turkish characters).
+        let paths: &[&str] = match family {
+            FontFamily::Monospace => &[
+                match (bold, italic) {
                     (true,  true)  => MONO_BOLDITALIC,
                     (true,  false) => MONO_BOLD,
                     (false, true)  => MONO_ITALIC,
                     (false, false) => MONO_REGULAR,
-                };
-                (pri, MONO_REGULAR, SANS_REGULAR)
-            }
-            FontFamily::SansSerif | FontFamily::Serif => {
-                let pri = match (bold, italic) {
+                },
+                // Noto Sans Mono as secondary (better Unicode than Adwaita)
+                if bold { NOTO_MONO_BOLD } else { NOTO_MONO_REGULAR },
+                MONO_REGULAR,
+                DEJAVU_MONO,
+                DEJAVU_SANS,
+                SANS_REGULAR,
+            ],
+            FontFamily::SansSerif | FontFamily::Serif => &[
+                match (bold, italic) {
                     (true,  true)  => SANS_BOLDITALIC,
                     (true,  false) => SANS_BOLD,
                     (false, true)  => SANS_ITALIC,
                     (false, false) => SANS_REGULAR,
-                };
-                (pri, SANS_REGULAR, MONO_REGULAR)
-            }
+                },
+                SANS_REGULAR,
+                if bold { DEJAVU_SANS_BOLD } else { DEJAVU_SANS },
+                DEJAVU_SANS,
+            ],
         };
 
-        self.ttf.load_font(Path::new(pri), size)
-            .or_else(|_| self.ttf.load_font(Path::new(fb1), size))
-            .or_else(|_| self.ttf.load_font(Path::new(fb2), size))
-            .ok()
+        for path in paths {
+            if let Ok(font) = self.ttf.load_font(Path::new(path), size) {
+                return Some(font);
+            }
+        }
+        None
     }
 }

@@ -3,7 +3,8 @@ use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
 use sdl2::image::ImageRWops;
 
-use crate::dom::node::{Element, Node, Style, ListStyleType, Display};
+use crate::dom::node::{Element, Node, Style, ListStyleType, Display, BgSize, BgRepeat};
+use crate::dom::css::{parse_length_ctx, LengthContext};
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 
@@ -11,8 +12,42 @@ use super::paint::{
     paint_text, measure_text, fill_rect_alpha, fill_rounded_rect,
     draw_rounded_rect, rgba_color, paint_box_shadow,
 };
-use super::state::{LayoutState, LayoutBox, MARGIN_LEFT, MARGIN_RIGHT, BLOCK_MARGIN, LINE_SPACING};
+use super::state::{LayoutState, LayoutBox, InputArea, InputKind, ButtonArea, ButtonAction, MARGIN_LEFT, MARGIN_RIGHT, BLOCK_MARGIN, LINE_SPACING};
 use super::table;
+
+// ---------------------------------------------------------------------------
+// Sizing helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve one sizing dimension at layout time.
+///
+/// * `pre_resolved` — value already resolved at cascade time (absolute px/em).
+/// * `raw`          — raw CSS string for `%`/`vw`/`vh` units; `None` for
+///                    pre-resolved values.
+/// * `percent_base` — the reference dimension for `%` (containing-block width
+///                    for horizontal props, height for vertical).
+/// * `viewport_w/h` — real window dimensions in px.
+/// * `font_size`    — element's computed font-size for `em` units.
+fn resolve_size(
+    pre_resolved: Option<i32>,
+    raw:          Option<&str>,
+    percent_base: i32,
+    viewport_w:   i32,
+    viewport_h:   i32,
+    font_size:    u16,
+) -> Option<i32> {
+    if let Some(r) = raw {
+        let ctx = LengthContext {
+            base_font_size:  font_size,
+            percent_base,
+            viewport_width:  viewport_w,
+            viewport_height: viewport_h,
+        };
+        parse_length_ctx(r, &ctx).filter(|&n| n > 0)
+    } else {
+        pre_resolved
+    }
+}
 
 /// Main dispatch for a single element node.
 pub fn layout_element(
@@ -32,8 +67,15 @@ pub fn layout_element(
 
     // ── Structural root containers ─────────────────────────────────────────
     if matches!(tag, "#document" | "html" | "body") {
+        // Background spans the full viewport width and at least the full viewport height.
+        // We use viewport_height (not 32_000) so cover/contain sizing works correctly.
+        let bg_h = ls.ctx.viewport_height.max(32_000);
         if s.bg_color.is_some() {
-            paint_block_bg(ls, canvas, s, 0, 0, max_w, 32_000);
+            paint_block_bg(ls, canvas, s, 0, 0, max_w, bg_h);
+        }
+        if s.bg_image_url.is_some() {
+            paint_block_bg_image(ls, canvas, tc, images, base_url, s,
+                                 0, 0, max_w, ls.ctx.viewport_height);
         }
         let ml = s.margin.left  + s.padding.left;
         let mt = s.margin.top   + s.padding.top;
@@ -95,6 +137,37 @@ pub fn layout_element(
         return;
     }
 
+    // ── Form containers ────────────────────────────────────────────────────
+    if tag == "form" {
+        let action = crate::dom::parser::get_attr(&el.attrs_raw, "action")
+            .unwrap_or("")
+            .to_owned();
+        let saved_action = std::mem::replace(&mut ls.form_action, action);
+        // Fall through to normal block layout for children
+        let is_block = s.display_block;
+        if is_block {
+            if ls.cursor_x > ls.margin_left + ls.indent {
+                ls.cursor_y += ls.line_height + LINE_SPACING;
+            }
+            ls.cursor_y += BLOCK_MARGIN + s.margin.top;
+            ls.cursor_x  = ls.margin_left + ls.indent + s.margin.left;
+            ls.line_height = s.font_size as i32;
+        }
+        for child in &el.children {
+            ls.layout_node(canvas, tc, fonts, images, base_url, child, max_w);
+        }
+        if is_block {
+            if ls.cursor_x > ls.margin_left {
+                ls.cursor_y += ls.line_height + LINE_SPACING;
+            }
+            ls.cursor_y += BLOCK_MARGIN + s.margin.bottom;
+            ls.cursor_x  = ls.margin_left;
+            ls.line_height = 16;
+        }
+        ls.form_action = saved_action;
+        return;
+    }
+
     // ── Form controls ──────────────────────────────────────────────────────
     if matches!(tag, "input" | "button" | "select" | "textarea") {
         paint_form_control(ls, canvas, tc, fonts, el, s, max_w);
@@ -130,11 +203,30 @@ pub fn layout_element(
     // ── <ol> counter ──────────────────────────────────────────────────────
     if tag == "ol" { ls.ol_stack.push(0); }
 
+    // ── Resolve sizing with real viewport / containing-block dimensions ────
+    let vw = ls.ctx.viewport_width;
+    let vh = ls.ctx.viewport_height;
+    // Horizontal: percent_base = available width (max_w minus left margin).
+    let avail_w = (max_w - ls.margin_left - MARGIN_RIGHT).max(1);
+    let avail_h = vh; // vertical percent resolves against viewport height
+
+    let resolved_width      = resolve_size(s.size.width,      s.size.width_raw.as_deref(),      avail_w, vw, vh, s.font_size);
+    let resolved_max_width  = resolve_size(s.size.max_width,  s.size.max_width_raw.as_deref(),  avail_w, vw, vh, s.font_size);
+    let resolved_min_width  = resolve_size(s.size.min_width,  s.size.min_width_raw.as_deref(),  avail_w, vw, vh, s.font_size);
+    let resolved_height     = resolve_size(s.size.height,     s.size.height_raw.as_deref(),     avail_h, vw, vh, s.font_size);
+    let resolved_max_height = resolve_size(s.size.max_height, s.size.max_height_raw.as_deref(), avail_h, vw, vh, s.font_size);
+    let resolved_min_height = resolve_size(s.size.min_height, s.size.min_height_raw.as_deref(), avail_h, vw, vh, s.font_size);
+
     // ── Width clamping ─────────────────────────────────────────────────────
     let effective_max_w = {
         let mut w = max_w;
-        if let Some(mw) = s.size.max_width { w = w.min(ls.margin_left + mw); }
-        if let Some(fw) = s.size.width     { w = w.min(ls.margin_left + fw); }
+        // max-width caps the box — stored value is a content width, so add
+        // the left origin (margin_left) to convert to an absolute right edge.
+        if let Some(mw) = resolved_max_width { w = w.min(ls.margin_left + mw); }
+        // explicit width works the same way
+        if let Some(fw) = resolved_width     { w = w.min(ls.margin_left + fw); }
+        // min-width expands the box when the natural width would be narrower
+        if let Some(mn) = resolved_min_width { w = w.max(ls.margin_left + mn); }
         w
     };
 
@@ -150,28 +242,41 @@ pub fn layout_element(
         ls.cursor_x    = ls.margin_left + ls.indent + s.margin.left;
         ls.line_height = s.font_size as i32;
 
-        if tag.len() == 2 && tag.starts_with('h') && tag.as_bytes()[1].is_ascii_digit() {
-            ls.cursor_y += s.font_size as i32 / 2;
-        }
-
         start_y = ls.cursor_y;
         ls.cursor_y += s.padding.top;
         ls.cursor_x += s.padding.left;
 
-        let block_x = ls.margin_left + s.margin.left;
+        // block_x must include ls.indent so nested blocks align with their
+        // cursor position (the same way cursor_x is set above).
+        let block_x = ls.margin_left + ls.indent + s.margin.left;
+
         let block_w = (effective_max_w - block_x - MARGIN_RIGHT - s.margin.right).max(0);
 
         // Box shadow (behind background)
         if let Some(ref shadow) = s.box_shadow {
-            let block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            let mut block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            if let Some(h)  = resolved_height     { block_h = h; }
+            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
+            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
             paint_box_shadow(canvas, shadow, block_x, start_y, block_w, block_h,
                              ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
 
         // Background
         if s.bg_color.is_some() {
-            let block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            let mut block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            if let Some(h)  = resolved_height     { block_h = h; }
+            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
+            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
             paint_block_bg(ls, canvas, s, block_x, start_y, block_w, block_h);
+        }
+        if s.bg_image_url.is_some() {
+            let mut block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            if let Some(h)  = resolved_height     { block_h = h; }
+            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
+            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
+            paint_block_bg_image(ls, canvas, tc, images, base_url, s,
+                                 block_x, start_y, block_w, block_h);
         }
     } else {
         start_y = ls.cursor_y;
@@ -186,11 +291,49 @@ pub fn layout_element(
     let saved_indent = ls.indent;
     if is_block { ls.indent = ls.cursor_x - ls.margin_left; }
 
+    // Subtract this block's right padding and margin so children don't
+    // overflow into the right gutter of their parent container.
+    let children_max_w = if is_block {
+        (effective_max_w - s.padding.right - s.margin.right).max(ls.cursor_x + 1)
+    } else {
+        effective_max_w
+    };
+
     let link_start_y = ls.cursor_y;
     let link_start_x = ls.cursor_x;
 
+    // ── overflow:hidden clipping ───────────────────────────────────────────
+    // When overflow is hidden AND a height constraint applies, use SDL2's
+    // clip rect to prevent child content from painting outside the box.
+    let needs_clip = is_block
+        && s.overflow == crate::dom::node::Overflow::Hidden
+        && (resolved_max_height.is_some() || resolved_height.is_some());
+    let saved_clip = canvas.clip_rect();
+    if needs_clip {
+        let clip_h = resolved_height
+            .or(resolved_max_height)
+            .unwrap_or(0)
+            .max(0);
+        let block_x_clip = ls.margin_left + ls.indent + s.margin.left;
+        let block_w_clip = (effective_max_w - block_x_clip - MARGIN_RIGHT - s.margin.right).max(0);
+        let ry = start_y - ls.ctx.scroll_y;
+        if clip_h > 0 && block_w_clip > 0 {
+            canvas.set_clip_rect(sdl2::rect::Rect::new(
+                block_x_clip,
+                ry,
+                block_w_clip as u32,
+                clip_h as u32,
+            ));
+        }
+    }
+
     for child in &el.children {
-        ls.layout_node(canvas, tc, fonts, images, base_url, child, effective_max_w);
+        ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
+    }
+
+    // Restore clip rect
+    if needs_clip {
+        canvas.set_clip_rect(saved_clip);
     }
     ls.indent = saved_indent;
 
@@ -208,10 +351,35 @@ pub fn layout_element(
     if is_block {
         ls.cursor_y += s.padding.bottom;
 
-        let block_x = ls.margin_left + s.margin.left;
+        // Use saved_indent (the indent value when this block was opened) so that
+        // the border/box positions match the background that was already painted.
+        let block_x = ls.margin_left + saved_indent + s.margin.left;
         let block_w = (effective_max_w - block_x - MARGIN_RIGHT - s.margin.right).max(0);
         let end_y   = ls.cursor_y + ls.line_height;
-        let block_h = (end_y - start_y).max(0);
+        let mut block_h = (end_y - start_y).max(0);
+
+        // Apply height / min-height / max-height
+        if let Some(h) = resolved_height     { block_h = h; }
+        if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
+        if let Some(mx) = resolved_max_height {
+            if block_h > mx {
+                block_h = mx;
+                // For overflow:hidden, snap cursor_y so children beyond max-height
+                // are not laid out further (content was already painted, so this
+                // prevents the element from pushing subsequent siblings down).
+                if s.overflow == crate::dom::node::Overflow::Hidden {
+                    ls.cursor_y = start_y + block_h - s.padding.bottom;
+                }
+            }
+        }
+
+        // When an explicit height was set, advance cursor_y to match it
+        if resolved_height.is_some() || resolved_min_height.is_some() {
+            let target_end = start_y + block_h;
+            if ls.cursor_y + ls.line_height < target_end {
+                ls.cursor_y = target_end - ls.line_height;
+            }
+        }
 
         if s.href.is_some() {
             ls.link_areas.push(super::state::LinkArea {
@@ -223,11 +391,11 @@ pub fn layout_element(
         paint_block_border(ls, canvas, s, block_x, start_y, block_w, block_h);
         ls.boxes.push(LayoutBox { x: block_x, y: start_y, w: block_w, h: block_h });
 
-        if ls.cursor_x > ls.margin_left {
+        if ls.cursor_x > ls.margin_left + saved_indent {
             ls.cursor_y += ls.line_height + LINE_SPACING;
         }
         ls.cursor_y   += BLOCK_MARGIN + s.margin.bottom;
-        ls.cursor_x    = ls.margin_left;
+        ls.cursor_x    = ls.margin_left + saved_indent;
         ls.line_height = 16;
     }
 
@@ -387,11 +555,12 @@ fn paint_image(
         Some(b) => b,
         None    => return,
     };
+    let fmt = crate::render::image::sniff_image_type(bytes);
     let rwops = match sdl2::rwops::RWops::from_bytes(bytes) {
         Ok(r)  => r,
         Err(_) => return,
     };
-    let surface = match rwops.load() {
+    let surface = match rwops.load_typed(fmt) {
         Ok(s)  => s,
         Err(_) => return,
     };
@@ -494,20 +663,34 @@ fn paint_form_control(
 
     if input_type == "hidden" { return; }
 
-    // For submit/button inputs, show the value or type as text
+    // Determine the input kind so hit-testing knows what to focus
+    let kind = match tag {
+        "textarea" => InputKind::TextArea,
+        "input" => match input_type.as_str() {
+            "password" => InputKind::Password,
+            "text" | "email" | "search" | "tel" | "url" | "number" => InputKind::Text,
+            _ => InputKind::Other,
+        },
+        _ => InputKind::Other,
+    };
+
+    // For submit/button inputs, show the value or type as text.
+    // Attribute values are raw HTML so they may contain entities (e.g. &#350;)
+    // — decode them before display.
     let label: String = if tag == "button" {
         // render children as text inline — let normal layout handle it
         // Just draw the box around the children content area
         String::new()
     } else {
         crate::dom::parser::get_attr(&el.attrs_raw, "value")
-            .map(|v| v.to_owned())
+            .map(|v| crate::dom::parser::decode_entities(v))
             .unwrap_or_else(|| match input_type.as_str() {
                 "submit"  => "Submit".to_owned(),
                 "reset"   => "Reset".to_owned(),
                 "checkbox"| "radio" => String::new(),
                 _         => crate::dom::parser::get_attr(&el.attrs_raw, "placeholder")
-                                .unwrap_or("").to_owned(),
+                                .map(|p| crate::dom::parser::decode_entities(p))
+                                .unwrap_or_default(),
             })
     };
 
@@ -541,37 +724,106 @@ fn paint_form_control(
 
     let x  = ls.cursor_x;
     let y  = ls.cursor_y;
+
+    // Assign index and register this control so clicks can focus it
+    let input_index = if matches!(kind, InputKind::Text | InputKind::Password | InputKind::TextArea) {
+        let idx = ls.input_count;
+        ls.input_count += 1;
+        // Retrieve live value and focused flag from the existing input_areas if available
+        // (filled in by the caller via Tab's input_values / focused_input)
+        ls.input_areas.push(InputArea {
+            x, y, w: ctrl_w, h: ctrl_h,
+            index: idx,
+            kind: kind.clone(),
+        });
+        Some(idx)
+    } else {
+        None
+    };
+
+    // Pull live value out of the extra context stored in LayoutState
+    // (We use the scratch fields added for this purpose below)
+    let live_value: Option<String> = input_index.and_then(|idx| {
+        ls.input_values.get(idx).map(|v| v.clone())
+    });
+    let is_focused = input_index.map(|idx| ls.focused_input == Some(idx)).unwrap_or(false);
+
     let bg = s.bg_color.unwrap_or([255, 255, 255]);
     let radii = s.border_radius;
 
+    // Background fill
     if radii != [0, 0, 0, 0] {
         fill_rounded_rect(canvas, Color::RGB(bg[0], bg[1], bg[2]), 255,
-                          x, y, ctrl_w, ctrl_h, radii,
-                          ls.ctx.scroll_y, ls.ctx.viewport_height);
-        draw_rounded_rect(canvas, Color::RGB(180, 180, 180), 255,
                           x, y, ctrl_w, ctrl_h, radii,
                           ls.ctx.scroll_y, ls.ctx.viewport_height);
     } else {
         fill_rect_alpha(canvas, Color::RGB(bg[0], bg[1], bg[2]), 255,
                         x, y, ctrl_w, ctrl_h, ls.ctx.scroll_y, ls.ctx.viewport_height);
-        // border
-        let bc = Color::RGB(180, 180, 180);
-        fill_rect_alpha(canvas, bc, 255, x, y, ctrl_w, 1, ls.ctx.scroll_y, ls.ctx.viewport_height);
-        fill_rect_alpha(canvas, bc, 255, x, y + ctrl_h - 1, ctrl_w, 1, ls.ctx.scroll_y, ls.ctx.viewport_height);
-        fill_rect_alpha(canvas, bc, 255, x, y, 1, ctrl_h, ls.ctx.scroll_y, ls.ctx.viewport_height);
-        fill_rect_alpha(canvas, bc, 255, x + ctrl_w - 1, y, 1, ctrl_h, ls.ctx.scroll_y, ls.ctx.viewport_height);
     }
 
-    if !label.is_empty() {
+    // Border — highlight blue when focused
+    let border_color = if is_focused { Color::RGB(66, 133, 244) } else { Color::RGB(180, 180, 180) };
+    let border_width = if is_focused { 2i32 } else { 1i32 };
+
+    if radii != [0, 0, 0, 0] {
+        draw_rounded_rect(canvas, border_color, 255,
+                          x, y, ctrl_w, ctrl_h, radii,
+                          ls.ctx.scroll_y, ls.ctx.viewport_height);
+    } else {
+        for bw in 0..border_width {
+            let bx = x - bw; let by2 = y - bw;
+            let bw2 = ctrl_w + bw * 2; let bh2 = ctrl_h + bw * 2;
+            fill_rect_alpha(canvas, border_color, 255, bx,       by2,            bw2, 1, ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx,       by2 + bh2 - 1, bw2, 1, ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx,       by2,            1, bh2, ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx + bw2 - 1, by2,        1, bh2, ls.ctx.scroll_y, ls.ctx.viewport_height);
+        }
+    }
+
+    // Text inside the control
+    let display_text: String = if let Some(ref v) = live_value {
+        // For password fields, mask the text
+        if kind == InputKind::Password {
+            "•".repeat(v.chars().count())
+        } else {
+            v.clone()
+        }
+    } else {
+        label.clone()
+    };
+
+    // Determine text colour: grey for placeholder, normal for live value
+    let is_placeholder = live_value.as_ref().map(|v| v.is_empty()).unwrap_or(true) && !label.is_empty() && live_value.is_none();
+    let text_color = if is_placeholder { [160, 160, 160] } else { [30, 30, 30] };
+
+    if !display_text.is_empty() {
         let text_style = Style {
             font_size: s.font_size,
-            color: [60, 60, 60],
+            color: text_color,
             ..Default::default()
         };
-        paint_text(canvas, tc, fonts, &label, &text_style,
+        paint_text(canvas, tc, fonts, &display_text, &text_style,
                    x + s.padding.left.max(6),
                    y + (ctrl_h - s.font_size as i32) / 2,
                    ls.ctx.scroll_y, ls.ctx.viewport_height);
+    }
+
+    // Blinking cursor when focused (always show it; blink can be added later)
+    if is_focused {
+        let cursor_text = live_value.as_deref().unwrap_or("");
+        let cursor_style = Style { font_size: s.font_size, ..Default::default() };
+        let display_before_cursor = if kind == InputKind::Password {
+            "•".repeat(cursor_text.chars().count())
+        } else {
+            cursor_text.to_owned()
+        };
+        let (cx_off, _) = measure_text(fonts, &display_before_cursor, &cursor_style);
+        let cx = x + s.padding.left.max(6) + cx_off;
+        let cy_top    = y + (ctrl_h - s.font_size as i32) / 2;
+        let cy_bottom = cy_top + s.font_size as i32;
+        fill_rect_alpha(canvas, Color::RGB(30, 30, 30), 255,
+                        cx, cy_top, 1, (cy_bottom - cy_top).max(2),
+                        ls.ctx.scroll_y, ls.ctx.viewport_height);
     }
 
     // For button: render children inside
@@ -594,6 +846,18 @@ fn paint_form_control(
         ls.cursor_x   = saved_x;
         ls.cursor_y   = saved_y;
         ls.margin_left = saved_ml;
+    }
+
+    // Register a ButtonArea so clicks on this control can be detected
+    let btn_action = if tag == "button" || input_type == "submit" {
+        ButtonAction::Submit(ls.form_action.clone())
+    } else if input_type == "reset" {
+        ButtonAction::Reset
+    } else {
+        ButtonAction::None
+    };
+    if btn_action != ButtonAction::None {
+        ls.button_areas.push(ButtonArea { x, y, w: ctrl_w, h: ctrl_h, action: btn_action });
     }
 
     ls.cursor_y   += ctrl_h + BLOCK_MARGIN;
@@ -648,6 +912,138 @@ fn paint_progress(
 // Block background and border
 // ---------------------------------------------------------------------------
 
+/// Paint a CSS `background-image` inside the given box.
+/// Respects `background-size` (auto/cover/contain) and `background-repeat`.
+fn paint_block_bg_image(
+    ls:       &LayoutState,
+    canvas:   &mut Canvas<Window>,
+    tc:       &TextureCreator<WindowContext>,
+    images:   &mut ImageCache,
+    base_url: &str,
+    style:    &Style,
+    x: i32, y: i32, w: i32, h: i32,
+) {
+    let url = match &style.bg_image_url {
+        Some(u) => u.clone(),
+        None    => return,
+    };
+    if w <= 0 || h <= 0 { return; }
+
+    let bytes = match images.get_bytes(&url, base_url) {
+        Some(b) => b,
+        None    => return,
+    };
+
+    let fmt = crate::render::image::sniff_image_type(bytes);
+    let rwops = match sdl2::rwops::RWops::from_bytes(bytes) {
+        Ok(r)  => r,
+        Err(_) => return,
+    };
+    let surface = match rwops.load_typed(fmt) {
+        Ok(s)  => s,
+        Err(_) => return,
+    };
+
+    let nat_w = surface.width()  as i32;
+    let nat_h = surface.height() as i32;
+    if nat_w <= 0 || nat_h <= 0 { return; }
+
+    let tex = match tc.create_texture_from_surface(&surface) {
+        Ok(t)  => t,
+        Err(_) => return,
+    };
+
+    // ── Resolve tile size based on background-size ────────────────────────
+    let (tile_w, tile_h) = match style.bg_size {
+        BgSize::Cover => {
+            // Scale so the image covers the box entirely (crop allowed)
+            let scale_x = w as f32 / nat_w as f32;
+            let scale_y = h as f32 / nat_h as f32;
+            let scale   = scale_x.max(scale_y);
+            ((nat_w as f32 * scale) as i32, (nat_h as f32 * scale) as i32)
+        }
+        BgSize::Contain => {
+            // Scale so the image fits entirely inside the box (letterbox allowed)
+            let scale_x = w as f32 / nat_w as f32;
+            let scale_y = h as f32 / nat_h as f32;
+            let scale   = scale_x.min(scale_y);
+            ((nat_w as f32 * scale) as i32, (nat_h as f32 * scale) as i32)
+        }
+        BgSize::Auto => (nat_w, nat_h),
+    };
+    if tile_w <= 0 || tile_h <= 0 { return; }
+
+    // ── Resolve position — sentinels 5000=50%, 10000=100% ────────────────
+    let resolve_pos = |sentinel: i32, box_dim: i32, tile_dim: i32| -> i32 {
+        match sentinel {
+            5000  => (box_dim - tile_dim) / 2,   // center
+            10000 => (box_dim - tile_dim).max(0), // end / right / bottom
+            n     => n,
+        }
+    };
+    let off_x = resolve_pos(style.bg_position.x, w, tile_w);
+    let off_y = resolve_pos(style.bg_position.y, h, tile_h);
+
+    // ── Paint tiles ────────────────────────────────────────────────────────
+    // Determine tiling ranges
+    let (start_tx, step_x, end_tx) = match style.bg_repeat {
+        BgRepeat::Repeat | BgRepeat::RepeatX => {
+            // Start far enough left that the first tile's right edge is ≥ x
+            let start = if tile_w > 0 {
+                off_x - ((off_x.abs() / tile_w + 1) * tile_w)
+            } else { off_x };
+            (start, tile_w, w)
+        }
+        _ => (off_x, w + 1, off_x + 1), // single tile, loop runs once
+    };
+    let (start_ty, step_y, end_ty) = match style.bg_repeat {
+        BgRepeat::Repeat | BgRepeat::RepeatY => {
+            let start = if tile_h > 0 {
+                off_y - ((off_y.abs() / tile_h + 1) * tile_h)
+            } else { off_y };
+            (start, tile_h, h)
+        }
+        _ => (off_y, h + 1, off_y + 1),
+    };
+
+    let scroll_y   = ls.ctx.scroll_y;
+    let viewport_h = ls.ctx.viewport_height;
+
+    let mut ty = start_ty;
+    while ty < end_ty {
+        let abs_y = y + ty;
+        let ry    = abs_y - scroll_y;
+        if ry < viewport_h && ry + tile_h > 0 {
+            let mut tx = start_tx;
+            while tx < end_tx {
+                let abs_x = x + tx;
+                // Clip the tile to the box
+                let dst_x  = abs_x.max(x);
+                let dst_y  = abs_y.max(y);
+                let dst_x2 = (abs_x + tile_w).min(x + w);
+                let dst_y2 = (abs_y + tile_h).min(y + h);
+                let dst_w  = dst_x2 - dst_x;
+                let dst_h  = dst_y2 - dst_y;
+                if dst_w > 0 && dst_h > 0 {
+                    // Corresponding source rect (in natural image coords)
+                    let src_x  = (dst_x - abs_x) * nat_w / tile_w;
+                    let src_y  = (dst_y - abs_y) * nat_h / tile_h;
+                    let src_w  = dst_w * nat_w / tile_w;
+                    let src_h  = dst_h * nat_h / tile_h;
+                    let src = sdl2::rect::Rect::new(src_x, src_y,
+                                                    src_w.max(1) as u32,
+                                                    src_h.max(1) as u32);
+                    let dst = sdl2::rect::Rect::new(dst_x, dst_y - scroll_y,
+                                                    dst_w as u32, dst_h as u32);
+                    let _ = canvas.copy(&tex, src, dst);
+                }
+                tx += step_x;
+            }
+        }
+        ty += step_y;
+    }
+}
+
 fn paint_block_bg(
     ls:    &LayoutState,
     canvas: &mut Canvas<Window>,
@@ -657,11 +1053,21 @@ fn paint_block_bg(
     let radii = style.border_radius;
     if let Some(bg) = style.bg_color {
         let alpha = style.bg_alpha;
+        // Pre-composite the background colour against opaque white so that
+        // semi-transparent backgrounds (rgba / hsla) look correct regardless
+        // of whether the SDL2 renderer's blend mode works as expected.
+        // Formula: out = alpha * src + (1 - alpha) * white
+        let a = alpha as u32;
+        let pre = [
+            ((a * bg[0] as u32 + (255 - a) * 255) / 255) as u8,
+            ((a * bg[1] as u32 + (255 - a) * 255) / 255) as u8,
+            ((a * bg[2] as u32 + (255 - a) * 255) / 255) as u8,
+        ];
         if radii != [0, 0, 0, 0] {
-            fill_rounded_rect(canvas, rgba_color(bg, 255), alpha,
+            fill_rounded_rect(canvas, rgba_color(pre, 255), 255,
                               x, y, w, h, radii, ls.ctx.scroll_y, ls.ctx.viewport_height);
         } else {
-            fill_rect_alpha(canvas, rgba_color(bg, 255), alpha,
+            fill_rect_alpha(canvas, rgba_color(pre, 255), 255,
                             x, y, w, h, ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
     }

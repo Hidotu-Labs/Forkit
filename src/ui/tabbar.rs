@@ -2,18 +2,21 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
+use sdl2::image::ImageRWops;
 
 use crate::render::font::FontCache;
+use crate::render::image::sniff_image_type;
 
 /// Height of the tab strip in pixels.
 pub const TAB_BAR_HEIGHT: i32 = 28;
 
 const TAB_MIN_W:  i32 = 80;
-const TAB_MAX_W:  i32 = 180;   // cap so tabs don't sprawl across the whole bar
+const TAB_MAX_W:  i32 = 180;
 const TAB_PAD:    i32 = 8;
-const CLOSE_W:    i32 = 20;    // hit-test width for the × button
+const CLOSE_W:    i32 = 20;
 const FONT_SIZE:  u16 = 13;
 const NEW_BTN_W:  i32 = 32;
+const FAVICON_SZ: i32 = 16;  // favicon rendered size in pixels
 
 /// Which region of the tab bar was clicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,13 +71,17 @@ impl TabBar {
     }
 
     /// Draw the tab strip.
+    ///
+    /// `favicons` is a parallel slice to `titles`: each entry is the raw image
+    /// bytes for that tab's favicon, or `None` if not yet loaded / unavailable.
     pub fn draw(
-        canvas:  &mut Canvas<Window>,
-        tc:      &TextureCreator<WindowContext>,
-        fonts:   &mut FontCache,
-        win_w:   i32,
-        titles:  &[String],
-        active:  usize,
+        canvas:   &mut Canvas<Window>,
+        tc:       &TextureCreator<WindowContext>,
+        fonts:    &mut FontCache,
+        win_w:    i32,
+        titles:   &[String],
+        active:   usize,
+        favicons: &[Option<Vec<u8>>],
     ) {
         // Strip background
         canvas.set_draw_color(Color::RGB(210, 210, 215));
@@ -92,13 +99,13 @@ impl TabBar {
             canvas.set_draw_color(bg);
             let _ = canvas.fill_rect(Rect::new(tx, 0, tab_w as u32, TAB_BAR_HEIGHT as u32));
 
-            // Right divider (skip for active tab and its right neighbour)
+            // Right divider
             if !is_active {
                 canvas.set_draw_color(Color::RGB(185, 185, 190));
                 let _ = canvas.fill_rect(Rect::new(tx + tab_w - 1, 3, 1, (TAB_BAR_HEIGHT - 6) as u32));
             }
 
-            // Active-tab bottom connector (hides the bottom border under that tab)
+            // Active-tab bottom connector
             if is_active {
                 canvas.set_draw_color(Color::RGB(245, 245, 248));
                 let _ = canvas.fill_rect(Rect::new(tx, TAB_BAR_HEIGHT - 1, tab_w as u32, 1));
@@ -109,20 +116,28 @@ impl TabBar {
             let close_y = (TAB_BAR_HEIGHT - CLOSE_W) / 2;
             draw_close_btn(canvas, fonts, tc, close_x, close_y, CLOSE_W);
 
-            // Title text — clipped to the space left of the close button
-            let text_max_w = (tab_w - TAB_PAD * 2 - CLOSE_W - 4).max(0);
+            // Favicon — drawn left of the title
+            let favicon_bytes = favicons.get(i).and_then(|v| v.as_deref());
+            let icon_drawn_w = if let Some(bytes) = favicon_bytes {
+                draw_favicon(canvas, tc, bytes, tx + TAB_PAD, (TAB_BAR_HEIGHT - FAVICON_SZ) / 2)
+            } else {
+                0
+            };
+            let icon_gap = if icon_drawn_w > 0 { icon_drawn_w + 4 } else { 0 };
+
+            // Title text — starts after favicon
+            let text_x     = tx + TAB_PAD + icon_gap;
+            let text_max_w = (close_x - text_x - 4).max(0);
             if text_max_w > 0 {
                 let text_col = if is_active { Color::RGB(20, 20, 20) } else { Color::RGB(70, 70, 70) };
-                draw_tab_text(canvas, fonts, tc, title, tx + TAB_PAD, 0, text_max_w, TAB_BAR_HEIGHT, text_col);
+                draw_tab_text(canvas, fonts, tc, title, text_x, 0, text_max_w, TAB_BAR_HEIGHT, text_col);
             }
         }
 
-        // "+" new tab button
+        // "+" new tab button — drawn with primitives, no background
         let new_x = titles.len() as i32 * tab_w;
         if new_x + NEW_BTN_W <= win_w {
-            canvas.set_draw_color(Color::RGB(195, 195, 200));
-            let _ = canvas.fill_rect(Rect::new(new_x + 3, 5, (NEW_BTN_W - 6) as u32, (TAB_BAR_HEIGHT - 10) as u32));
-            draw_tab_text(canvas, fonts, tc, "+", new_x, 0, NEW_BTN_W, TAB_BAR_HEIGHT, Color::RGB(40, 40, 40));
+            draw_plus_btn(canvas, new_x, 0, NEW_BTN_W, TAB_BAR_HEIGHT);
         }
 
         // Bottom border of the entire tab bar
@@ -162,15 +177,77 @@ fn draw_tab_text(
     }
 }
 
+/// Draw a primitive "+" centred in the new-tab button cell.
+fn draw_plus_btn(canvas: &mut Canvas<Window>, bx: i32, by: i32, bw: i32, bh: i32) {
+    let cx = bx + bw / 2;
+    let cy = by + bh / 2;
+    let half = bw / 5;          // arm half-length
+    let thick = 2.max(bh / 8);  // arm thickness
+
+    canvas.set_draw_color(Color::RGB(60, 60, 60));
+
+    // Horizontal arm
+    let _ = canvas.fill_rect(Rect::new(cx - half, cy - thick / 2, (half * 2) as u32, thick as u32));
+    // Vertical arm
+    let _ = canvas.fill_rect(Rect::new(cx - thick / 2, cy - half, thick as u32, (half * 2) as u32));
+}
+
 fn draw_close_btn(
     canvas: &mut Canvas<Window>,
-    fonts:  &mut FontCache,
-    tc:     &TextureCreator<WindowContext>,
+    _fonts: &mut FontCache,
+    _tc:    &TextureCreator<WindowContext>,
     x: i32, y: i32, size: i32,
 ) {
-    // Subtle rounded background so it's visually obvious
-    canvas.set_draw_color(Color::RGBA(150, 150, 150, 60));
-    let _ = canvas.fill_rect(Rect::new(x + 2, y + 2, (size - 4) as u32, (size - 4) as u32));
+    let pad = size / 4;
+    let x1 = x + pad;
+    let y1 = y + pad;
+    let x2 = x + size - pad;
+    let y2 = y + size - pad;
 
-    draw_tab_text(canvas, fonts, tc, "×", x, y, size, size, Color::RGB(90, 90, 90));
+    canvas.set_draw_color(Color::RGB(90, 90, 90));
+
+    for d in -1..=1_i32 {
+        let _ = canvas.draw_line(
+            sdl2::rect::Point::new(x1 + d, y1),
+            sdl2::rect::Point::new(x2 + d, y2),
+        );
+        let _ = canvas.draw_line(
+            sdl2::rect::Point::new(x1, y1 + d),
+            sdl2::rect::Point::new(x2, y2 + d),
+        );
+        let _ = canvas.draw_line(
+            sdl2::rect::Point::new(x2 + d, y1),
+            sdl2::rect::Point::new(x1 + d, y2),
+        );
+        let _ = canvas.draw_line(
+            sdl2::rect::Point::new(x2, y1 + d),
+            sdl2::rect::Point::new(x1, y2 + d),
+        );
+    }
+}
+
+/// Decode and draw a favicon from raw bytes at `(x, y)`, scaled to FAVICON_SZ×FAVICON_SZ.
+/// Returns the width drawn (FAVICON_SZ) on success, 0 on failure.
+fn draw_favicon(
+    canvas: &mut Canvas<Window>,
+    tc:     &TextureCreator<WindowContext>,
+    bytes:  &[u8],
+    x: i32, y: i32,
+) -> i32 {
+    let fmt = sniff_image_type(bytes);
+    let rwops = match sdl2::rwops::RWops::from_bytes(bytes) {
+        Ok(r)  => r,
+        Err(_) => return 0,
+    };
+    let surface = match rwops.load_typed(fmt) {
+        Ok(s)  => s,
+        Err(_) => return 0,
+    };
+    let tex = match tc.create_texture_from_surface(&surface) {
+        Ok(t)  => t,
+        Err(_) => return 0,
+    };
+    let dst = Rect::new(x, y, FAVICON_SZ as u32, FAVICON_SZ as u32);
+    let _ = canvas.copy(&tex, None, dst);
+    FAVICON_SZ
 }

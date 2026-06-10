@@ -232,6 +232,10 @@ fn apply_initial_keyword(prop: &str, style: &mut Style) {
         "text-transform"   => { style.text_transform = def.text_transform; }
         "font-variant-caps"=> { style.font_variant_caps = def.font_variant_caps; }
         "background-color" => { style.bg_color = def.bg_color; style.bg_alpha = def.bg_alpha; }
+        "background-image" => { style.bg_image_url = None; }
+        "background-size"  => { style.bg_size = def.bg_size; }
+        "background-repeat"=> { style.bg_repeat = def.bg_repeat; }
+        "background-position" => { style.bg_position = def.bg_position; }
         "border-radius"    => { style.border_radius = def.border_radius; }
         "display"          => { style.display = def.display; style.display_block = def.display_block; }
         "opacity"          => { style.opacity = def.opacity; }
@@ -715,6 +719,38 @@ mod tests {
 
         if let Node::Element(el) = &root {
             assert_eq!(el.style.color, default_color);
+        }
+    }
+
+    /// rgba() background-color preserves the alpha channel through the cascade.
+    #[test]
+    fn cascade_bg_alpha_preserved() {
+        let root_el = make_el("div", "", "pass");
+        let sheet = StyleSheet::parse(".pass { background-color: rgba(30, 160, 80, 0.1); }");
+        let mut root = Node::Element(root_el);
+        apply_cascade(&mut root, &[sheet]);
+
+        if let Node::Element(el) = &root {
+            assert_eq!(el.style.bg_color, Some([30, 160, 80]),
+                "bg_color should be set to the rgba rgb components");
+            // 0.1 * 255 = 25.5 → rounds to 26
+            assert_eq!(el.style.bg_alpha, 26,
+                "bg_alpha should be 26 (0.1 * 255 rounded), not 255");
+        }
+    }
+
+    /// Inline style rgba() background-color preserves the alpha channel.
+    #[test]
+    fn inline_bg_alpha_preserved() {
+        let root_el = make_el_inline("div", "background-color: rgba(255, 165, 0, 0.25)");
+        let mut root = Node::Element(root_el);
+        apply_cascade(&mut root, &[]);
+
+        if let Node::Element(el) = &root {
+            assert_eq!(el.style.bg_color, Some([255, 165, 0]));
+            // 0.25 * 255 = 63.75 → rounds to 64
+            assert_eq!(el.style.bg_alpha, 64,
+                "bg_alpha should be 64 (0.25 * 255 rounded), not 255");
         }
     }
 }

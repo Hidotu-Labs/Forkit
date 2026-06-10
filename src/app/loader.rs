@@ -2,14 +2,24 @@ use std::fs;
 use std::path::Path;
 
 use crate::dom::node::Node;
-use crate::dom::parser::parse;
+use crate::dom::parser::{parse, extract_page_meta};
 use crate::net;
 
+/// Page metadata extracted from the document head.
+pub struct PageMeta {
+    pub title:       String,
+    pub favicon_url: Option<String>,
+}
+
 /// Load an HTML document from a local file path, a `file://` URI, or an
-/// `http(s)://` URL.  Returns `(resolved_url, Node)` or `None` on hard error.
-pub fn load_dom(source: &str) -> Option<(String, Node)> {
+/// `http(s)://` URL.  Returns `(resolved_url, Node, PageMeta)` or `None` on
+/// hard error.
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta)> {
     let (final_url, html) = fetch_html(source)?;
-    Some((final_url.clone(), parse(&html, &final_url)))
+    let (title, favicon_url) = extract_page_meta(&html, &final_url);
+    let dom  = parse(&html, &final_url);
+    let meta = PageMeta { title, favicon_url };
+    Some((final_url, dom, meta))
 }
 
 fn fetch_html(source: &str) -> Option<(String, String)> {

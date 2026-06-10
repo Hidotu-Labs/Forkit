@@ -1,163 +1,547 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Forkit CSS3 Test</title>
+  <title>Forkit CSS3 Full Property Test</title>
   <style>
+    /* ── Reset / base ── */
     body {
       color: #222222;
-      background-color: #f5f5f5;
+      background-color: #f0f0f0;
       margin: 0;
       padding: 16px;
+      font-family: sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
     }
 
-    h1 { color: #1a1a2e; }
-    h2 { color: #16213e; }
-    h3 { color: #0f3460; }
+    h1 { color: #1a1a2e; font-size: 26px; margin-bottom: 8px; }
+    h2 { color: #0f3460; font-size: 20px; margin: 20px 0 6px 0; border-bottom: 2px solid #0f3460; padding-bottom: 4px; }
+    h3 { color: #16213e; font-size: 16px; margin: 12px 0 4px 0; }
 
     .card {
       background-color: #ffffff;
-      border: 1px solid #dddddd;
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 16px;
+      border: 1px solid #cccccc;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
     }
 
-    .highlight {
-      background-color: rgba(255, 220, 0, 0.4);
-      color: #333333;
-      padding: 4px;
+    .row {
+      margin-bottom: 8px;
+      padding: 6px 8px;
     }
 
-    .muted {
-      color: rgba(0, 0, 0, 0.45);
+    .label {
+      color: #555555;
+      font-size: 12px;
+      font-family: monospace;
+      margin-bottom: 2px;
     }
 
-    .badge {
-      background-color: #0f3460;
-      color: white;
-      border-radius: 999px;
-      padding: 2px;
-    }
+    .pass { background-color: rgba(30, 160, 80, 0.1); border-left: 3px solid #009944; }
+    .fail { background-color: rgba(220, 50, 50, 0.1); border-left: 3px solid #cc0000; color: #b00020; }
+    .na   { background-color: rgba(200, 200, 200, 0.2); border-left: 3px solid #aaaaaa; color: #777777; }
 
-    .error-box {
-      background-color: rgba(220, 50, 50, 0.12);
-      border: 1px solid #cc0000;
-      border-radius: 8px;
-      padding: 12px;
-      color: #b00020;
-    }
+    /* ── Selectors used for cascade tests ── */
+    #unique-id          { color: #6600cc; }
+    .compound-test      { font-weight: bold; }
+    div.compound-test   { font-style: italic; }
+    .parent-ctx > p     { color: #cc6600; }
+    .ancestor-ctx p     { letter-spacing: 2px; }
+    h3 + p              { color: #006699; }
 
-    .success-box {
-      background-color: rgba(30, 160, 80, 0.12);
-      border: 1px solid #009944;
-      border-radius: 8px;
-      padding: 12px;
-      color: #1a6e3c;
-    }
+    /* ── Text property rules ── */
+    .text-upper  { text-transform: uppercase; }
+    .text-lower  { text-transform: lowercase; }
+    .text-cap    { text-transform: capitalize; }
+    .text-center { text-align: center; }
+    .text-right  { text-align: right; }
+    .small-caps  { font-variant-caps: small-caps; }
+    .pre-wrap    { white-space: pre-wrap; }
+    .break-all   { word-break: break-all; }
+
+    /* ── List styles ── */
+    .list-circle  { list-style-type: circle; }
+    .list-square  { list-style-type: square; }
+    .list-decimal { list-style-type: decimal; }
+    .list-none    { list-style-type: none; }
+
+    /* ── Overflow / visibility ── */
+    .overflow-hidden { overflow: hidden; }
+    .hidden-el { visibility: hidden; }
+    .display-none { display: none; }
+    .inline-block-el { display: inline-block; background-color: #ddeeff; padding: 4px 8px; border-radius: 4px; }
+
+    /* ── Background ── */
+    .bg-cover { background-image: url(https://placehold.co/600x80/0f3460/white?text=bg-cover); background-size: cover; background-repeat: no-repeat; height: 80px; border-radius: 6px; }
+    .bg-repeat { background-image: url(https://placehold.co/40x40/e94560/white); background-repeat: repeat; height: 80px; border-radius: 6px; }
+    .bg-no-repeat { background-image: url(https://placehold.co/80x40/009944/white?text=no-repeat); background-repeat: no-repeat; background-position: center center; height: 80px; border-radius: 6px; background-color: #eee; }
+
+    /* ── Box shadow ── */
+    .shadow-sm  { box-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
+    .shadow-lg  { box-shadow: 4px 8px 16px rgba(0,0,0,0.3); }
+
+    /* ── Opacity ── */
+    .opacity-full { opacity: 1; }
+    .opacity-half { opacity: 0.5; }
+    .opacity-low  { opacity: 0.2; }
+
+    /* ── Borders ── */
+    .border-all    { border: 2px solid #0f3460; border-radius: 6px; padding: 8px; }
+    .border-top    { border-top: 3px solid #e94560; padding-top: 6px; }
+    .border-right  { border-right: 3px solid #009944; padding-right: 6px; }
+    .border-bottom { border-bottom: 3px solid #ff9900; padding-bottom: 6px; }
+    .border-left   { border-left: 3px solid #6600cc; padding-left: 6px; }
+    .border-mixed  { border: 1px solid #ccc; border-radius: 4px 16px 4px 16px; padding: 8px; }
+    .border-pill   { border: 1px solid #0f3460; border-radius: 999px; padding: 4px 14px; display: inline-block; }
+
+    /* ── Sizing ── */
+    .fixed-width   { width: 200px; background-color: #ddeeff; padding: 4px; }
+    .pct-width     { width: 60%; background-color: #ffeedd; padding: 4px; }
+    .max-width-box { max-width: 300px; background-color: #eeffdd; padding: 4px; }
+    .min-width-box { min-width: 250px; background-color: #fff3cd; padding: 4px; }
+    .height-box    { height: 50px; background-color: #ffe0f0; padding: 4px; }
+
+    /* ── Inheritance: cascade from parent ── */
+    .inherit-parent { color: #8800aa; font-size: 17px; }
   </style>
 </head>
 <body>
 
-  <h1>Forkit CSS3 Feature Test</h1>
-  <p class="muted">This page exercises the CSS3 features added in Phase 1.</p>
-  <hr>
+  <h1>Forkit — CSS3 Property Coverage Test</h1>
+  <p style="color: #555; font-size: 13px; margin-top: 0;">
+    Each section exercises a distinct group of CSS3 properties.
+    Green = engine handles it. Grey = not yet implemented / N/A.
+    Press Q or Esc to quit, R to reload.
+  </p>
 
-  <h2>1. Stylesheet Cascade</h2>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>1. Color &amp; Alpha</h2>
   <div class="card">
-    <p>This card gets its rounded corners, background, border and padding from a style block.</p>
-    <p class="highlight">This paragraph is highlighted via a .highlight class rule.</p>
-    <p class="muted">This text uses rgba(0,0,0,0.45) semi-transparent black via the .muted rule.</p>
+    <div class="label">color: named keyword</div>
+    <div class="row pass" style="color: tomato;">color: tomato</div>
+
+    <div class="label">color: #rrggbb hex</div>
+    <div class="row pass" style="color: #0066cc;">color: #0066cc</div>
+
+    <div class="label">color: #rgb shorthand</div>
+    <div class="row pass" style="color: #09c;">color: #09c</div>
+
+    <div class="label">color: rgb(r,g,b)</div>
+    <div class="row pass" style="color: rgb(200,0,100);">color: rgb(200,0,100)</div>
+
+    <div class="label">color: rgba(r,g,b,a)</div>
+    <div class="row pass" style="color: rgba(0,100,200,0.7);">color: rgba(0,100,200,0.7) — 70% opaque blue</div>
+
+    <div class="label">color: hsl(h,s%,l%)</div>
+    <div class="row pass" style="color: hsl(120,60%,35%);">color: hsl(120,60%,35%) — dark green</div>
+
+    <div class="label">color: hsla(h,s%,l%,a)</div>
+    <div class="row pass" style="color: hsla(30,100%,45%,0.8);">color: hsla(30,100%,45%,0.8) — 80% orange</div>
+
+    <div class="label">background-color: rgba</div>
+    <div class="row pass" style="background-color: rgba(255,165,0,0.25);">background-color: rgba(255,165,0,0.25)</div>
+
+    <div class="label">background-color: hsla</div>
+    <div class="row pass" style="background-color: hsla(210,80%,55%,0.25);">background-color: hsla(210,80%,55%,0.25)</div>
+
+    <div class="label">color: transparent</div>
+    <div class="row pass" style="color: transparent; background-color: #ddd;">color: transparent (text invisible, grey bg)</div>
   </div>
 
-  <h2>2. Alpha-Channel Colors (rgba and hsla)</h2>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>2. Background Properties</h2>
   <div class="card">
-    <p style="color: rgba(200, 0, 0, 1.0);">rgba(200,0,0,1.0) - fully opaque red</p>
-    <p style="color: rgba(200, 0, 0, 0.6);">rgba(200,0,0,0.6) - 60 percent red</p>
-    <p style="color: rgba(200, 0, 0, 0.25);">rgba(200,0,0,0.25) - 25 percent red (faded)</p>
-    <p style="background-color: hsla(210, 80%, 55%, 0.3); padding: 6px;">
-      hsla(210,80%,55%,0.3) - translucent blue background
-    </p>
-    <p style="background-color: rgba(255, 165, 0, 0.3); padding: 6px;">
-      rgba(255,165,0,0.3) - light orange background
-    </p>
+    <div class="label">background-color (solid)</div>
+    <div class="row pass" style="background-color: #1a6e3c; color: white; padding: 8px; border-radius: 4px;">background-color: #1a6e3c</div>
+
+    <div class="label">background-image + background-size: cover</div>
+    <div class="bg-cover row"></div>
+
+    <div class="label">background-image + background-repeat: repeat</div>
+    <div class="bg-repeat row"></div>
+
+    <div class="label">background-image + background-repeat: no-repeat + background-position: center</div>
+    <div class="bg-no-repeat row"></div>
+
+    <div class="label">background shorthand (color only)</div>
+    <div class="row pass" style="background: #e94560; color: white; padding: 6px; border-radius: 4px;">background: #e94560</div>
+
+    <div class="label">background-size: contain (via inline)</div>
+    <div class="row pass" style="background-image: url(https://placehold.co/80x40/0f3460/white?text=contain); background-size: contain; background-repeat: no-repeat; background-color: #eee; height: 60px; border-radius: 4px;"></div>
   </div>
 
-  <h2>3. Border Radius</h2>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>3. Typography</h2>
   <div class="card">
-    <div style="background-color: #0f3460; color: white; border-radius: 12px; padding: 12px; margin-bottom: 10px;">
-      border-radius: 12px - uniform rounded box
+    <div class="label">font-size: px, em, rem</div>
+    <div class="row pass" style="font-size: 22px;">font-size: 22px</div>
+    <div class="row pass" style="font-size: 1.4em;">font-size: 1.4em</div>
+    <div class="row pass" style="font-size: 1.2rem;">font-size: 1.2rem (same as em in this engine)</div>
+
+    <div class="label">font-weight: bold / normal / 700</div>
+    <div class="row pass" style="font-weight: bold;">font-weight: bold</div>
+    <div class="row pass" style="font-weight: 700;">font-weight: 700</div>
+    <div class="row pass" style="font-weight: normal;">font-weight: normal</div>
+
+    <div class="label">font-style: italic / oblique / normal</div>
+    <div class="row pass" style="font-style: italic;">font-style: italic</div>
+    <div class="row pass" style="font-style: oblique;">font-style: oblique</div>
+
+    <div class="label">font-family: monospace / serif / sans-serif</div>
+    <div class="row pass" style="font-family: monospace;">font-family: monospace — fixed width</div>
+    <div class="row pass" style="font-family: serif;">font-family: serif — proportional serif</div>
+    <div class="row pass" style="font-family: sans-serif;">font-family: sans-serif — default</div>
+
+    <div class="label">font-variant-caps: small-caps</div>
+    <div class="row pass small-caps">font-variant-caps: small-caps — Hello World</div>
+
+    <div class="label">text-decoration: underline / line-through</div>
+    <div class="row pass" style="text-decoration: underline;">text-decoration: underline</div>
+    <div class="row pass" style="text-decoration: line-through;">text-decoration: line-through</div>
+    <div class="row pass" style="text-decoration: underline line-through;">text-decoration: underline line-through</div>
+
+    <div class="label">text-align: left / center / right</div>
+    <div class="row pass" style="text-align: left; background-color: #f9f9f9;">text-align: left</div>
+    <div class="row pass text-center" style="background-color: #f9f9f9;">text-align: center (via class)</div>
+    <div class="row pass text-right" style="background-color: #f9f9f9;">text-align: right (via class)</div>
+
+    <div class="label">text-transform: uppercase / lowercase / capitalize</div>
+    <div class="row pass text-upper">text-transform: uppercase — hello world</div>
+    <div class="row pass text-lower">text-transform: lowercase — HELLO WORLD</div>
+    <div class="row pass text-cap">text-transform: capitalize — hello world</div>
+
+    <div class="label">line-height: unitless / px / %</div>
+    <div class="row pass" style="line-height: 2.0;">line-height: 2.0 — double spaced line<br>second line of text</div>
+    <div class="row pass" style="line-height: 28px;">line-height: 28px<br>second line</div>
+
+    <div class="label">letter-spacing / word-spacing</div>
+    <div class="row pass" style="letter-spacing: 4px;">letter-spacing: 4px — spaced out letters</div>
+    <div class="row pass" style="word-spacing: 12px;">word-spacing: 12px — extra space between words</div>
+
+    <div class="label">white-space: pre / pre-wrap</div>
+    <div class="row pass pre-wrap">white-space: pre-wrap:
+  indented line
+    double indented</div>
+
+    <div class="label">word-break: break-all</div>
+    <div class="row pass break-all" style="max-width: 200px;">word-break:break-all:AVERYLONGWORDTHATWILLBREAKANYWHEREREGARDLESSOFSPACES</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>4. Box Model — Spacing</h2>
+  <div class="card">
+    <div class="label">padding shorthand (1 / 2 / 3 / 4 values)</div>
+    <div class="row pass" style="background-color:#ddeeff; padding: 16px;">padding: 16px (all sides)</div>
+    <div class="row pass" style="background-color:#ddeeff; padding: 8px 24px;">padding: 8px 24px (v h)</div>
+    <div class="row pass" style="background-color:#ddeeff; padding: 4px 12px 20px;">padding: 4px 12px 20px (t h b)</div>
+    <div class="row pass" style="background-color:#ddeeff; padding: 4px 8px 12px 20px;">padding: 4px 8px 12px 20px (t r b l)</div>
+
+    <div class="label">padding-top / right / bottom / left (individual)</div>
+    <div class="row pass" style="background-color:#ffeedd; padding-top:16px; padding-right:8px; padding-bottom:4px; padding-left:20px;">pt:16 pr:8 pb:4 pl:20</div>
+
+    <div class="label">margin shorthand + individual</div>
+    <div class="row pass" style="background-color:#eeffdd; margin: 8px 16px;">margin: 8px 16px</div>
+    <div class="row pass" style="background-color:#eeffdd; margin-top:12px; margin-bottom:12px;">margin-top:12 margin-bottom:12</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>5. Borders</h2>
+  <div class="card">
+    <div class="label">border shorthand</div>
+    <div class="row border-all">border: 2px solid #0f3460</div>
+
+    <div class="label">border-top / right / bottom / left</div>
+    <div class="row pass border-top">border-top: 3px solid #e94560</div>
+    <div class="row pass border-right">border-right: 3px solid #009944</div>
+    <div class="row pass border-bottom">border-bottom: 3px solid #ff9900</div>
+    <div class="row pass border-left">border-left: 3px solid #6600cc</div>
+
+    <div class="label">border-width shorthand</div>
+    <div class="row pass" style="border-width: 3px; border-color: #0f3460; padding: 6px;">border-width: 3px (all sides)</div>
+
+    <div class="label">border-color shorthand</div>
+    <div class="row pass" style="border: 2px solid black; border-color: #e94560; padding: 6px; border-radius: 4px;">border-color: #e94560</div>
+
+    <div class="label">border-radius uniform / multi-value</div>
+    <div class="row pass" style="background-color:#0f3460; color:white; border-radius: 12px; padding: 8px; margin-bottom:6px;">border-radius: 12px</div>
+    <div class="row pass border-mixed">border-radius: 4px 16px 4px 16px — alternating</div>
+    <div style="margin-bottom:6px;"><span class="border-pill pass">border-radius: 999px pill</span></div>
+
+    <div class="label">border-top-left/right and bottom-left/right radius (individual)</div>
+    <div class="row pass" style="background-color:#ffeedd; border: 1px solid #ccc; border-top-left-radius: 20px; border-bottom-right-radius: 20px; padding: 8px;">border-top-left-radius: 20px  border-bottom-right-radius: 20px</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>6. Sizing</h2>
+  <div class="card">
+    <div class="label">width: px</div>
+    <div class="fixed-width row pass">width: 200px</div>
+
+    <div class="label">width: %</div>
+    <div class="pct-width row pass">width: 60%</div>
+
+    <div class="label">max-width</div>
+    <div class="max-width-box row pass">max-width: 300px (text wraps inside)</div>
+
+    <div class="label">min-width</div>
+    <div class="min-width-box row pass">min-width: 250px</div>
+
+    <div class="label">height: px</div>
+    <div class="height-box row pass">height: 50px</div>
+
+    <div class="label">max-height / min-height (inline)</div>
+    <div class="row pass" style="max-height: 40px; overflow: hidden; background-color: #fffbe6; padding: 4px;">max-height: 40px overflow:hidden — this text will clip if it gets too tall for the box</div>
+    <div class="row pass" style="min-height: 60px; background-color: #e6f7ff; padding: 4px;">min-height: 60px</div>
+
+    <div class="label">width: vw / height: vh</div>
+    <div class="row pass" style="width: 50vw; background-color: #f0e6ff; padding: 4px;">width: 50vw</div>
+    <div class="row pass" style="height: 10vh; background-color: #fff0e6; padding: 4px;">height: 10vh</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>7. CSS Math Functions</h2>
+  <div class="card">
+    <div class="label">calc(100% - 40px)</div>
+    <div class="row pass" style="width: calc(100% - 40px); background-color: #dce8ff; padding: 6px;">calc(100% - 40px)</div>
+
+    <div class="label">calc(2em * 3)</div>
+    <div class="row pass" style="width: calc(2em * 3); background-color: #dcffe8; padding: 6px;">calc(2em * 3)</div>
+
+    <div class="label">calc(80px / 2)</div>
+    <div class="row pass" style="width: calc(80px / 2); background-color: #ffdce8; padding: 6px;">calc(80px / 2) = 40px</div>
+
+    <div class="label">clamp(min, preferred, max) on font-size</div>
+    <div class="row pass" style="font-size: clamp(14px, 2vw, 24px);">font-size: clamp(14px, 2vw, 24px) — responsive</div>
+
+    <div class="label">min(300px, 80vw)</div>
+    <div class="row pass" style="max-width: min(300px, 80vw); background-color: #fff3cd; padding: 6px;">max-width: min(300px, 80vw)</div>
+
+    <div class="label">max(8px, 2vw) on padding-left</div>
+    <div class="row pass" style="padding-left: max(8px, 2vw); background-color: #ffe8dc; padding-top:4px; padding-bottom:4px; padding-right:4px;">padding-left: max(8px, 2vw)</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>8. Display &amp; Visibility</h2>
+  <div class="card">
+    <div class="label">display: block (default block elements)</div>
+    <div class="row pass" style="display: block; background-color: #ddeeff; padding: 6px;">display: block</div>
+
+    <div class="label">display: inline-block</div>
+    <div class="row pass">
+      <span class="inline-block-el">inline-block 1</span>
+      <span class="inline-block-el">inline-block 2</span>
+      <span class="inline-block-el">inline-block 3</span>
     </div>
-    <div style="background-color: #e94560; color: white; border-radius: 4px 20px 4px 20px; padding: 12px; margin-bottom: 10px;">
-      border-radius: 4px 20px 4px 20px - alternating corners
+
+    <div class="label">display: none (element below is hidden)</div>
+    <div class="display-none">YOU SHOULD NOT SEE THIS</div>
+    <div class="row pass" style="background-color:#eeffdd; padding:6px;">Element above has display:none — invisible</div>
+
+    <div class="label">visibility: hidden</div>
+    <div class="row pass">
+      <span class="hidden-el">HIDDEN SPAN</span>
+      <span>(span before this text has visibility:hidden)</span>
     </div>
-    <div style="background-color: #16213e; color: white; border-radius: 999px; padding: 8px;">
-      border-radius: 999px - pill shape
-    </div>
+
+    <div class="label">overflow: hidden</div>
+    <div class="row pass overflow-hidden" style="height: 36px; background-color: #fff3cd; padding: 4px;">overflow:hidden height:36px — this text is deliberately long and should be clipped at the box boundary</div>
+
+    <div class="label">overflow: scroll / auto</div>
+    <div class="row na" style="overflow: scroll; height: 40px; background-color: #eee; padding: 4px;">overflow:scroll (scrollbar rendering depends on engine)</div>
   </div>
 
-  <h2>4. CSS Math and Viewport Units</h2>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>9. Opacity &amp; Box Shadow</h2>
   <div class="card">
-    <p style="background-color: #dce8ff; padding: 6px; width: calc(100% - 40px);">
-      width: calc(100% - 40px)
-    </p>
-    <p style="font-size: clamp(14px, 2vw, 22px);">
-      font-size: clamp(14px, 2vw, 22px) - responsive font size
-    </p>
-    <p style="background-color: #fff3cd; padding: 6px; max-width: min(500px, 80vw);">
-      max-width: min(500px, 80vw)
-    </p>
-    <p style="padding-left: max(8px, 2vw);">
-      padding-left: max(8px, 2vw)
-    </p>
+    <div class="label">opacity: 1 / 0.5 / 0.2</div>
+    <div class="row pass opacity-full" style="background-color:#0f3460; color:white; padding:6px; margin-bottom:4px; border-radius:4px;">opacity: 1 (fully visible)</div>
+    <div class="row pass opacity-half" style="background-color:#0f3460; color:white; padding:6px; margin-bottom:4px; border-radius:4px;">opacity: 0.5 (half transparent)</div>
+    <div class="row pass opacity-low" style="background-color:#0f3460; color:white; padding:6px; margin-bottom:4px; border-radius:4px;">opacity: 0.2 (mostly transparent)</div>
+
+    <div class="label">box-shadow: small</div>
+    <div class="row pass shadow-sm" style="background-color:#ffffff; border: 1px solid #ddd; padding: 8px; border-radius: 6px; margin-bottom:8px;">box-shadow: 2px 2px 4px rgba(0,0,0,0.2)</div>
+
+    <div class="label">box-shadow: large</div>
+    <div class="row pass shadow-lg" style="background-color:#ffffff; border: 1px solid #ddd; padding: 8px; border-radius: 6px; margin-bottom:8px;">box-shadow: 4px 8px 16px rgba(0,0,0,0.3)</div>
+
+    <div class="label">box-shadow: inline with named color</div>
+    <div class="row pass" style="box-shadow: 3px 3px 8px navy; background-color:#fff; border:1px solid #ddd; padding:8px; border-radius:4px;">box-shadow: 3px 3px 8px navy</div>
+
+    <div class="label">box-shadow: none (reset)</div>
+    <div class="row pass shadow-lg" style="box-shadow: none; background-color:#fff; border:1px solid #ddd; padding:8px; border-radius:4px;">box-shadow: none (class sets a shadow, inline resets)</div>
   </div>
 
-  <h2>5. Selector Matching</h2>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>10. List Styles</h2>
   <div class="card">
-    <p>Tag selector: body text inherits color #222222 from the body rule.</p>
-    <p>Class selector badge: <span class="badge">New Feature</span></p>
-    <div class="error-box">Error box styled via .error-box with rgba border and background.</div>
-    <br>
-    <div class="success-box">Success box styled via .success-box.</div>
-  </div>
-
-  <h2>6. CSS Inheritance</h2>
-  <div class="card" style="color: #6a0dad; font-size: 18px;">
-    <p>Parent div has color #6a0dad and font-size 18px.</p>
-    <p>This child paragraph inherits both - no inline style needed.</p>
-    <p style="color: initial; font-size: initial;">
-      The initial keyword resets to default (black, 16px).
-    </p>
-  </div>
-
-  <h2>7. Existing Features (regression check)</h2>
-  <div class="card">
-    <p style="color: red; font-size: 20px;">Red text at 20px via inline style.</p>
-    <p style="color: #0066cc;">Blue text via hex color inline style.</p>
-    <p><b>Bold</b> and <i>italic</i> and <u>underline</u> and <s>strikethrough</s>.</p>
-    <hr>
-    <blockquote>
-      The blockquote still gets its left border accent and muted color from the UA stylesheet.
-    </blockquote>
+    <div class="label">list-style-type: disc (default)</div>
     <ul>
-      <li>List item one</li>
-      <li>List item two</li>
-      <li>List item three</li>
+      <li>disc item one</li>
+      <li>disc item two</li>
     </ul>
+
+    <div class="label">list-style-type: circle</div>
+    <ul class="list-circle">
+      <li>circle item one</li>
+      <li>circle item two</li>
+    </ul>
+
+    <div class="label">list-style-type: square</div>
+    <ul class="list-square">
+      <li>square item one</li>
+      <li>square item two</li>
+    </ul>
+
+    <div class="label">list-style-type: decimal</div>
+    <ol class="list-decimal">
+      <li>decimal item one</li>
+      <li>decimal item two</li>
+    </ol>
+
+    <div class="label">list-style-type: none</div>
+    <ul class="list-none">
+      <li>no bullet one</li>
+      <li>no bullet two</li>
+    </ul>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>11. CSS Selectors</h2>
+  <div class="card">
+    <div class="label">Tag selector</div>
+    <div class="row pass"><p style="margin:0;">p tag — inherits body color</p></div>
+
+    <div class="label">Class selector (.card, .row, .pass, .fail, etc.)</div>
+    <div class="row pass">This row styled by .row.pass class rules.</div>
+
+    <div class="label">ID selector (#unique-id)</div>
+    <div class="row pass" id="unique-id">color from #unique-id rule: purple</div>
+
+    <div class="label">Compound selector (div.compound-test)</div>
+    <div class="row compound-test">compound: bold from .compound-test, italic from div.compound-test</div>
+
+    <div class="label">Descendant combinator (.ancestor-ctx p)</div>
+    <div class="ancestor-ctx row" style="background-color:#fff9e6;">
+      <p style="margin:0;">letter-spacing from .ancestor-ctx p descendant rule</p>
+    </div>
+
+    <div class="label">Child combinator (.parent-ctx > p)</div>
+    <div class="parent-ctx row" style="background-color:#fff0f0;">
+      <p style="margin:0;">color from .parent-ctx > p child combinator rule</p>
+    </div>
+
+    <div class="label">Adjacent sibling (h3 + p)</div>
+    <h3 style="margin-bottom:0;">h3 heading (adjacent sibling selector trigger)</h3>
+    <p style="margin:0;">This p directly follows h3 — should get color from h3 + p rule</p>
+
+    <div class="label">Universal selector (*) — engine supports it</div>
+    <div class="row na">universal selector matching works in cascade engine</div>
+
+    <div class="label">Attribute presence [attr] and equality [attr=val]</div>
+    <div class="row na">
+      <a href="https://example.com">[href] presence attribute selector supported in engine</a>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>12. Cascade, Specificity &amp; Inheritance</h2>
+  <div class="card">
+    <div class="label">Specificity: .class wins over tag rule</div>
+    <div class="row pass" style="color: rgb(255,165,0);">.highlight-class would override p tag (orange &gt; blue)</div>
+
+    <div class="label">Inline style overrides stylesheet</div>
+    <p class="text-upper" style="text-transform: none; margin: 0;" >
+      Class sets uppercase, inline overrides to none — should be lowercase
+    </p>
+
+    <div class="label">Inheritance: child inherits font-size &amp; color from parent</div>
+    <div class="inherit-parent row">
+      Parent: color #8800aa, font-size 17px
+      <span style="background-color: rgba(136,0,170,0.08); padding: 2px 4px;">child span inherits both</span>
+    </div>
+
+    <div class="label">inherit keyword — explicit</div>
+    <div class="row" style="color: #cc0000; font-size: 18px;">
+      Parent red 18px
+      <span style="color: inherit; font-size: inherit;"> — child uses inherit keyword</span>
+    </div>
+
+    <div class="label">initial keyword — resets to CSS default</div>
+    <div class="row pass inherit-parent">
+      Parent sets purple/17px.
+      <span style="color: initial; font-size: initial; background-color: rgba(0,0,0,0.05); padding: 2px 4px;">span with color:initial and font-size:initial resets to defaults</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>13. CSS Length Units</h2>
+  <div class="card">
+    <div class="label">px</div>
+    <div class="row pass" style="font-size: 20px;">font-size: 20px</div>
+
+    <div class="label">pt (points → px)</div>
+    <div class="row pass" style="font-size: 14pt;">font-size: 14pt ≈ 19px</div>
+
+    <div class="label">em (relative to parent font-size)</div>
+    <div class="row pass" style="font-size: 1.5em;">font-size: 1.5em</div>
+
+    <div class="label">rem (relative to root font-size)</div>
+    <div class="row pass" style="font-size: 1.3rem;">font-size: 1.3rem</div>
+
+    <div class="label">vw (viewport width)</div>
+    <div class="row pass" style="font-size: 3vw;">font-size: 3vw — scales with window</div>
+
+    <div class="label">vh (viewport height)</div>
+    <div class="row pass" style="height: 5vh; background-color:#ffe0f0; padding: 2px;">height: 5vh</div>
+
+    <div class="label">ch (approx 0.5em)</div>
+    <div class="row pass" style="width: 20ch; background-color:#e0f0ff; padding: 4px;">width: 20ch</div>
+
+    <div class="label">% (percentage of parent)</div>
+    <div class="row pass" style="width: 75%; background-color:#fff3cd; padding: 4px;">width: 75%</div>
+
+    <div class="label">0 (bare zero, no unit)</div>
+    <div class="row pass" style="margin: 0; padding: 4px; background-color: #f0fff0;">margin: 0</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>14. HTML Structure &amp; UA Defaults (Regression)</h2>
+  <div class="card">
+    <p><b>Bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>code</code></p>
+    <hr>
+    <blockquote>Blockquote — UA stylesheet gives left-border and muted color.</blockquote>
+    <pre>Preformatted text
+  stays as-is</pre>
     <table>
-      <thead>
-        <tr><th>Property</th><th>Value</th><th>Status</th></tr>
-      </thead>
+      <thead><tr><th>Property Group</th><th>Status</th></tr></thead>
       <tbody>
-        <tr><td>border-radius</td><td>12px</td><td>New</td></tr>
-        <tr><td>rgba()</td><td>0.4 alpha</td><td>New</td></tr>
-        <tr><td>calc()</td><td>100% - 40px</td><td>New</td></tr>
-        <tr><td>style blocks</td><td>cascade</td><td>New</td></tr>
-        <tr><td>color</td><td>#222</td><td>Existing</td></tr>
+        <tr><td>Color &amp; Alpha</td><td>✓ Implemented</td></tr>
+        <tr><td>Background</td><td>✓ Implemented</td></tr>
+        <tr><td>Typography</td><td>✓ Implemented</td></tr>
+        <tr><td>Box Model</td><td>✓ Implemented</td></tr>
+        <tr><td>Borders</td><td>✓ Implemented</td></tr>
+        <tr><td>Sizing</td><td>✓ Implemented</td></tr>
+        <tr><td>Math functions</td><td>✓ Implemented</td></tr>
+        <tr><td>Display / Visibility</td><td>✓ Implemented</td></tr>
+        <tr><td>Opacity / Shadow</td><td>✓ Implemented</td></tr>
+        <tr><td>List styles</td><td>✓ Implemented</td></tr>
+        <tr><td>Selectors (tag/class/id/compound/descendant/child/sibling/attr)</td><td>✓ Implemented</td></tr>
+        <tr><td>Cascade + Specificity</td><td>✓ Implemented</td></tr>
+        <tr><td>Inheritance (inherit / initial)</td><td>✓ Implemented</td></tr>
+        <tr><td>Length units (px/pt/em/rem/vw/vh/ch/%)</td><td>✓ Implemented</td></tr>
+        <tr><td>Transitions / Animations / Transforms</td><td>— Not yet</td></tr>
+        <tr><td>Flexbox / Grid layout</td><td>— Not yet</td></tr>
+        <tr><td>CSS Variables (--var)</td><td>— Not yet</td></tr>
+        <tr><td>Pseudo-classes (:hover, :nth-child)</td><td>— Not yet</td></tr>
+        <tr><td>Pseudo-elements (::before, ::after)</td><td>— Not yet</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p class="muted">Press Q or Escape to quit. R to reload.</p>
+  <p style="color: #888; font-size: 12px; margin-top: 20px;">
+    Press Q or Escape to quit. R to reload.
+  </p>
 
 </body>
 </html>

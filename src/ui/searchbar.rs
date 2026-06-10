@@ -86,11 +86,11 @@ impl SearchBar {
 
         // ---- Back button ----
         let back_x = BAR_PAD;
-        draw_nav_button(canvas, fonts, tc, "←", back_x, BAR_PAD, BTN_W, BTN_H, can_back);
+        draw_nav_button(canvas, fonts, tc, true, back_x, BAR_PAD, BTN_W, BTN_H, can_back);
 
         // ---- Forward button ----
         let fwd_x = BAR_PAD * 2 + BTN_W;
-        draw_nav_button(canvas, fonts, tc, "→", fwd_x, BAR_PAD, BTN_W, BTN_H, can_forward);
+        draw_nav_button(canvas, fonts, tc, false, fwd_x, BAR_PAD, BTN_W, BTN_H, can_forward);
 
         // ---- URL input box ----
         let input_x = BAR_PAD * 3 + BTN_W * 2;
@@ -174,29 +174,85 @@ fn normalise_url(raw: &str) -> String {
 }
 
 fn draw_nav_button(
-    canvas: &mut Canvas<Window>,
-    fonts:  &mut FontCache,
-    tc:     &TextureCreator<WindowContext>,
-    label:  &str,
+    canvas:   &mut Canvas<Window>,
+    _fonts:   &mut FontCache,
+    _tc:      &TextureCreator<WindowContext>,
+    is_back:  bool,
     x: i32, y: i32, w: i32, h: i32,
     enabled: bool,
 ) {
+    // Background
     let bg = if enabled { Color::RGB(220, 220, 220) } else { Color::RGB(235, 235, 235) };
     canvas.set_draw_color(bg);
     let _ = canvas.fill_rect(Rect::new(x, y, w as u32, h as u32));
 
+    // Border
     canvas.set_draw_color(Color::RGB(190, 190, 190));
     let _ = canvas.draw_rect(Rect::new(x, y, w as u32, h as u32));
 
-    let text_col = if enabled { Color::RGB(30, 30, 30) } else { Color::RGB(170, 170, 170) };
-    if let Some(font) = fonts.get(16, false, false) {
-        if let Ok(surf) = font.render(label).blended(text_col) {
-            if let Ok(tex) = tc.create_texture_from_surface(&surf) {
-                let (sw, sh) = (surf.width(), surf.height());
-                let tx = x + (w - sw as i32) / 2;
-                let ty = y + (h - sh as i32) / 2;
-                let _ = canvas.copy(&tex, None, Rect::new(tx, ty, sw, sh));
-            }
+    // Draw arrow icon using SDL2 primitives
+    let arrow_col = if enabled { Color::RGB(40, 40, 40) } else { Color::RGB(185, 185, 185) };
+    draw_arrow(canvas, is_back, x, y, w, h, arrow_col);
+}
+
+/// Draw a left (back) or right (forward) arrow icon centred inside a button cell.
+///
+/// Strategy: define three triangle vertices explicitly, then fill using
+/// horizontal scan lines — no ambiguous interpolation direction.
+fn draw_arrow(
+    canvas:  &mut Canvas<Window>,
+    is_back: bool,
+    bx: i32, by: i32, bw: i32, bh: i32,
+    color: Color,
+) {
+    let cy = by + bh / 2;
+
+    // Arrow proportions
+    let tri_half_h: i32 = bh / 4;      // half-height of the arrowhead
+    let tri_depth:  i32 = bw / 4;      // horizontal width of the arrowhead
+    let stem_len:   i32 = bw / 5;      // length of the shaft
+    let stem_h:     i32 = 2.max(bh / 8);
+    let total_w:    i32 = tri_depth + stem_len;
+
+    // Centre the entire arrow (head + shaft) horizontally in the button.
+    // For ← the layout is:  [tip] --tri_depth--> [base] --stem_len--> [shaft_end]
+    // For → the layout is:  [shaft_end] --stem_len--> [base] --tri_depth--> [tip]
+    let arrow_left = bx + (bw - total_w) / 2;   // leftmost pixel of the whole arrow
+
+    canvas.set_draw_color(color);
+
+    if is_back {
+        // ← : tip at left-center, two base corners at right top/bottom
+        //     tip  = (arrow_left, cy)
+        //     base = (arrow_left + tri_depth, cy ± tri_half_h)
+        let tip_x  = arrow_left;
+        let base_x = arrow_left + tri_depth;
+
+        for dy in -tri_half_h..=tri_half_h {
+            // At dy=±tri_half_h the row left edge is at base_x (zero width from tip side)
+            // At dy=0 the row left edge is at tip_x (full tri_depth width)
+            // Linear interp: left = base_x - (1 - |dy|/tri_half_h) * tri_depth
+            let t = (tri_half_h - dy.abs()) as f32 / tri_half_h as f32; // 1.0 at center, 0.0 at edges
+            let row_left = base_x - (t * tri_depth as f32).round() as i32;
+            let w = (base_x - row_left + 1).max(1) as u32;
+            let _ = canvas.fill_rect(Rect::new(row_left, cy + dy, w, 1));
         }
+        // Shaft to the right of the triangle base
+        let _ = canvas.fill_rect(Rect::new(base_x, cy - stem_h / 2, stem_len as u32, stem_h as u32));
+    } else {
+        // → : tip at right-center, two base corners at left top/bottom
+        //     tip  = (arrow_left + total_w, cy)
+        //     base = (arrow_left + stem_len, cy ± tri_half_h)
+        let tip_x  = arrow_left + total_w;
+        let base_x = arrow_left + stem_len;
+
+        for dy in -tri_half_h..=tri_half_h {
+            let t = (tri_half_h - dy.abs()) as f32 / tri_half_h as f32;
+            let row_right = base_x + (t * tri_depth as f32).round() as i32;
+            let w = (row_right - base_x + 1).max(1) as u32;
+            let _ = canvas.fill_rect(Rect::new(base_x, cy + dy, w, 1));
+        }
+        // Shaft to the left of the triangle base
+        let _ = canvas.fill_rect(Rect::new(arrow_left, cy - stem_h / 2, stem_len as u32, stem_h as u32));
     }
 }

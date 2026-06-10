@@ -89,6 +89,23 @@ pub fn layout_table(
                 for child in &cell.children {
                     sub.layout_node(canvas, tc, fonts, images, base_url, child, cx + col_w - CELL_PAD);
                 }
+                // Merge clickable areas back to the parent state
+                ls.link_areas.extend(sub.link_areas);
+                ls.button_areas.extend(sub.button_areas);
+                // Merge input areas back, fixing up indices relative to parent's count
+                let base_idx = ls.input_count;
+                for mut ia in sub.input_areas {
+                    ia.index += base_idx;
+                    ls.input_areas.push(ia);
+                }
+                ls.input_count += sub.input_count;
+                // Merge any new input values captured by the sub-state
+                if sub.input_values.len() > ls.input_values.len() {
+                    ls.input_values.resize(base_idx + sub.input_values.len(), String::new());
+                    for (i, v) in sub.input_values.into_iter().enumerate() {
+                        if !v.is_empty() { ls.input_values[base_idx + i] = v; }
+                    }
+                }
             }
         }
 
@@ -119,15 +136,22 @@ fn sub_state<'ctx>(
     font_size: u16,
 ) -> LayoutState<'ctx> {
     LayoutState {
-        ctx:         parent.ctx,
-        cursor_x:    cx,
-        cursor_y:    cy,
-        line_height: font_size as i32,
-        indent:      0,
-        margin_left: cx,   // cell content starts at cx
-        boxes:       Vec::new(),
-        link_areas:  Vec::new(),
-        ol_stack:    Vec::new(),
+        ctx:           parent.ctx,
+        cursor_x:      cx,
+        cursor_y:      cy,
+        line_height:   font_size as i32,
+        indent:        0,
+        margin_left:   cx,   // cell content starts at cx
+        boxes:         Vec::new(),
+        link_areas:    Vec::new(),
+        input_areas:   Vec::new(),
+        button_areas:  Vec::new(),
+        input_count:   0,
+        input_values:  parent.input_values.clone(),
+        focused_input: parent.focused_input,
+        form_action:   parent.form_action.clone(),
+        ol_stack:      Vec::new(),
+        content_height: 0,
     }
 }
 

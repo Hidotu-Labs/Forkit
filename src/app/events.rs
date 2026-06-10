@@ -5,18 +5,21 @@ use sdl2::mouse::MouseButton;
 use crate::ui::searchbar::BarRegion;
 use crate::ui::tabbar::TAB_BAR_HEIGHT;
 use crate::window::window::SCROLL_STEP;
-use super::browser::Browser;
+use super::browser::{Browser, chrome_height, SCROLLBAR_W};
 
 /// Process one SDL event.  Returns `true` if the app should quit.
 pub fn handle_event(browser: &mut Browser, event: Event) -> bool {
     match event {
         Event::Quit { .. } => return true,
 
-        // ---- Mouse button ----
+        // ---- Mouse button down ----
         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-            let (win_w, _) = browser.window.canvas.output_size()
+            let (win_w, win_h) = browser.window.canvas.output_size()
                 .map(|(w, h)| (w as i32, h as i32))
                 .unwrap_or((1024, 768));
+
+            let chrome_h  = chrome_height();
+            let content_h = (win_h - chrome_h).max(0);
 
             // Tab bar region
             if y < TAB_BAR_HEIGHT {
@@ -38,14 +41,61 @@ pub fn handle_event(browser: &mut Browser, event: Event) -> bool {
                 return false;
             }
 
+            // Scrollbar strip (right edge of content area)
+            let content_y = y - chrome_h;
+            if x >= win_w - SCROLLBAR_W {
+                if let Some((_track_y, _track_h, thumb_y, thumb_h)) =
+                    browser.scrollbar_geometry(content_h)
+                {
+                    // Click inside thumb → start drag, recording offset within thumb
+                    if content_y >= thumb_y && content_y < thumb_y + thumb_h {
+                        browser.scrollbar_drag = Some(content_y - thumb_y);
+                    } else {
+                        // Click on track → jump to that position
+                        let new_scroll = browser.thumb_y_to_scroll(content_y, content_h);
+                        browser.tabs[browser.active].scroll_y = new_scroll;
+                        browser.clamp_scroll();
+                        browser.need_draw = true;
+                    }
+                }
+                return false;
+            }
+
             // Content area — let browser dispatch link clicks
             browser.handle_click(x, y);
         }
 
-        // ---- Text input into the address bar ----
+        // ---- Mouse button up — end scrollbar drag ----
+        Event::MouseButtonUp { mouse_btn: MouseButton::Left, .. } => {
+            if browser.scrollbar_drag.take().is_some() {
+                browser.need_draw = true;
+            }
+        }
+
+        // ---- Mouse motion — scroll while dragging thumb ----
+        Event::MouseMotion { y, .. } => {
+            if let Some(drag_offset) = browser.scrollbar_drag {
+                let (_, win_h) = browser.window.canvas.output_size()
+                    .map(|(w, h)| (w as i32, h as i32))
+                    .unwrap_or((1024, 768));
+                let content_h = (win_h - chrome_height()).max(0);
+                let thumb_top = y - chrome_height() - drag_offset;
+                let new_scroll = browser.thumb_y_to_scroll(thumb_top, content_h);
+                browser.tabs[browser.active].scroll_y = new_scroll;
+                browser.clamp_scroll();
+                browser.need_draw = true;
+            }
+        }
+
+        // ---- Text input into the address bar OR a focused page input ----
         Event::TextInput { text, .. } => {
-            browser.bar.on_text_input(&text);
-            browser.need_draw = true;
+            if browser.tab().focused_input.is_some() {
+                browser.tab_mut().type_text(&text);
+                browser.need_draw = true;
+            } else {
+                browser.bar.on_text_input(&text);
+                browser.need_draw = true;
+            }
         }
 
         // ---- Key events ----
@@ -89,6 +139,31 @@ fn handle_key(browser: &mut Browser, k: Keycode, mods: Mod) {
                 browser.bar.focused = false;
                 browser.open_blank_tab();
             }
+            _ => {}
+        }
+        return;
+    }
+
+    // ---- Focused page input ----
+    if browser.tab().focused_input.is_some() {
+        match k {
+            Keycode::Backspace => {
+                browser.tab_mut().backspace();
+                browser.need_draw = true;
+            }
+            Keycode::Escape => {
+                browser.tab_mut().focused_input = None;
+                browser.need_draw = true;
+            }
+            // Ctrl+A: clear the current input
+            Keycode::A if ctrl => {
+                if let Some(idx) = browser.tab().focused_input {
+                    browser.tab_mut().ensure_input_slot(idx);
+                    browser.tab_mut().input_values[idx].clear();
+                    browser.need_draw = true;
+                }
+            }
+            // Don't let page-level shortcuts fire while typing into a field
             _ => {}
         }
         return;

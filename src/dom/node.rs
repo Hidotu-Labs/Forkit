@@ -64,15 +64,61 @@ pub struct BoxSpacing {
     pub left:   i32,
 }
 
-/// Optional size constraint
-#[derive(Debug, Clone, Copy, Default)]
+/// Optional size constraint.
+///
+/// `*_raw` fields hold the original CSS value string for any dimension whose
+/// value uses viewport-relative (`vw`/`vh`) or percentage (`%`) units.  Those
+/// need to be resolved at layout time when the real containing-block width and
+/// viewport dimensions are known.  Absolute pixel/em values are resolved at
+/// cascade time and stored directly in the `Option<i32>` fields; the
+/// corresponding `*_raw` field is `None` in that case.
+#[derive(Debug, Clone, Default)]
 pub struct SizeConstraint {
-    pub width:      Option<i32>,
-    pub height:     Option<i32>,
-    pub max_width:  Option<i32>,
-    pub min_width:  Option<i32>,
-    pub max_height: Option<i32>,
-    pub min_height: Option<i32>,
+    pub width:          Option<i32>,
+    pub height:         Option<i32>,
+    pub max_width:      Option<i32>,
+    pub min_width:      Option<i32>,
+    pub max_height:     Option<i32>,
+    pub min_height:     Option<i32>,
+    /// Raw CSS value for `width` when it uses `%`/`vw`/`vh`.
+    pub width_raw:      Option<String>,
+    /// Raw CSS value for `height` when it uses `%`/`vw`/`vh`.
+    pub height_raw:     Option<String>,
+    /// Raw CSS value for `max-width` when it uses `%`/`vw`/`vh`.
+    pub max_width_raw:  Option<String>,
+    /// Raw CSS value for `min-width` when it uses `%`/`vw`/`vh`.
+    pub min_width_raw:  Option<String>,
+    /// Raw CSS value for `max-height` when it uses `%`/`vw`/`vh`.
+    pub max_height_raw: Option<String>,
+    /// Raw CSS value for `min-height` when it uses `%`/`vw`/`vh`.
+    pub min_height_raw: Option<String>,
+}
+
+/// CSS `background-size`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BgSize {
+    #[default] Auto,   // use the image's natural size
+    Cover,             // scale to cover the box (may crop)
+    Contain,           // scale to fit inside the box (may letterbox)
+}
+
+/// CSS `background-repeat`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BgRepeat {
+    #[default] Repeat,  // tile in both axes
+    RepeatX,            // tile horizontally only
+    RepeatY,            // tile vertically only
+    NoRepeat,           // single image, no tiling
+}
+
+/// CSS `background-position` — resolved to pixel offsets relative to the box.
+/// Percentages are stored as-is and resolved at paint time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BgPosition {
+    /// Horizontal offset in px (0 = left edge)
+    pub x: i32,
+    /// Vertical offset in px (0 = top edge)
+    pub y: i32,
 }
 
 /// A simple box-shadow descriptor (offset-x, offset-y, blur, color).
@@ -105,6 +151,10 @@ pub struct Style {
 
     // --- box ---
     pub bg_color:            Option<[u8; 3]>,
+    pub bg_image_url:        Option<String>,   // CSS background-image: url(…)
+    pub bg_size:             BgSize,
+    pub bg_repeat:           BgRepeat,
+    pub bg_position:         BgPosition,
     pub display:             Display,
     pub display_block:       bool,   // kept for compat — mirrors display==Block
     pub borders:             Borders,
@@ -151,6 +201,10 @@ impl Default for Style {
             font_variant_caps: false,
 
             bg_color:          None,
+            bg_image_url:      None,
+            bg_size:           BgSize::Auto,
+            bg_repeat:         BgRepeat::Repeat,
+            bg_position:       BgPosition::default(),
             display:           Display::Inline,
             display_block:     false,
             borders:           Borders::default(),

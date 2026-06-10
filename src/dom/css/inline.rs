@@ -1,6 +1,6 @@
 use crate::dom::node::{
     Style, TextAlign, ListStyleType, Display, TextTransform, Overflow,
-    Border, Borders, FontFamilyHint, WordBreak, BoxShadow,
+    Border, Borders, FontFamilyHint, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
 };
 use super::color::parse_color_alpha;
 use super::length::{parse_length, parse_length_ctx, parse_box_spacing, LengthContext};
@@ -29,9 +29,44 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             }
         }
         "background-color" | "background" => {
-            // Skip gradient / url() values; pass everything else whole to the parser.
-            // rgba() and hsla() contain spaces, so we must NOT split on whitespace for them.
             let lower_val = val.to_ascii_lowercase();
+
+            // If this is purely background-color (the property name), don't look for url()
+            let is_color_only_prop = prop == "background-color";
+
+            // Handle background-image url() inside the shorthand
+            if !is_color_only_prop && lower_val.contains("url(") {
+                if let Some(url) = extract_css_url(val) {
+                    s.bg_image_url = Some(url);
+                }
+                // Parse remaining tokens for repeat, size, position, and color.
+                // Tokenise respecting parenthesised groups.
+                let tokens = tokenise_bg_shorthand(val);
+                for tok in &tokens {
+                    let tl = tok.to_ascii_lowercase();
+                    if tl.starts_with("url(") { continue; }
+                    match tl.as_str() {
+                        "no-repeat"       => { s.bg_repeat = BgRepeat::NoRepeat; }
+                        "repeat-x"        => { s.bg_repeat = BgRepeat::RepeatX; }
+                        "repeat-y"        => { s.bg_repeat = BgRepeat::RepeatY; }
+                        "repeat"          => { s.bg_repeat = BgRepeat::Repeat; }
+                        "cover"           => { s.bg_size   = BgSize::Cover; }
+                        "contain"         => { s.bg_size   = BgSize::Contain; }
+                        "center"          => {} // position — default is fine
+                        _ => {
+                            // Try as colour
+                            if let Some((rgb, alpha)) = parse_color_alpha(tok) {
+                                s.bg_color = Some(rgb);
+                                s.bg_alpha = alpha;
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+
+            // No url() — treat as a plain background-color value.
+            // rgba() and hsla() contain spaces, so we must NOT split on whitespace for them.
             let is_functional_color = lower_val.starts_with("rgba(")
                 || lower_val.starts_with("rgb(")
                 || lower_val.starts_with("hsla(")
@@ -40,13 +75,61 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             let tok = if is_functional_color || !val.contains(' ') {
                 val
             } else {
-                // Multi-word value like "linear-gradient(...)" or "url(...)":
-                // take the first space-separated token to see if it's a plain color.
+                // Multi-word non-url value: take the first token as the colour.
                 val.split_whitespace().next().unwrap_or(val)
             };
             if let Some((rgb, alpha)) = parse_color_alpha(tok) {
                 s.bg_color = Some(rgb);
                 s.bg_alpha = alpha;
+            }
+        }
+        "background-image" => {
+            let lower = val.to_ascii_lowercase();
+            if lower == "none" {
+                s.bg_image_url = None;
+            } else if let Some(url) = extract_css_url(val) {
+                s.bg_image_url = Some(url);
+            }
+        }
+        "background-size" => {
+            s.bg_size = match val.to_ascii_lowercase().as_str() {
+                "cover"   => BgSize::Cover,
+                "contain" => BgSize::Contain,
+                _         => BgSize::Auto,
+            };
+        }
+        "background-repeat" => {
+            s.bg_repeat = match val.to_ascii_lowercase().as_str() {
+                "no-repeat"       => BgRepeat::NoRepeat,
+                "repeat-x"        => BgRepeat::RepeatX,
+                "repeat-y"        => BgRepeat::RepeatY,
+                _                 => BgRepeat::Repeat,
+            };
+        }
+        "background-position" => {
+            let tokens: Vec<&str> = val.split_whitespace().collect();
+            let resolve_axis = |tok: &str, is_x: bool| -> i32 {
+                match tok.to_ascii_lowercase().as_str() {
+                    "left"   => 0,
+                    "right"  => if is_x { 10000 } else { 0 },   // sentinel: 10000 = 100%
+                    "top"    => if !is_x { 0 } else { 0 },
+                    "bottom" => if !is_x { 10000 } else { 0 },
+                    "center" => 5000,                            // sentinel: 5000 = 50%
+                    t => parse_length(t, base, 0).unwrap_or(0),
+                }
+            };
+            match tokens.as_slice() {
+                [x_tok, y_tok] => {
+                    s.bg_position = BgPosition {
+                        x: resolve_axis(x_tok, true),
+                        y: resolve_axis(y_tok, false),
+                    };
+                }
+                [single] => {
+                    let v = resolve_axis(single, true);
+                    s.bg_position = BgPosition { x: v, y: v };
+                }
+                _ => {}
             }
         }
         "opacity" => {
@@ -142,43 +225,54 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
         }
 
         // ---- sizing ----
-        // These use parse_length_ctx so that viewport-relative units (vw, vh)
-        // and percentage values resolve against the correct dimension.
+        // Absolute units (px, em, pt, rem) are resolved immediately.
+        // Viewport-relative (vw, vh) and percentage (%) values are stored raw
+        // so they can be re-resolved in block.rs with the real containing-block
+        // width, height, and viewport dimensions.
         "width" => {
-            let ctx = LengthContext {
-                base_font_size:  base,
-                percent_base:    800,
-                viewport_width:  800,
-                viewport_height: 600,
-            };
-            s.size.width = parse_length_ctx(val, &ctx).filter(|&n| n > 0);
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+                s.size.width     = None;
+                s.size.width_raw = Some(val.to_owned());
+            } else {
+                s.size.width_raw = None;
+                s.size.width     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
         }
         "height" => {
-            let ctx = LengthContext {
-                base_font_size:  base,
-                percent_base:    600,
-                viewport_width:  800,
-                viewport_height: 600,
-            };
-            s.size.height = parse_length_ctx(val, &ctx).filter(|&n| n > 0);
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+                s.size.height     = None;
+                s.size.height_raw = Some(val.to_owned());
+            } else {
+                s.size.height_raw = None;
+                s.size.height     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
         }
         "max-width" => {
-            let ctx = LengthContext {
-                base_font_size:  base,
-                percent_base:    800,
-                viewport_width:  800,
-                viewport_height: 600,
-            };
-            s.size.max_width = parse_length_ctx(val, &ctx).filter(|&n| n > 0);
+            if val.eq_ignore_ascii_case("none") {
+                s.size.max_width     = None;
+                s.size.max_width_raw = None;
+                return;
+            }
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+                s.size.max_width     = None;
+                s.size.max_width_raw = Some(val.to_owned());
+            } else {
+                s.size.max_width_raw = None;
+                s.size.max_width     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
         }
         "min-width" => {
-            let ctx = LengthContext {
-                base_font_size:  base,
-                percent_base:    800,
-                viewport_width:  800,
-                viewport_height: 600,
-            };
-            s.size.min_width = parse_length_ctx(val, &ctx).filter(|&n| n > 0);
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+                s.size.min_width     = None;
+                s.size.min_width_raw = Some(val.to_owned());
+            } else {
+                s.size.min_width_raw = None;
+                s.size.min_width     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
         }
 
         // ---- borders ----
@@ -316,26 +410,116 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
         // ---- sizing (max-height / min-height) ----
         "max-height" => {
-            let ctx = LengthContext {
-                base_font_size:  base,
-                percent_base:    600,
-                viewport_width:  800,
-                viewport_height: 600,
-            };
-            s.size.max_height = parse_length_ctx(val, &ctx).filter(|&n| n > 0);
+            if val.eq_ignore_ascii_case("none") {
+                s.size.max_height     = None;
+                s.size.max_height_raw = None;
+                return;
+            }
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+                s.size.max_height     = None;
+                s.size.max_height_raw = Some(val.to_owned());
+            } else {
+                s.size.max_height_raw = None;
+                s.size.max_height     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
         }
         "min-height" => {
-            let ctx = LengthContext {
-                base_font_size:  base,
-                percent_base:    600,
-                viewport_width:  800,
-                viewport_height: 600,
-            };
-            s.size.min_height = parse_length_ctx(val, &ctx).filter(|&n| n > 0);
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+                s.size.min_height     = None;
+                s.size.min_height_raw = Some(val.to_owned());
+            } else {
+                s.size.min_height_raw = None;
+                s.size.min_height     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
         }
 
         _ => {} // unrecognised property — silently ignore
     }
+}
+
+// ---------------------------------------------------------------------------
+// URL extractor
+// ---------------------------------------------------------------------------
+
+/// Tokenise a CSS `background` shorthand value, keeping parenthesised groups
+/// (like `url(...)` or `rgb(...)`) intact as single tokens.
+/// Splits on whitespace outside of parens; also splits on `/` (for `pos/size`).
+fn tokenise_bg_shorthand(val: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    for ch in val.chars() {
+        match ch {
+            '(' => { depth += 1; cur.push(ch); }
+            ')' => {
+                if depth > 0 { depth -= 1; }
+                cur.push(ch);
+                if depth == 0 {
+                    let t = cur.trim().to_string();
+                    if !t.is_empty() { tokens.push(t); }
+                    cur.clear();
+                }
+            }
+            ' ' | '\t' if depth == 0 => {
+                let t = cur.trim().to_string();
+                if !t.is_empty() { tokens.push(t); }
+                cur.clear();
+            }
+            '/' if depth == 0 => {
+                // position/size separator — treat as a token boundary
+                let t = cur.trim().to_string();
+                if !t.is_empty() { tokens.push(t); }
+                cur.clear();
+            }
+            _ => { cur.push(ch); }
+        }
+    }
+    let t = cur.trim().to_string();
+    if !t.is_empty() { tokens.push(t); }
+    tokens
+}
+
+/// Extract the URL string from a CSS `url(...)` token.
+/// Handles both quoted (`url("foo.png")`) and unquoted (`url(foo.png)`) forms.
+/// Also handles values where url() is surrounded by other tokens (e.g. background shorthand).
+pub(crate) fn extract_css_url(val: &str) -> Option<String> {
+    let trimmed = val.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Find the start of url(
+    let url_start = lower.find("url(")?;
+    let after_open = url_start + 4; // skip "url("
+
+    // Find the matching closing paren, tracking nested parens
+    let chars: Vec<char> = trimmed[after_open..].chars().collect();
+    let mut depth = 1usize;
+    let mut end = 0usize;
+    for (i, &ch) in chars.iter().enumerate() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 { end = i; break; }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 { return None; }
+
+    let byte_end = after_open + chars[..end].iter().map(|c| c.len_utf8()).sum::<usize>();
+    let inner = trimmed[after_open..byte_end].trim();
+
+    // Strip optional quotes
+    let inner = if (inner.starts_with('"') && inner.ends_with('"'))
+        || (inner.starts_with('\'') && inner.ends_with('\''))
+    {
+        &inner[1..inner.len() - 1]
+    } else {
+        inner
+    };
+    if inner.is_empty() { None } else { Some(inner.to_owned()) }
 }
 
 // ---------------------------------------------------------------------------

@@ -105,10 +105,16 @@ pub fn flush_line(
         TextAlign::Right => (max_w - MARGIN_RIGHT - tw).max(ls.margin_left),
     };
 
-    // Background (mark, code, etc.)
+    // Background (mark, code, etc.) — pre-composite against white
     if let Some(bg) = style.bg_color {
+        let a = style.bg_alpha as u32;
+        let pre = [
+            ((a * bg[0] as u32 + (255 - a) * 255) / 255) as u8,
+            ((a * bg[1] as u32 + (255 - a) * 255) / 255) as u8,
+            ((a * bg[2] as u32 + (255 - a) * 255) / 255) as u8,
+        ];
         fill_rect(
-            canvas, Color::RGB(bg[0], bg[1], bg[2]),
+            canvas, Color::RGB(pre[0], pre[1], pre[2]),
             x, ls.cursor_y, tw, th,
             ls.ctx.scroll_y, ls.ctx.viewport_height,
         );
