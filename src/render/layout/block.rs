@@ -264,6 +264,8 @@ pub fn layout_element(
         return;
     }
 
+
+
     // ── Tables ─────────────────────────────────────────────────────────────
     if tag == "table" {
         table::layout_table(ls, canvas, tc, fonts, images, base_url, el, max_w);

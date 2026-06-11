@@ -136,7 +136,8 @@ pub fn apply_tag_defaults(el: &mut Element) {
             s.list_style_type = ListStyleType::Decimal;
         }
         "li" => { s.margin.top = 2; s.margin.bottom = 2; }
-        "dd" => { s.margin.left = 32; }
+        "dl" => { s.margin.top = 8; s.margin.bottom = 8; }
+        "dd" => { s.margin.left = 40; }
         "dt" => { s.bold = true; }
 
         // ── Tables ─────────────────────────────────────────────────────────
