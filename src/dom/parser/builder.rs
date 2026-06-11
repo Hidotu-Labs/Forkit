@@ -184,6 +184,42 @@ pub fn parse(html: &str, base_url: &str) -> Node {
                 if tok.kind == TokKind::SelfClose || is_void(tag) {
                     stack.last_mut().unwrap().children.push(Node::Element(el));
                 } else {
+                    // ── Implicit close rules (HTML5 optional-close tags) ────
+                    // Some elements auto-close when a sibling of the same
+                    // family is opened, e.g. <dt>/<dd> in a <dl>, <li> in a
+                    // <ul>/<ol>, <p> before a block element.
+                    match tag {
+                        // <dt> and <dd> implicitly close any open <dt>/<dd>
+                        // that hasn't been explicitly closed yet.
+                        "dt" | "dd" => {
+                            // Walk back and pop any open dt/dd (stop at dl or
+                            // the document root so we don't break other structure).
+                            while stack.len() > 1 {
+                                let top = stack.last().map(|e| e.tag.as_str()).unwrap_or("");
+                                if top == "dt" || top == "dd" {
+                                    let fin = stack.pop().unwrap();
+                                    stack.last_mut().unwrap().children.push(Node::Element(fin));
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        // <li> implicitly closes a previous open <li>
+                        "li" => {
+                            if stack.last().map(|e| e.tag.as_str()) == Some("li") {
+                                let fin = stack.pop().unwrap();
+                                stack.last_mut().unwrap().children.push(Node::Element(fin));
+                            }
+                        }
+                        // <p> is implicitly closed by any block-level element
+                        _ if el.style.display_block => {
+                            if stack.last().map(|e| e.tag.as_str()) == Some("p") {
+                                let fin = stack.pop().unwrap();
+                                stack.last_mut().unwrap().children.push(Node::Element(fin));
+                            }
+                        }
+                        _ => {}
+                    }
                     stack.push(el);
                 }
             }
