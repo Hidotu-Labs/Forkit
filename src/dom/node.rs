@@ -20,6 +20,14 @@ pub enum Display {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextTransform { #[default] None, Uppercase, Lowercase, Capitalize }
 
+/// CSS `visibility`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    #[default] Visible,
+    Hidden,    // invisible but still occupies layout space
+    Collapse,  // like hidden for most elements; like display:none for table rows
+}
+
 /// CSS `overflow`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Overflow { #[default] Visible, Hidden, Auto, Scroll }
@@ -157,6 +165,7 @@ pub struct Style {
     pub bg_position:         BgPosition,
     pub display:             Display,
     pub display_block:       bool,   // kept for compat — mirrors display==Block
+    pub visibility:          Visibility,
     pub borders:             Borders,
     pub padding:             BoxSpacing,
     pub margin:              BoxSpacing,
@@ -170,6 +179,12 @@ pub struct Style {
     // --- list ---
     pub list_style_type:     ListStyleType,
 
+    // --- margin auto ---
+    /// `margin-left: auto` — used for horizontal centering / right-flush layout
+    pub margin_auto_left:    bool,
+    /// `margin-right: auto` — used for horizontal centering
+    pub margin_auto_right:   bool,
+
     // --- link ---
     pub href:                Option<String>,
 
@@ -181,6 +196,12 @@ pub struct Style {
 
     // --- word break ---
     pub word_break:          WordBreak,
+
+    /// Raw CSS value for `font-size` when it uses viewport-relative units
+    /// (`vw`, `vh`) or `calc()`. These cannot be resolved at cascade time
+    /// because the real viewport dimensions aren't known yet; they are
+    /// re-resolved at layout time in block.rs.
+    pub font_size_raw:       Option<String>,
 }
 
 impl Default for Style {
@@ -207,6 +228,7 @@ impl Default for Style {
             bg_position:       BgPosition::default(),
             display:           Display::Inline,
             display_block:     false,
+            visibility:        Visibility::Visible,
             borders:           Borders::default(),
             padding:           BoxSpacing::default(),
             margin:            BoxSpacing::default(),
@@ -222,6 +244,9 @@ impl Default for Style {
             font_family:       FontFamilyHint::SansSerif,
             box_shadow:        None,
             word_break:        WordBreak::Normal,
+            margin_auto_left:  false,
+            margin_auto_right: false,
+            font_size_raw:     None,
         }
     }
 }

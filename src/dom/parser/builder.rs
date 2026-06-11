@@ -14,7 +14,7 @@ const VOID_TAGS: &[&str] = &[
 
 /// Tags whose entire subtree is skipped (non-visual / scripting).
 const SKIP_TAGS: &[&str] = &[
-    "script","noscript","template","svg","math",
+    "script","noscript","template","svg","math","title",
 ];
 
 /// Tags whose subtree is skipped but whose `<style>` children are still harvested.
@@ -80,6 +80,11 @@ pub fn parse(html: &str, base_url: &str) -> Node {
             TokKind::Eof => break,
 
             TokKind::Text => {
+                // Drop text that appears before any real element is opened
+                // (e.g. bare-text preambles some servers send before <html>).
+                if stack.len() <= 1 {
+                    continue;
+                }
                 let in_pre = stack.iter().any(|e| e.style.white_space_pre);
                 if !in_pre && tok.attrs.chars().all(|c| c.is_ascii_whitespace()) {
                     continue; // drop whitespace-only nodes outside <pre>

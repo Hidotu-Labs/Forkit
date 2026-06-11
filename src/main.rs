@@ -1,5 +1,6 @@
 mod app;
 mod dom;
+mod js;
 mod net;
 mod render;
 mod ui;
@@ -72,6 +73,9 @@ fn main() {
             if handle_event(&mut browser, event) { break 'main; }
         }
 
+        // --- Poll background tab loaders ---
+        browser.poll_tabs();
+
         // --- Navigate if the bar submitted a URL ---
         if let Some(url) = browser.bar.pending.take() {
             browser.navigate(&url);
@@ -81,7 +85,13 @@ fn main() {
         if browser.need_draw {
             browser.draw();
         } else {
-            std::thread::sleep(std::time::Duration::from_millis(8));
+            let any_loading = browser.tabs.iter().any(|t| t.is_loading());
+            if any_loading {
+                // Keep redrawing to animate the spinner
+                browser.draw();
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
         }
     }
 }

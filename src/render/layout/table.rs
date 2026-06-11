@@ -6,10 +6,11 @@ use crate::dom::node::{Node, Element};
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 
-use super::paint::{fill_rect, draw_rect};
-use super::state::{LayoutState, MARGIN_LEFT, MARGIN_RIGHT, BLOCK_MARGIN};
+use super::paint::{fill_rect, fill_rect_alpha};
+use super::state::{LayoutState, MARGIN_RIGHT, BLOCK_MARGIN};
 
-const CELL_PAD: i32 = 6;
+/// Default cell padding used when no CSS padding is set on the cell.
+const DEFAULT_CELL_PAD: i32 = 6;
 
 /// Lay out a `<table>` element using a uniform column grid.
 pub fn layout_table(
@@ -56,11 +57,16 @@ pub fn layout_table(
         for (ci, cell_node) in cells.iter().enumerate() {
             if let Node::Element(cell) = cell_node {
                 let cx   = table_x + ci as i32 * col_w;
-                let mut sub = sub_state(ls, cx + CELL_PAD, row_start_y + CELL_PAD, cell.style.font_size);
+                // Use cell's CSS padding if set, otherwise fall back to default
+                let pad_top  = if cell.style.padding.top  > 0 { cell.style.padding.top  } else { DEFAULT_CELL_PAD };
+                let pad_left = if cell.style.padding.left > 0 { cell.style.padding.left } else { DEFAULT_CELL_PAD };
+                let pad_bot  = if cell.style.padding.bottom > 0 { cell.style.padding.bottom } else { DEFAULT_CELL_PAD };
+                let pad_rgt  = if cell.style.padding.right  > 0 { cell.style.padding.right  } else { DEFAULT_CELL_PAD };
+                let mut sub = sub_state(ls, cx + pad_left, row_start_y + pad_top, cell.style.font_size);
                 for child in &cell.children {
-                    sub.layout_node(canvas, tc, fonts, images, base_url, child, cx + col_w - CELL_PAD);
+                    sub.layout_node(canvas, tc, fonts, images, base_url, child, cx + col_w - pad_rgt);
                 }
-                cell_heights[ci] = sub.cursor_y + sub.line_height + CELL_PAD - row_start_y;
+                cell_heights[ci] = sub.cursor_y + sub.line_height + pad_bot - row_start_y;
             }
         }
 
@@ -78,16 +84,29 @@ pub fn layout_table(
                               ls.ctx.scroll_y, ls.ctx.viewport_height);
                 }
 
-                // Border
-                let bc = cell.style.borders.top.color;
-                draw_rect(canvas, Color::RGB(bc[0], bc[1], bc[2]),
-                          cx, row_start_y, col_w, row_h,
-                          ls.ctx.scroll_y, ls.ctx.viewport_height);
+                // Border — collapsed model: only draw if the cell has an
+                // explicit border. Each cell draws only top + left edges to
+                // avoid doubling shared borders between adjacent cells.
+                if cell.style.borders.top.width > 0 {
+                    let bc   = cell.style.borders.top.color;
+                    let bc_c = Color::RGB(bc[0], bc[1], bc[2]);
+                    // top edge
+                    fill_rect_alpha(canvas, bc_c, 255,
+                        cx, row_start_y, col_w, 1,
+                        ls.ctx.scroll_y, ls.ctx.viewport_height);
+                    // left edge
+                    fill_rect_alpha(canvas, bc_c, 255,
+                        cx, row_start_y, 1, row_h,
+                        ls.ctx.scroll_y, ls.ctx.viewport_height);
+                }
 
                 // Content
-                let mut sub = sub_state(ls, cx + CELL_PAD, row_start_y + CELL_PAD, cell.style.font_size);
+                let pad_top  = if cell.style.padding.top    > 0 { cell.style.padding.top    } else { DEFAULT_CELL_PAD };
+                let pad_left = if cell.style.padding.left   > 0 { cell.style.padding.left   } else { DEFAULT_CELL_PAD };
+                let pad_rgt  = if cell.style.padding.right  > 0 { cell.style.padding.right  } else { DEFAULT_CELL_PAD };
+                let mut sub = sub_state(ls, cx + pad_left, row_start_y + pad_top, cell.style.font_size);
                 for child in &cell.children {
-                    sub.layout_node(canvas, tc, fonts, images, base_url, child, cx + col_w - CELL_PAD);
+                    sub.layout_node(canvas, tc, fonts, images, base_url, child, cx + col_w - pad_rgt);
                 }
                 // Merge clickable areas back to the parent state
                 ls.link_areas.extend(sub.link_areas);
@@ -112,12 +131,36 @@ pub fn layout_table(
         ls.cursor_y += row_h;
     }
 
-    // Outer border
+    // Collapsed border closing lines — only needed when cells have borders.
+    // Draw the right edge and bottom edge to close the grid.
     let table_h = ls.cursor_y - table_start_y;
-    let bc = table.style.borders.top.color;
-    draw_rect(canvas, Color::RGB(bc[0], bc[1], bc[2]),
-              table_x, table_start_y, table_w, table_h,
-              ls.ctx.scroll_y, ls.ctx.viewport_height);
+    let cells_have_borders = rows.iter().flatten().any(|n| {
+        matches!(n, Node::Element(e) if is_cell(n) && e.style.borders.top.width > 0)
+    });
+    if cells_have_borders && table_h > 0 && table_w > 0 {
+        let grid_color = first_cell_border_color(&rows);
+        let gc = Color::RGB(grid_color[0], grid_color[1], grid_color[2]);
+        fill_rect_alpha(canvas, gc, 255,
+            table_x + table_w - 1, table_start_y, 1, table_h,
+            ls.ctx.scroll_y, ls.ctx.viewport_height);
+        fill_rect_alpha(canvas, gc, 255,
+            table_x, ls.cursor_y - 1, table_w, 1,
+            ls.ctx.scroll_y, ls.ctx.viewport_height);
+    }
+
+    // Optional explicit outer border (only when table has a CSS border set).
+    if table.style.borders.top.width > 0 {
+        let bc = table.style.borders.top.color;
+        let bc_c = Color::RGB(bc[0], bc[1], bc[2]);
+        fill_rect_alpha(canvas, bc_c, 255, table_x, table_start_y, table_w, 1,
+            ls.ctx.scroll_y, ls.ctx.viewport_height);
+        fill_rect_alpha(canvas, bc_c, 255, table_x, table_start_y, 1, table_h,
+            ls.ctx.scroll_y, ls.ctx.viewport_height);
+        fill_rect_alpha(canvas, bc_c, 255, table_x + table_w - 1, table_start_y, 1, table_h,
+            ls.ctx.scroll_y, ls.ctx.viewport_height);
+        fill_rect_alpha(canvas, bc_c, 255, table_x, table_start_y + table_h - 1, table_w, 1,
+            ls.ctx.scroll_y, ls.ctx.viewport_height);
+    }
 
     ls.cursor_y   += BLOCK_MARGIN;
     ls.cursor_x    = ls.margin_left;
@@ -180,4 +223,19 @@ fn collect_rows(table: &Element) -> Vec<Vec<&Node>> {
 
 fn is_cell(node: &Node) -> bool {
     matches!(node, Node::Element(e) if matches!(e.tag.as_str(), "td" | "th"))
+}
+
+/// Return the border colour of the first cell found in the row list, or a
+/// neutral grey fallback used for the closing grid lines.
+fn first_cell_border_color(rows: &[Vec<&Node>]) -> [u8; 3] {
+    for row in rows {
+        for node in row {
+            if let Node::Element(e) = node {
+                if is_cell(node) {
+                    return e.style.borders.top.color;
+                }
+            }
+        }
+    }
+    [200, 200, 200]
 }

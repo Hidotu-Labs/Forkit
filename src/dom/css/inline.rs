@@ -1,5 +1,5 @@
 use crate::dom::node::{
-    Style, TextAlign, ListStyleType, Display, TextTransform, Overflow,
+    Style, TextAlign, ListStyleType, Display, Visibility, TextTransform, Overflow,
     Border, Borders, FontFamilyHint, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
 };
 use super::color::parse_color_alpha;
@@ -140,8 +140,17 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
         // ---- font ----
         "font-size" => {
-            if let Some(n) = parse_length(val, base, 16) {
-                if n > 0 { s.font_size = n.clamp(8, 96) as u16; }
+            // Viewport-relative units (vw, vh) and calc() cannot be resolved
+            // until layout time when the real viewport dimensions are known.
+            // Store them raw; block.rs will re-resolve them.
+            let lv = val.to_ascii_lowercase();
+            if lv.ends_with("vw") || lv.ends_with("vh") || lv.starts_with("calc(") {
+                s.font_size_raw = Some(val.to_owned());
+            } else {
+                s.font_size_raw = None;
+                if let Some(n) = parse_length(val, base, 16) {
+                    if n > 0 { s.font_size = n.clamp(8, 96) as u16; }
+                }
             }
         }
         "font-weight" => {
@@ -211,9 +220,11 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             }
         }
         "visibility" => {
-            if val.eq_ignore_ascii_case("hidden") {
-                s.display = Display::Hidden;
-            }
+            s.visibility = match val.to_ascii_lowercase().as_str() {
+                "hidden"   => Visibility::Hidden,
+                "collapse" => Visibility::Collapse,
+                _          => Visibility::Visible,
+            };
         }
         "overflow" | "overflow-y" => {
             s.overflow = match val.to_ascii_lowercase().as_str() {
@@ -364,11 +375,81 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
         "padding-right"  => { s.padding.right  = parse_length(val, base, 0).unwrap_or(0); }
         "padding-bottom" => { s.padding.bottom = parse_length(val, base, 0).unwrap_or(0); }
         "padding-left"   => { s.padding.left   = parse_length(val, base, 0).unwrap_or(0); }
-        "margin"         => { s.margin = parse_box_spacing(val, base); }
+        "margin"         => {
+            // Handle "auto" in shorthand: "auto" alone → auto on all sides
+            let lv = val.trim().to_ascii_lowercase();
+            if lv == "auto" {
+                s.margin_auto_left  = true;
+                s.margin_auto_right = true;
+                s.margin = crate::dom::node::BoxSpacing::default();
+            } else {
+                // Still handle tokens like "0 auto" or "10px auto"
+                let parts: Vec<&str> = val.split_whitespace().collect();
+                // Resolve each part: if "auto" → 0 and set flag
+                let resolve = |i: usize, parts: &Vec<&str>, base: u16| -> i32 {
+                    parts.get(i).map(|v| {
+                        if v.eq_ignore_ascii_case("auto") { 0 }
+                        else { super::length::parse_length(v, base, 0).unwrap_or(0) }
+                    }).unwrap_or(0)
+                };
+                match parts.len() {
+                    1 => {
+                        s.margin = super::length::parse_box_spacing(val, base);
+                    }
+                    2 => {
+                        let v_tb = resolve(0, &parts, base);
+                        let h_auto = parts[1].eq_ignore_ascii_case("auto");
+                        let h = if h_auto { 0 } else { resolve(1, &parts, base) };
+                        s.margin = crate::dom::node::BoxSpacing { top: v_tb, right: h, bottom: v_tb, left: h };
+                        if h_auto { s.margin_auto_left = true; s.margin_auto_right = true; }
+                    }
+                    3 => {
+                        let r_auto = parts[1].eq_ignore_ascii_case("auto");
+                        let r = if r_auto { 0 } else { resolve(1, &parts, base) };
+                        s.margin = crate::dom::node::BoxSpacing {
+                            top:    resolve(0, &parts, base),
+                            right:  r,
+                            bottom: resolve(2, &parts, base),
+                            left:   r,
+                        };
+                        if r_auto { s.margin_auto_left = true; s.margin_auto_right = true; }
+                    }
+                    4 => {
+                        let l_auto = parts[3].eq_ignore_ascii_case("auto");
+                        let r_auto = parts[1].eq_ignore_ascii_case("auto");
+                        s.margin = crate::dom::node::BoxSpacing {
+                            top:    resolve(0, &parts, base),
+                            right:  if r_auto { 0 } else { resolve(1, &parts, base) },
+                            bottom: resolve(2, &parts, base),
+                            left:   if l_auto { 0 } else { resolve(3, &parts, base) },
+                        };
+                        s.margin_auto_left  = l_auto;
+                        s.margin_auto_right = r_auto;
+                    }
+                    _ => {}
+                }
+            }
+        }
         "margin-top"     => { s.margin.top    = parse_length(val, base, 0).unwrap_or(0); }
-        "margin-right"   => { s.margin.right  = parse_length(val, base, 0).unwrap_or(0); }
+        "margin-right"   => {
+            if val.eq_ignore_ascii_case("auto") {
+                s.margin_auto_right = true;
+                s.margin.right = 0;
+            } else {
+                s.margin_auto_right = false;
+                s.margin.right = parse_length(val, base, 0).unwrap_or(0);
+            }
+        }
         "margin-bottom"  => { s.margin.bottom = parse_length(val, base, 0).unwrap_or(0); }
-        "margin-left"    => { s.margin.left   = parse_length(val, base, 0).unwrap_or(0); }
+        "margin-left"    => {
+            if val.eq_ignore_ascii_case("auto") {
+                s.margin_auto_left = true;
+                s.margin.left = 0;
+            } else {
+                s.margin_auto_left = false;
+                s.margin.left = parse_length(val, base, 0).unwrap_or(0);
+            }
+        }
 
         // ---- list ----
         "list-style-type" | "list-style" => {

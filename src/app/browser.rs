@@ -1,3 +1,5 @@
+use std::sync::mpsc::{self, Receiver};
+
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::ttf::Sdl2TtfContext;
@@ -13,7 +15,7 @@ use crate::ui::searchbar::{SearchBar, BAR_HEIGHT};
 use crate::ui::tabbar::{TabBar, TAB_BAR_HEIGHT};
 use crate::window::window::{AppWindow, DEFAULT_H};
 
-use super::loader::load_dom;
+use super::loader::{load_dom, PageMeta};
 
 // Scrollbar appearance constants
 pub const SCROLLBAR_W:         i32 = 12;
@@ -56,6 +58,33 @@ impl History {
 }
 
 // ---------------------------------------------------------------------------
+// LoadState — tracks an in-progress or crashed background load for a tab
+// ---------------------------------------------------------------------------
+
+/// The result sent back from a background loader thread.
+pub struct LoadResult {
+    /// The final resolved URL after redirects.
+    pub final_url: String,
+    pub dom:       Node,
+    pub meta:      PageMeta,
+    /// Pre-fetched image bytes collected during load (optional optimisation).
+    pub images:    ImageCache,
+    /// Whether this load should push a new history entry (`true`) or replace
+    /// the current entry (`false`, used for back/forward/reload).
+    pub push_history: bool,
+}
+
+/// Lifecycle state of a single tab's background loader.
+pub enum LoadState {
+    /// No load in progress.
+    Idle,
+    /// A load thread is running; we poll this receiver each frame.
+    Loading(Receiver<Result<LoadResult, String>>),
+    /// The most recent load panicked or failed; stores the error message.
+    Crashed(String),
+}
+
+// ---------------------------------------------------------------------------
 // Tab — one browser tab, owns its own DOM / history / scroll / image cache
 // ---------------------------------------------------------------------------
 
@@ -80,9 +109,13 @@ pub struct Tab {
     pub page_title: String,
     /// Resolved URL of the page favicon (from `<link rel="icon">` or /favicon.ico).
     pub favicon_url: Option<String>,
+    /// Background load state for this tab.
+    pub load_state: LoadState,
 }
 
 impl Tab {
+    /// Synchronously load the initial tab (only used for startup — after that
+    /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
         let (resolved, dom, meta) = load_dom(url)?;
         Some(Tab {
@@ -98,6 +131,7 @@ impl Tab {
             content_height: 0,
             page_title:     meta.title,
             favicon_url:    meta.favicon_url,
+            load_state:     LoadState::Idle,
         })
     }
 
@@ -108,10 +142,26 @@ impl Tab {
     pub fn can_back(&self)    -> bool { self.history.can_back() }
     pub fn can_forward(&self) -> bool { self.history.can_forward() }
 
+    /// Returns true when a background load is in progress.
+    pub fn is_loading(&self) -> bool {
+        matches!(self.load_state, LoadState::Loading(_))
+    }
+
+    /// Returns true when the last load crashed.
+    pub fn is_crashed(&self) -> bool {
+        matches!(self.load_state, LoadState::Crashed(_))
+    }
+
     /// Short display title — page `<title>` text, falling back to the hostname.
     pub fn title(&self) -> String {
+        if self.is_crashed() {
+            return "Crashed".to_owned();
+        }
+        self.title_from_meta()
+    }
+
+    fn title_from_meta(&self) -> String {
         if !self.page_title.is_empty() {
-            // Truncate very long titles
             let t = &self.page_title;
             if t.chars().count() > 40 {
                 let s: String = t.chars().take(38).collect();
@@ -119,7 +169,6 @@ impl Tab {
             }
             return t.clone();
         }
-        // Fallback: hostname
         let url = self.history.current();
         if let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) {
             let host = rest.split('/').next().unwrap_or(rest);
@@ -131,58 +180,155 @@ impl Tab {
         }
     }
 
-    // ---- navigation ----
+    // ---- async navigation ----
+
+    /// Spawn a background thread to load `url`, pushing a new history entry
+    /// when the load completes.
+    pub fn navigate_async(&mut self, url: &str) {
+        let resolved = resolve_url(url, self.history.current());
+        self.spawn_load(resolved, true);
+    }
+
+    /// Spawn a background thread to load `url` without touching history
+    /// (back, forward, reload).
+    pub fn navigate_async_no_history(&mut self, url: &str) {
+        let url = url.to_owned();
+        self.spawn_load(url, false);
+    }
+
+    /// Internal: cancel any in-flight load and start a new one.
+    pub(super) fn spawn_load(&mut self, url: String, push_history: bool) {
+        // Dropping the old Receiver will disconnect the channel; the old
+        // thread will eventually notice a SendError and exit cleanly.
+        let (tx, rx) = mpsc::channel();
+        self.load_state = LoadState::Loading(rx);
+
+        std::thread::spawn(move || {
+            // Catch panics so a bad page cannot kill the whole application.
+            let result = std::panic::catch_unwind(|| load_dom(&url))
+                .map_err(|e| {
+                    // Try to extract a string from the panic payload.
+                    if let Some(s) = e.downcast_ref::<&str>() {
+                        format!("panic: {s}")
+                    } else if let Some(s) = e.downcast_ref::<String>() {
+                        format!("panic: {s}")
+                    } else {
+                        "panic: unknown".to_owned()
+                    }
+                });
+
+            let send_val = match result {
+                Err(msg) => Err(msg),
+                Ok(None) => Err(format!("Failed to load: {url}")),
+                Ok(Some((final_url, dom, meta))) => Ok(LoadResult {
+                    final_url,
+                    dom,
+                    meta,
+                    images: ImageCache::new(),
+                    push_history,
+                }),
+            };
+
+            // If the receiver was dropped (tab closed) this is a no-op.
+            let _ = tx.send(send_val);
+        });
+    }
+
+    /// Poll the background receiver.  Returns `true` if state changed and a
+    /// redraw is needed.
+    pub fn poll_load(&mut self) -> bool {
+        // We need to temporarily take the load_state to avoid borrow issues.
+        let mut state = LoadState::Idle;
+        std::mem::swap(&mut self.load_state, &mut state);
+
+        match state {
+            LoadState::Loading(rx) => {
+                match rx.try_recv() {
+                    Ok(Ok(result)) => {
+                        // Success — apply the loaded page.
+                        self.dom           = result.dom;
+                        self.scroll_y      = 0;
+                        self.input_values  = Vec::new();
+                        self.focused_input = None;
+                        self.button_areas  = Vec::new();
+                        self.page_title    = result.meta.title;
+                        self.favicon_url   = result.meta.favicon_url;
+                        if result.push_history {
+                            self.history.push(result.final_url);
+                        }
+                        self.load_state = LoadState::Idle;
+                        true
+                    }
+                    Ok(Err(msg)) => {
+                        // Load failed or panicked — show an error page.
+                        eprintln!("Tab load error: {msg}");
+                        let error_html = format!(
+                            "<html><body>\
+                             <h2 style=\"color:#cc3333\">Tab crashed</h2>\
+                             <p>{msg}</p>\
+                             </body></html>"
+                        );
+                        // Parse the error page directly.
+                        let error_node = crate::dom::parser::parse(&error_html, "about:blank");
+                        self.dom          = error_node;
+                        self.page_title   = "Error".to_owned();
+                        self.favicon_url  = None;
+                        self.scroll_y     = 0;
+                        self.input_values = Vec::new();
+                        self.focused_input = None;
+                        self.button_areas = Vec::new();
+                        self.load_state   = LoadState::Crashed(msg);
+                        true
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // Still loading — put the receiver back.
+                        self.load_state = LoadState::Loading(rx);
+                        false
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // Thread exited without sending — treat as a crash.
+                        self.load_state = LoadState::Crashed("loader thread disconnected".to_owned());
+                        true
+                    }
+                }
+            }
+            other => {
+                self.load_state = other;
+                false
+            }
+        }
+    }
+
+    // ---- legacy synchronous navigation (kept for back/forward/reload) ----
 
     pub fn navigate(&mut self, url: &str) {
+        // resolve_url is also called inside navigate_async — call it once here
+        // to keep the single-resolve semantics, then pass the already-resolved URL.
         let resolved = resolve_url(url, self.history.current());
-        self.navigate_absolute(&resolved);
+        self.spawn_load(resolved, true);
     }
 
     pub fn navigate_absolute(&mut self, url: &str) {
-        if let Some((final_url, new_dom, meta)) = load_dom(url) {
-            self.dom            = new_dom;
-            self.scroll_y       = 0;
-            self.input_values   = Vec::new();
-            self.focused_input  = None;
-            self.button_areas   = Vec::new();
-            self.page_title     = meta.title;
-            self.favicon_url    = meta.favicon_url;
-            self.history.push(final_url);
-        } else {
-            eprintln!("navigate: failed to load {url}");
-        }
+        self.spawn_load(url.to_owned(), true);
     }
 
     pub fn go_back(&mut self) {
         if let Some(url) = self.history.go_back() {
             let url = url.to_owned();
-            self.load_url_no_history(&url);
+            self.navigate_async_no_history(&url);
         }
     }
 
     pub fn go_forward(&mut self) {
         if let Some(url) = self.history.go_forward() {
             let url = url.to_owned();
-            self.load_url_no_history(&url);
+            self.navigate_async_no_history(&url);
         }
     }
 
     pub fn reload(&mut self) {
         let url = self.history.current().to_owned();
-        self.load_url_no_history(&url);
-    }
-
-    fn load_url_no_history(&mut self, url: &str) {
-        if let Some((final_url, new_dom, meta)) = load_dom(url) {
-            self.dom           = new_dom;
-            self.scroll_y      = 0;
-            self.input_values  = Vec::new();
-            self.focused_input = None;
-            self.button_areas  = Vec::new();
-            self.page_title    = meta.title;
-            self.favicon_url   = meta.favicon_url;
-            let _ = final_url;
-        }
+        self.navigate_async_no_history(&url);
     }
 
     // ---- scrolling ----
@@ -304,18 +450,24 @@ impl<'ttf> Browser<'ttf> {
 
     /// Open a new tab navigating to `url` and switch to it.
     pub fn open_tab(&mut self, url: &str) {
-        if let Some(tab) = Tab::new(url) {
-            let bar_url = tab.current_url().to_owned();
+        // Create a stub tab with a blank page, then immediately kick off an
+        // async load for the real URL.  We call spawn_load directly with the
+        // already-resolved URL so resolve_url never runs against "about:blank".
+        if let Some(mut tab) = Tab::new("about:blank") {
+            tab.page_title = url.to_owned();
+            // Use the fully-qualified URL directly — no relative resolution needed here.
+            let target = crate::net::resolve_url(url, "https://example.com");
+            tab.spawn_load(target.clone(), true);
             self.tabs.push(tab);
             self.active = self.tabs.len() - 1;
-            self.bar    = SearchBar::new(&bar_url);
+            self.bar    = SearchBar::new(&target);
         }
         self.need_draw = true;
     }
 
-    /// Open a blank new tab (about:blank placeholder).
+    /// Open a blank new tab (navigates to example.com).
     pub fn open_blank_tab(&mut self) {
-        self.open_tab("about:blank");
+        self.open_tab("https://example.com");
     }
 
     /// Close the tab at `index`. If it's the last tab, do nothing.
@@ -351,6 +503,23 @@ impl<'ttf> Browser<'ttf> {
     pub fn prev_tab(&mut self) {
         let n = self.tabs.len();
         self.switch_tab((self.active + n - 1) % n);
+    }
+
+    /// Poll all tab background loaders.  Call this each frame before drawing.
+    /// Returns `true` if any tab changed state and a redraw is needed.
+    pub fn poll_tabs(&mut self) -> bool {
+        let mut changed = false;
+        for tab in &mut self.tabs {
+            if tab.poll_load() {
+                changed = true;
+            }
+        }
+        if changed {
+            // Keep the address bar in sync with the active tab if it just finished loading.
+            self.sync_bar();
+            self.need_draw = true;
+        }
+        changed
     }
 
     /// Keep the address bar URL in sync with the active tab.
@@ -601,6 +770,7 @@ impl<'ttf> Browser<'ttf> {
 
         // Tab bar
         let titles: Vec<String> = self.tabs.iter().map(|t| t.title()).collect();
+        let loading_states: Vec<bool> = self.tabs.iter().map(|t| t.is_loading()).collect();
         // Collect favicon bytes for each tab from its image cache
         let favicons: Vec<Option<Vec<u8>>> = self.tabs.iter_mut().map(|tab| {
             let url = match &tab.favicon_url {
@@ -618,6 +788,7 @@ impl<'ttf> Browser<'ttf> {
             &titles,
             self.active,
             &favicons,
+            &loading_states,
         );
 
         // Address bar (drawn below the tab strip)

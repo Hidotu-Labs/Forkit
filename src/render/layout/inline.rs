@@ -5,7 +5,7 @@ use sdl2::video::{Window, WindowContext};
 use crate::dom::node::{Style, TextAlign, TextTransform};
 use crate::render::font::FontCache;
 
-use super::paint::{paint_text, measure_text, fill_rect};
+use super::paint::{paint_text, measure_text, fill_rect, fill_rect_alpha};
 use super::state::{LayoutState, MARGIN_LEFT, MARGIN_RIGHT, LINE_SPACING};
 
 /// Render `text` with word-wrapping (or verbatim for `white-space: pre`).
@@ -105,16 +105,12 @@ pub fn flush_line(
         TextAlign::Right => (max_w - MARGIN_RIGHT - tw).max(ls.margin_left),
     };
 
-    // Background (mark, code, etc.) — pre-composite against white
+    // Background (mark, code, etc.) — use blend mode directly, no pre-compositing
     if let Some(bg) = style.bg_color {
-        let a = style.bg_alpha as u32;
-        let pre = [
-            ((a * bg[0] as u32 + (255 - a) * 255) / 255) as u8,
-            ((a * bg[1] as u32 + (255 - a) * 255) / 255) as u8,
-            ((a * bg[2] as u32 + (255 - a) * 255) / 255) as u8,
-        ];
-        fill_rect(
-            canvas, Color::RGB(pre[0], pre[1], pre[2]),
+        let alpha = style.bg_alpha;
+        fill_rect_alpha(
+            canvas, Color::RGBA(bg[0], bg[1], bg[2], alpha),
+            alpha,
             x, ls.cursor_y, tw, th,
             ls.ctx.scroll_y, ls.ctx.viewport_height,
         );

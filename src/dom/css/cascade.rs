@@ -6,7 +6,7 @@
 ///   correct specificity ordering, `inherit`/`initial` keywords, and property
 ///   inheritance from parent to child.
 
-use crate::dom::node::{Element, Node, Style};
+use crate::dom::node::{Element, Node, Style, Visibility};
 use crate::dom::parser::get_attr;
 use super::stylesheet::{Selector, SimpleSelector, StyleSheet, Specificity};
 use super::inline::apply_property;
@@ -34,6 +34,7 @@ const INHERITABLE: &[&str] = &[
     "font-variant-caps",
     "word-break",
     "overflow-wrap",
+    "visibility",
 ];
 
 /// Walk the entire DOM tree rooted at `root`, apply every rule from `sheets` to
@@ -54,11 +55,28 @@ pub fn apply_cascade(root: &mut Node, sheets: &[StyleSheet]) {
 ///               including) the current node's direct parent.
 /// `parent_style` — the already-resolved `Style` of the direct parent, used
 ///                  for inheritance.
+/// `inherited_opacity` — accumulated opacity multiplier from ancestor elements
+///                       (1.0 = fully opaque). CSS `opacity` composes
+///                       multiplicatively down the tree.
 fn cascade_node(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Element], parent_style: &Style) {
+    cascade_node_inner(node, sheets, ancestors, parent_style, 1.0);
+}
+
+fn cascade_node_inner(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Element], parent_style: &Style, inherited_opacity: f32) {
     match node {
         Node::Text(t) => {
             // Text nodes inherit all inheritable properties from their parent.
             inherit_from(&mut t.style, parent_style);
+            // Background is NOT an inherited CSS property — clear any bg_color
+            // that was copied from the parent when the text node was constructed
+            // in the parser (builder.rs clones the parent style wholesale).
+            t.style.bg_color = None;
+            t.style.bg_alpha = 255;
+            // Do NOT apply opacity to text color_alpha. CSS `opacity` creates a
+            // stacking context — the whole element (bg + text) composites together
+            // at the given opacity. In this renderer we approximate that by fading
+            // the element's background; fading the text separately would double-apply
+            // the effect and make text unreadable at low opacity values.
         }
         Node::Element(el) => {
             // ── 1. Collect matching rules ─────────────────────────────────
@@ -109,6 +127,21 @@ fn cascade_node(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Element], 
                 super::inline::apply_inline(&inline_attr, &mut el.style);
             }
 
+            // ── 4b. Bake CSS `opacity` into alpha channels ────────────────
+            // CSS opacity creates a stacking context: the element's background
+            // and borders fade, but text colour stays at its own alpha value.
+            // We approximate this by only scaling bg_alpha and storing the
+            // effective opacity for border rendering. We intentionally do NOT
+            // scale color_alpha — fading text separately from the background
+            // would look wrong (text would become invisible before the bg fades).
+            let own_opacity = el.style.opacity as f32 / 255.0;
+            let effective_opacity = inherited_opacity * own_opacity;
+            if effective_opacity < 1.0 {
+                el.style.bg_alpha = (el.style.bg_alpha as f32 * effective_opacity).round() as u8;
+                // Store effective opacity for paint_block_border to use as border alpha.
+                el.style.opacity = (effective_opacity * 255.0).round() as u8;
+            }
+
             // ── 5. Recurse into children ──────────────────────────────────
             // Build new ancestors slice: old ancestors + this element.
             // We transmute the lifetime to allow lending el into the child walk
@@ -124,7 +157,7 @@ fn cascade_node(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Element], 
             };
             let child_parent_style = el.style.clone();
             for child in &mut el.children {
-                cascade_node(child, sheets, &child_ancestors, &child_parent_style);
+                cascade_node_inner(child, sheets, &child_ancestors, &child_parent_style, effective_opacity);
             }
         }
     }
@@ -147,7 +180,12 @@ fn inherit_from(child: &mut Style, parent: &Style) {
     }
     // font-size — only inherit if still at the default 16px
     if child.font_size == def.font_size {
-        child.font_size = parent.font_size;
+        child.font_size     = parent.font_size;
+        // Also inherit the raw viewport-relative value so layout-time
+        // re-resolution works for text nodes and nested elements.
+        if child.font_size_raw.is_none() {
+            child.font_size_raw = parent.font_size_raw.clone();
+        }
     }
     // font-weight
     if child.bold == def.bold {
@@ -194,6 +232,10 @@ fn inherit_from(child: &mut Style, parent: &Style) {
     if child.word_break == def.word_break {
         child.word_break = parent.word_break;
     }
+    // visibility — inherited: children share parent's visibility unless overridden
+    if child.visibility == def.visibility {
+        child.visibility = parent.visibility;
+    }
 }
 
 /// Apply the `inherit` keyword for a named property — copy parent's value.
@@ -212,6 +254,7 @@ fn apply_inherit_keyword(prop: &str, child: &mut Style, parent: &Style) {
         "font-variant-caps"=> { child.font_variant_caps = parent.font_variant_caps; }
         "font-family"      => { child.font_family = parent.font_family; }
         "word-break" | "overflow-wrap" => { child.word_break = parent.word_break; }
+        "visibility" => { child.visibility = parent.visibility; }
         _ => {} // non-inheritable or unknown — silently ignore
     }
 }
@@ -238,6 +281,7 @@ fn apply_initial_keyword(prop: &str, style: &mut Style) {
         "background-position" => { style.bg_position = def.bg_position; }
         "border-radius"    => { style.border_radius = def.border_radius; }
         "display"          => { style.display = def.display; style.display_block = def.display_block; }
+        "visibility"       => { style.visibility = Visibility::default(); }
         "opacity"          => { style.opacity = def.opacity; }
         _ => {}
     }

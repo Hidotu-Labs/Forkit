@@ -18,6 +18,10 @@ const FONT_SIZE:  u16 = 13;
 const NEW_BTN_W:  i32 = 32;
 const FAVICON_SZ: i32 = 16;  // favicon rendered size in pixels
 
+// Spinner: 8 arc segments, ~100 ms each
+const SPINNER_STEPS: usize = 8;
+const SPINNER_MS: u128 = 100;
+
 /// Which region of the tab bar was clicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabBarRegion {
@@ -74,15 +78,25 @@ impl TabBar {
     ///
     /// `favicons` is a parallel slice to `titles`: each entry is the raw image
     /// bytes for that tab's favicon, or `None` if not yet loaded / unavailable.
+    /// `loading_states` is a parallel slice indicating whether each tab is
+    /// currently loading (shows a spinner instead of the favicon).
     pub fn draw(
-        canvas:   &mut Canvas<Window>,
-        tc:       &TextureCreator<WindowContext>,
-        fonts:    &mut FontCache,
-        win_w:    i32,
-        titles:   &[String],
-        active:   usize,
-        favicons: &[Option<Vec<u8>>],
+        canvas:         &mut Canvas<Window>,
+        tc:             &TextureCreator<WindowContext>,
+        fonts:          &mut FontCache,
+        win_w:          i32,
+        titles:         &[String],
+        active:         usize,
+        favicons:       &[Option<Vec<u8>>],
+        loading_states: &[bool],
     ) {
+        // Current time in ms — used to derive the spinner frame index.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let spinner_frame = ((now_ms / SPINNER_MS) as usize) % SPINNER_STEPS;
+
         // Strip background
         canvas.set_draw_color(Color::RGB(210, 210, 215));
         let _ = canvas.fill_rect(Rect::new(0, 0, win_w as u32, TAB_BAR_HEIGHT as u32));
@@ -93,6 +107,7 @@ impl TabBar {
         for (i, title) in titles.iter().enumerate() {
             let tx        = i as i32 * tab_w;
             let is_active = i == active;
+            let is_loading = loading_states.get(i).copied().unwrap_or(false);
 
             // Tab background
             let bg = if is_active { Color::RGB(245, 245, 248) } else { Color::RGB(220, 220, 225) };
@@ -116,21 +131,34 @@ impl TabBar {
             let close_y = (TAB_BAR_HEIGHT - CLOSE_W) / 2;
             draw_close_btn(canvas, fonts, tc, close_x, close_y, CLOSE_W);
 
-            // Favicon — drawn left of the title
-            let favicon_bytes = favicons.get(i).and_then(|v| v.as_deref());
-            let icon_drawn_w = if let Some(bytes) = favicon_bytes {
-                draw_favicon(canvas, tc, bytes, tx + TAB_PAD, (TAB_BAR_HEIGHT - FAVICON_SZ) / 2)
+            // Favicon / spinner — drawn left of the title
+            let icon_drawn_w = if is_loading {
+                // Animated spinner drawn with primitives — no font glyph needed
+                let cx = tx + TAB_PAD + FAVICON_SZ / 2;
+                let cy = TAB_BAR_HEIGHT / 2;
+                draw_spinner(canvas, cx, cy, FAVICON_SZ / 2 - 1, spinner_frame);
+                FAVICON_SZ
             } else {
-                0
+                let favicon_bytes = favicons.get(i).and_then(|v| v.as_deref());
+                if let Some(bytes) = favicon_bytes {
+                    draw_favicon(canvas, tc, bytes, tx + TAB_PAD, (TAB_BAR_HEIGHT - FAVICON_SZ) / 2)
+                } else {
+                    0
+                }
             };
             let icon_gap = if icon_drawn_w > 0 { icon_drawn_w + 4 } else { 0 };
 
-            // Title text — starts after favicon
+            // Title text — "Loading..." while fetching, otherwise the real title
+            let display_title = if is_loading {
+                "Loading...".to_owned()
+            } else {
+                title.clone()
+            };
             let text_x     = tx + TAB_PAD + icon_gap;
             let text_max_w = (close_x - text_x - 4).max(0);
             if text_max_w > 0 {
                 let text_col = if is_active { Color::RGB(20, 20, 20) } else { Color::RGB(70, 70, 70) };
-                draw_tab_text(canvas, fonts, tc, title, text_x, 0, text_max_w, TAB_BAR_HEIGHT, text_col);
+                draw_tab_text(canvas, fonts, tc, &display_title, text_x, 0, text_max_w, TAB_BAR_HEIGHT, text_col);
             }
         }
 
@@ -223,6 +251,35 @@ fn draw_close_btn(
             sdl2::rect::Point::new(x2, y1 + d),
             sdl2::rect::Point::new(x1, y2 + d),
         );
+    }
+}
+
+/// Draw a circular arc spinner at `(cx, cy)` with the given radius.
+/// `frame` in 0..SPINNER_STEPS controls which arc segment is highlighted.
+/// The spinner is drawn as a ring of dots; the highlighted dot is bright blue,
+/// the others are light grey — giving an orbiting-dot animation.
+fn draw_spinner(canvas: &mut Canvas<Window>, cx: i32, cy: i32, r: i32, frame: usize) {
+    let dots = SPINNER_STEPS;
+    for i in 0..dots {
+        // Angle: start at top (−π/2), go clockwise
+        let angle = (i as f64 / dots as f64) * std::f64::consts::TAU
+            - std::f64::consts::FRAC_PI_2;
+        let px = cx + (r as f64 * angle.cos()).round() as i32;
+        let py = cy + (r as f64 * angle.sin()).round() as i32;
+
+        // The "head" dot and the two behind it are bright; rest fade out
+        let dist = (dots + frame - i) % dots; // how far behind the head
+        let color = match dist {
+            0 => Color::RGB(60, 120, 220),  // head — bright blue
+            1 => Color::RGB(90, 150, 230),
+            2 => Color::RGB(140, 180, 235),
+            3 => Color::RGB(185, 205, 240),
+            _ => Color::RGB(210, 215, 225), // tail — light grey
+        };
+
+        // Draw a 2×2 dot
+        canvas.set_draw_color(color);
+        let _ = canvas.fill_rect(Rect::new(px - 1, py - 1, 2, 2));
     }
 }
 

@@ -1,7 +1,7 @@
 use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
 
-use crate::dom::node::Node;
+use crate::dom::node::{Node, Visibility};
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::renderer::RenderCtx;
@@ -150,11 +150,11 @@ impl<'ctx> LayoutState<'ctx> {
     pub fn new(ctx: &'ctx RenderCtx) -> Self {
         LayoutState {
             ctx,
-            cursor_x:      DEFAULT_PAGE_MARGIN,
-            cursor_y:      DEFAULT_PAGE_MARGIN,
+            cursor_x:      0,
+            cursor_y:      0,
             line_height:   16,
             indent:        0,
-            margin_left:   DEFAULT_PAGE_MARGIN,
+            margin_left:   0,
             boxes:         Vec::new(),
             link_areas:    Vec::new(),
             input_areas:   Vec::new(),
@@ -208,7 +208,32 @@ impl<'ctx> LayoutState<'ctx> {
         max_w:    i32,
     ) {
         match node {
-            Node::Text(t)    => inline::paint_wrapped(self, canvas, tc, fonts, &t.text, &t.style, max_w),
+            Node::Text(t)    => {
+                // visibility:hidden text — skip painting but keep space
+                if t.style.visibility == Visibility::Hidden {
+                    // Advance cursor by the text's approximate width
+                    block::advance_text_invisible(self, fonts, &t.text, &t.style);
+                } else {
+                    // Re-resolve viewport-relative font-size (vw/vh/calc) now
+                    // that we have the real viewport dimensions.
+                    if let Some(raw) = &t.style.font_size_raw {
+                        let ctx = crate::dom::css::LengthContext {
+                            base_font_size:  t.style.font_size,
+                            percent_base:    16,
+                            viewport_width:  self.ctx.viewport_width,
+                            viewport_height: self.ctx.viewport_height,
+                        };
+                        if let Some(n) = crate::dom::css::parse_length_ctx(raw, &ctx) {
+                            let resolved = n.clamp(8, 96) as u16;
+                            // Clone and patch so we don't mutate the stored DOM
+                            let mut patched = t.style.clone();
+                            patched.font_size = resolved;
+                            return inline::paint_wrapped(self, canvas, tc, fonts, &t.text, &patched, max_w);
+                        }
+                    }
+                    inline::paint_wrapped(self, canvas, tc, fonts, &t.text, &t.style, max_w);
+                }
+            }
             Node::Element(e) => block::layout_element(self, canvas, tc, fonts, images, base_url, e, max_w),
         }
         // Update total document height after each top-level node

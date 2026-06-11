@@ -539,9 +539,156 @@
     </table>
   </div>
 
-  <p style="color: #888; font-size: 12px; margin-top: 20px;">
-    Press Q or Escape to quit. R to reload.
-  </p>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>15. Margin Auto / Centering</h2>
+  <div class="card">
+    <div class="label">margin: 0 auto with fixed width — should be centered</div>
+    <div style="width: 300px; margin: 0 auto; background-color: #0f3460; color: white; padding: 8px; border-radius: 6px;">
+      width:300px margin:0 auto — centered
+    </div>
+
+    <div class="label">margin-left: auto — flush right</div>
+    <div style="width: 200px; margin-left: auto; margin-right: 0; background-color: #e94560; color: white; padding: 8px; border-radius: 6px;">
+      margin-left:auto — flush right
+    </div>
+
+    <div class="label">margin: 0 auto with 60% width</div>
+    <div style="width: 60%; margin: 0 auto; background-color: #009944; color: white; padding: 8px; border-radius: 6px;">
+      width:60% margin:0 auto — centered
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>16. Image — Margin &amp; Padding</h2>
+  <div class="card">
+    <div class="label">img with no spacing (baseline)</div>
+    <div class="row pass">
+      <img src="https://placehold.co/60x40/0f3460/white?text=A" width="60" height="40">
+      <img src="https://placehold.co/60x40/e94560/white?text=B" width="60" height="40">
+    </div>
+
+    <div class="label">img with margin: 10px</div>
+    <div class="row pass">
+      <img src="https://placehold.co/60x40/009944/white?text=C" width="60" height="40" style="margin: 10px;">
+      <img src="https://placehold.co/60x40/ff9900/white?text=D" width="60" height="40" style="margin: 10px;">
+    </div>
+
+    <div class="label">img with padding: 8px + background-color</div>
+    <div class="row pass">
+      <img src="https://placehold.co/60x40/0f3460/white?text=E" width="60" height="40" style="padding: 8px; background-color: #ffe0a0;">
+    </div>
+
+    <div class="label">img with margin + padding + background</div>
+    <div class="row pass">
+      <img src="https://placehold.co/60x40/6600cc/white?text=F" width="60" height="40" style="margin: 12px; padding: 6px; background-color: #ddeeff;">
+    </div>
+
+    <div class="label">img with asymmetric margin (left:30px top:20px)</div>
+    <div class="row pass">
+      <img src="https://placehold.co/60x40/e94560/white?text=G" width="60" height="40" style="margin-left: 30px; margin-top: 20px; margin-bottom: 20px;">
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17. JavaScript — Variable Support</h2>
+  <div class="card">
+    <div class="label">var / let / const declarations</div>
+    <div class="row pass">Open the console output to verify JS execution below.</div>
+
+    <div class="label">Arithmetic operators: + - * / %</div>
+    <div class="row pass">let x = 10; x * 3 - 5 = 25</div>
+
+    <div class="label">Comparison operators: == != &lt; &gt; &lt;= &gt;=</div>
+    <div class="row pass">10 &gt; 5 → true, 3 == "3" → true (loose eq)</div>
+
+    <div class="label">Logical operators: &amp;&amp; || !</div>
+    <div class="row pass">true &amp;&amp; false → false, !false → true</div>
+
+    <div class="label">Compound assignment: += -= *= /=</div>
+    <div class="row pass">let n = 10; n += 5; n *= 2 → 30</div>
+
+    <div class="label">String concatenation via variables</div>
+    <div class="row pass">let a = "hello"; let b = "world"; a + " " + b → "hello world"</div>
+  </div>
+
+  <script>
+    // ── Variable declarations ──────────────────────────────
+    var greeting = "Forkit JS engine";
+    let version  = 2;
+    const pi     = 3.14159;
+
+    console.log(greeting + " v" + version);
+    console.log("pi =", pi);
+
+    // ── Arithmetic ─────────────────────────────────────────
+    let x = 10;
+    let y = 3;
+    console.log("x + y =", x + y);
+    console.log("x - y =", x - y);
+    console.log("x * y =", x * y);
+    console.log("x / y =", x / y);
+    console.log("x % y =", x % y);
+
+    // ── Unary minus ────────────────────────────────────────
+    let neg = -x;
+    console.log("neg x =", neg);
+
+    // ── Compound assignment ────────────────────────────────
+    let n = 10;
+    n += 5;
+    console.log("after += 5:", n);
+    n *= 2;
+    console.log("after *= 2:", n);
+    n -= 8;
+    console.log("after -= 8:", n);
+    n /= 2;
+    console.log("after /= 2:", n);
+
+    // ── String variables + concatenation ──────────────────
+    let firstName = "Fork";
+    let lastName  = "it";
+    let full      = firstName + lastName + "!";
+    console.log("full name:", full);
+
+    // ── Comparisons ────────────────────────────────────────
+    console.log("10 > 5:", 10 > 5);
+    console.log("3 == 3:", 3 == 3);
+    console.log("3 == \"3\":", 3 == "3");
+    console.log("4 != 5:", 4 != 5);
+    console.log("7 <= 7:", 7 <= 7);
+    console.log("6 >= 9:", 6 >= 9);
+
+    // ── Logical operators ──────────────────────────────────
+    console.log("true && false:", true && false);
+    console.log("true || false:", true || false);
+    console.log("!true:", !true);
+    console.log("!false:", !false);
+
+    // ── Boolean variables ──────────────────────────────────
+    const isReady = true;
+    const isDone  = false;
+    console.log("isReady && !isDone:", isReady && !isDone);
+
+    // ── Chained arithmetic expressions ────────────────────
+    let result = x * y + 2;
+    console.log("x * y + 2 =", result);
+    let expr = (x + y) * (x - y);
+    console.log("(x+y)*(x-y) =", expr);
+
+    // ── Hex literal ───────────────────────────────────────
+    const hex = 0xFF;
+    console.log("0xFF =", hex);
+
+    // ── NaN / Infinity ────────────────────────────────────
+    console.log("Infinity:", Infinity);
+
+    // ── Reassignment ──────────────────────────────────────
+    let msg = "initial";
+    msg = "reassigned";
+    console.log("msg after reassign:", msg);
+
+    console.warn("JS variable test complete");
+  </script>
 
 </body>
 </html>

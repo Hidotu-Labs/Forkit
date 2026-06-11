@@ -3,7 +3,7 @@ use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
 use sdl2::image::ImageRWops;
 
-use crate::dom::node::{Element, Node, Style, ListStyleType, Display, BgSize, BgRepeat};
+use crate::dom::node::{Element, Node, Style, ListStyleType, Display, Visibility, BgSize, BgRepeat};
 use crate::dom::css::{parse_length_ctx, LengthContext};
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
@@ -12,7 +12,7 @@ use super::paint::{
     paint_text, measure_text, fill_rect_alpha, fill_rounded_rect,
     draw_rounded_rect, rgba_color, paint_box_shadow,
 };
-use super::state::{LayoutState, LayoutBox, InputArea, InputKind, ButtonArea, ButtonAction, MARGIN_LEFT, MARGIN_RIGHT, BLOCK_MARGIN, LINE_SPACING};
+use super::state::{LayoutState, LayoutBox, InputArea, InputKind, ButtonArea, ButtonAction, MARGIN_RIGHT, BLOCK_MARGIN, LINE_SPACING};
 use super::table;
 
 // ---------------------------------------------------------------------------
@@ -62,13 +62,38 @@ pub fn layout_element(
 ) {
     if el.style.display == Display::Hidden { return; }
 
+    // visibility:hidden — element occupies layout space but is not painted.
+    // We redirect rendering to a no-op sink so that all layout cursor
+    // advances happen normally while nothing is drawn to the screen.
+    if el.style.visibility == Visibility::Hidden {
+        // Use a headless layout pass that advances cursors without painting.
+        layout_element_invisible(ls, fonts, el, max_w);
+        return;
+    }
+
     let tag = el.tag.as_str();
     let s   = &el.style;
+
+    // Re-resolve font-size for viewport-relative units (vw, vh, calc) now that
+    // the real viewport dimensions are available in ls.ctx.
+    // All downstream code in this function uses `font_size` instead of `s.font_size`.
+    let font_size: u16 = if let Some(raw) = &s.font_size_raw {
+        let ctx = crate::dom::css::LengthContext {
+            base_font_size:  s.font_size,
+            percent_base:    16,
+            viewport_width:  ls.ctx.viewport_width,
+            viewport_height: ls.ctx.viewport_height,
+        };
+        crate::dom::css::parse_length_ctx(raw, &ctx)
+            .map(|n| n.clamp(8, 96) as u16)
+            .unwrap_or(s.font_size)
+    } else {
+        s.font_size
+    };
 
     // ── Structural root containers ─────────────────────────────────────────
     if matches!(tag, "#document" | "html" | "body") {
         // Background spans the full viewport width and at least the full viewport height.
-        // We use viewport_height (not 32_000) so cover/contain sizing works correctly.
         let bg_h = ls.ctx.viewport_height.max(32_000);
         if s.bg_color.is_some() {
             paint_block_bg(ls, canvas, s, 0, 0, max_w, bg_h);
@@ -77,19 +102,67 @@ pub fn layout_element(
             paint_block_bg_image(ls, canvas, tc, images, base_url, s,
                                  0, 0, max_w, ls.ctx.viewport_height);
         }
-        let ml = s.margin.left  + s.padding.left;
-        let mt = s.margin.top   + s.padding.top;
-        let mr = s.margin.right + s.padding.right;
-        if ml > 0 { ls.margin_left = ml; ls.cursor_x = ml; ls.indent = 0; }
-        if mt > 0 { ls.cursor_y = mt; }
-        let right_edge = if mr > 0 { mr } else { ls.margin_left };
-        let body_max_w = (max_w - right_edge).max(ls.margin_left + 1);
-        let body_max_w = if let Some(w) = s.size.width {
-            let body_w = w.min(body_max_w - ls.margin_left);
-            let left   = ((max_w - body_w) / 2).max(0);
-            ls.margin_left = left; ls.cursor_x = left; ls.indent = 0;
-            left + body_w
-        } else { body_max_w };
+
+        // Only html/body carry real layout margins; #document is a virtual root.
+        if tag == "#document" {
+            for child in &el.children {
+                ls.layout_node(canvas, tc, fonts, images, base_url, child, max_w);
+            }
+            return;
+        }
+
+        // Resolve body margin + padding into page offsets.
+        // padding is added to margin to form the content inset.
+        let pad_l = s.padding.left;
+        let pad_t = s.padding.top;
+        let pad_r = s.padding.right;
+        let mar_l = s.margin.left;
+        let mar_t = s.margin.top;
+        let mar_r = s.margin.right;
+
+        // Resolve viewport-relative widths for body/html width constraints.
+        let vw = ls.ctx.viewport_width;
+        let vh = ls.ctx.viewport_height;
+        let body_avail = max_w;
+        let resolved_w    = resolve_size(s.size.width,     s.size.width_raw.as_deref(),     body_avail, vw, vh, font_size);
+        let resolved_maxw = resolve_size(s.size.max_width, s.size.max_width_raw.as_deref(), body_avail, vw, vh, font_size);
+
+        // Determine body content width and left offset.
+        // If body has an explicit width or max-width AND margin:auto, center it.
+        let (body_left, body_content_w) = {
+            // Start with full width minus explicit margins/padding
+            let total_side = mar_l + pad_l + mar_r + pad_r;
+            let mut content_w = (max_w - total_side).max(1);
+
+            // Apply explicit width constraint
+            if let Some(w) = resolved_w    { content_w = content_w.min(w); }
+            if let Some(w) = resolved_maxw { content_w = content_w.min(w); }
+
+            let left = if s.margin_auto_left || s.margin_auto_right {
+                // margin: auto — center the content area
+                let remaining = (max_w - content_w - pad_l - pad_r - mar_l - mar_r).max(0);
+                match (s.margin_auto_left, s.margin_auto_right) {
+                    (true,  true)  => mar_l + pad_l + remaining / 2,
+                    (false, true)  => mar_l + pad_l,
+                    (true,  false) => mar_l + pad_l + remaining,
+                    (false, false) => mar_l + pad_l,
+                }
+            } else {
+                mar_l + pad_l
+            };
+            (left, content_w)
+        };
+
+        ls.margin_left = body_left;
+        ls.cursor_x    = body_left;
+        ls.indent      = 0;
+        ls.cursor_y    = (mar_t + pad_t).max(0);
+
+        // body_max_w is the absolute right edge for child layout
+        // = left content edge + content width (excludes right padding/margin, which
+        //   belong to the body box itself, not to children)
+        let body_max_w = (body_left + body_content_w).min(max_w);
+
         for child in &el.children {
             ls.layout_node(canvas, tc, fonts, images, base_url, child, body_max_w);
         }
@@ -98,7 +171,7 @@ pub fn layout_element(
 
     // ── Void / replaced elements ───────────────────────────────────────────
     if tag == "br" {
-        ls.newline(s.font_size, s.line_height_mul);
+        ls.newline(font_size, s.line_height_mul);
         return;
     }
 
@@ -106,14 +179,14 @@ pub fn layout_element(
         let src = crate::dom::parser::get_attr(&el.attrs_raw, "src").unwrap_or("");
         if !src.is_empty() {
             paint_image(ls, canvas, tc, images, base_url, src,
-                        s.size.width, s.size.height, max_w);
+                        s.size.width, s.size.height, max_w, s);
         }
         return;
     }
 
     if tag == "hr" {
         if ls.cursor_x > ls.margin_left + ls.indent {
-            ls.newline(s.font_size, s.line_height_mul);
+            ls.newline(font_size, s.line_height_mul);
         }
         ls.cursor_y += BLOCK_MARGIN;
         let ry = ls.cursor_y - ls.ctx.scroll_y;
@@ -125,7 +198,7 @@ pub fn layout_element(
             ));
         }
         ls.cursor_y   += 2 + BLOCK_MARGIN;
-        ls.line_height = s.font_size as i32;
+        ls.line_height = font_size as i32;
         return;
     }
 
@@ -151,7 +224,7 @@ pub fn layout_element(
             }
             ls.cursor_y += BLOCK_MARGIN + s.margin.top;
             ls.cursor_x  = ls.margin_left + ls.indent + s.margin.left;
-            ls.line_height = s.font_size as i32;
+            ls.line_height = font_size as i32;
         }
         for child in &el.children {
             ls.layout_node(canvas, tc, fonts, images, base_url, child, max_w);
@@ -206,31 +279,114 @@ pub fn layout_element(
     // ── Resolve sizing with real viewport / containing-block dimensions ────
     let vw = ls.ctx.viewport_width;
     let vh = ls.ctx.viewport_height;
-    // Horizontal: percent_base = available width (max_w minus left margin).
+    // Horizontal percent_base = available content width inside this element's parent.
     let avail_w = (max_w - ls.margin_left - MARGIN_RIGHT).max(1);
-    let avail_h = vh; // vertical percent resolves against viewport height
+    let avail_h = vh;
 
-    let resolved_width      = resolve_size(s.size.width,      s.size.width_raw.as_deref(),      avail_w, vw, vh, s.font_size);
-    let resolved_max_width  = resolve_size(s.size.max_width,  s.size.max_width_raw.as_deref(),  avail_w, vw, vh, s.font_size);
-    let resolved_min_width  = resolve_size(s.size.min_width,  s.size.min_width_raw.as_deref(),  avail_w, vw, vh, s.font_size);
-    let resolved_height     = resolve_size(s.size.height,     s.size.height_raw.as_deref(),     avail_h, vw, vh, s.font_size);
-    let resolved_max_height = resolve_size(s.size.max_height, s.size.max_height_raw.as_deref(), avail_h, vw, vh, s.font_size);
-    let resolved_min_height = resolve_size(s.size.min_height, s.size.min_height_raw.as_deref(), avail_h, vw, vh, s.font_size);
+    let resolved_width      = resolve_size(s.size.width,      s.size.width_raw.as_deref(),      avail_w, vw, vh, font_size);
+    let resolved_max_width  = resolve_size(s.size.max_width,  s.size.max_width_raw.as_deref(),  avail_w, vw, vh, font_size);
+    let resolved_min_width  = resolve_size(s.size.min_width,  s.size.min_width_raw.as_deref(),  avail_w, vw, vh, font_size);
+    let resolved_height     = resolve_size(s.size.height,     s.size.height_raw.as_deref(),     avail_h, vw, vh, font_size);
+    let resolved_max_height = resolve_size(s.size.max_height, s.size.max_height_raw.as_deref(), avail_h, vw, vh, font_size);
+    let resolved_min_height = resolve_size(s.size.min_height, s.size.min_height_raw.as_deref(), avail_h, vw, vh, font_size);
 
-    // ── Width clamping ─────────────────────────────────────────────────────
-    let effective_max_w = {
-        let mut w = max_w;
-        // max-width caps the box — stored value is a content width, so add
-        // the left origin (margin_left) to convert to an absolute right edge.
-        if let Some(mw) = resolved_max_width { w = w.min(ls.margin_left + mw); }
-        // explicit width works the same way
-        if let Some(fw) = resolved_width     { w = w.min(ls.margin_left + fw); }
-        // min-width expands the box when the natural width would be narrower
-        if let Some(mn) = resolved_min_width { w = w.max(ls.margin_left + mn); }
-        w
+    // ── Resolve horizontal box geometry (block_x, block_w) ────────────────
+    //
+    // We work entirely in absolute pixel coordinates:
+    //   block_x  = left edge of the border box
+    //   block_w  = width of the border box (border + padding + content)
+    //
+    // The containing block's content area is [ls.margin_left + ls.indent .. max_w - MARGIN_RIGHT].
+    let contain_left  = ls.margin_left + ls.indent;
+    let contain_right = max_w - MARGIN_RIGHT;
+    let contain_w     = (contain_right - contain_left).max(0);
+
+    // Step 1: determine the content/border-box width.
+    // Start with the explicit width (CSS `width`); fall back to full available.
+    let mut box_w = resolved_width.unwrap_or(
+        (contain_w - s.margin.left - s.margin.right).max(0)
+    );
+    // Clamp by max-width / min-width
+    if let Some(mw) = resolved_max_width { box_w = box_w.min(mw); }
+    if let Some(mn) = resolved_min_width { box_w = box_w.max(mn); }
+    box_w = box_w.max(0);
+
+    // Step 2: determine the left margin (resolving `auto`).
+    let ml = if s.margin_auto_left || s.margin_auto_right {
+        let remaining = (contain_w - box_w - s.margin.left - s.margin.right).max(0);
+        match (s.margin_auto_left, s.margin_auto_right) {
+            (true,  true)  => s.margin.left + remaining / 2,  // center
+            (false, true)  => s.margin.left,                   // flush left
+            (true,  false) => s.margin.left + remaining,       // flush right
+            (false, false) => s.margin.left,
+        }
+    } else {
+        s.margin.left
     };
 
+    // Step 3: absolute positions
+    let block_x = contain_left + ml;
+    let block_w = box_w.min(contain_right - block_x - s.margin.right).max(0);
+
+    // effective_max_w is no longer needed — all consumers use block_x/block_w directly.
+
     let is_block = s.display_block;
+
+    // ── Inline-block: render background+border as a pill/box, apply padding ─
+    // Elements with `display: inline-block` sit in the inline flow but paint
+    // their own background, border, and padding — the key requirement for the
+    // `border-radius: 999px` pill shape.
+    if s.display == crate::dom::node::Display::InlineBlock {
+        let pad_l = s.padding.left;
+        let pad_r = s.padding.right;
+        let pad_t = s.padding.top;
+        let pad_b = s.padding.bottom;
+
+        // ── Step 1: measure content width & natural text height via dry run ──
+        // We walk children with font metrics only — no SDL painting — so that
+        // ls.line_height is not inflated before we compute ib_h.
+        let content_w = measure_inline_block_children(fonts, &el.children, font_size);
+        let content_h = font_size as i32;   // natural single-line text height
+
+        // ── Step 2: compute box dimensions from measurement ──────────────────
+        let ib_x = ls.cursor_x;
+        let ib_y = ls.cursor_y;
+        let ib_w = (pad_l + content_w + pad_r).max(0);
+        let ib_h = (pad_t + content_h + pad_b).max(font_size as i32);
+
+        let radii = s.border_radius;
+
+        // ── Step 3: paint background & border behind the text ────────────────
+        if let Some(bg) = s.bg_color {
+            let alpha = s.bg_alpha;
+            fill_rounded_rect(canvas, rgba_color(bg, alpha), alpha,
+                              ib_x, ib_y, ib_w, ib_h, radii,
+                              ls.ctx.scroll_y, ls.ctx.viewport_height);
+        }
+        let b = &s.borders;
+        let has_border = b.top.width > 0 || b.bottom.width > 0
+                      || b.left.width > 0 || b.right.width > 0;
+        if has_border {
+            let outline = if b.top.width > 0 { b.top.color } else { b.left.color };
+            draw_rounded_rect(canvas, rgba_color(outline, 255), 255,
+                              ib_x, ib_y, ib_w, ib_h, radii,
+                              ls.ctx.scroll_y, ls.ctx.viewport_height);
+        }
+
+        // ── Step 4: single paint pass for children ───────────────────────────
+        ls.cursor_x = ib_x + pad_l;
+        for child in &el.children {
+            ls.layout_node(canvas, tc, fonts, images, base_url, child, max_w);
+        }
+
+        // ── Step 5: advance cursor past the box ──────────────────────────────
+        ls.cursor_x = ib_x + ib_w;
+        if ib_h > ls.line_height {
+            ls.line_height = ib_h;
+        }
+
+        return;
+    }
 
     // ── Block open ─────────────────────────────────────────────────────────
     let start_y;
@@ -239,22 +395,17 @@ pub fn layout_element(
             ls.cursor_y += ls.line_height + LINE_SPACING;
         }
         ls.cursor_y   += BLOCK_MARGIN + s.margin.top;
-        ls.cursor_x    = ls.margin_left + ls.indent + s.margin.left;
-        ls.line_height = s.font_size as i32;
+
+        ls.cursor_x    = block_x;
+        ls.line_height = font_size as i32;
 
         start_y = ls.cursor_y;
         ls.cursor_y += s.padding.top;
         ls.cursor_x += s.padding.left;
 
-        // block_x must include ls.indent so nested blocks align with their
-        // cursor position (the same way cursor_x is set above).
-        let block_x = ls.margin_left + ls.indent + s.margin.left;
-
-        let block_w = (effective_max_w - block_x - MARGIN_RIGHT - s.margin.right).max(0);
-
         // Box shadow (behind background)
         if let Some(ref shadow) = s.box_shadow {
-            let mut block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
             if let Some(h)  = resolved_height     { block_h = h; }
             if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
             if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
@@ -264,14 +415,14 @@ pub fn layout_element(
 
         // Background
         if s.bg_color.is_some() {
-            let mut block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
             if let Some(h)  = resolved_height     { block_h = h; }
             if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
             if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
             paint_block_bg(ls, canvas, s, block_x, start_y, block_w, block_h);
         }
         if s.bg_image_url.is_some() {
-            let mut block_h = measure_block_children(ls, fonts, el, effective_max_w, s);
+            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
             if let Some(h)  = resolved_height     { block_h = h; }
             if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
             if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
@@ -291,22 +442,30 @@ pub fn layout_element(
     let saved_indent = ls.indent;
     if is_block { ls.indent = ls.cursor_x - ls.margin_left; }
 
-    // Subtract this block's right padding and margin so children don't
-    // overflow into the right gutter of their parent container.
+    // Children must not paint beyond the right padding edge of this block.
+    // cursor_x is already at block_x + padding.left; the right edge is
+    // block_x + block_w - padding.right.
     let children_max_w = if is_block {
-        (effective_max_w - s.padding.right - s.margin.right).max(ls.cursor_x + 1)
+        (block_x + block_w - s.padding.right).max(ls.cursor_x + 1)
     } else {
-        effective_max_w
+        max_w
     };
 
     let link_start_y = ls.cursor_y;
     let link_start_x = ls.cursor_x;
 
-    // ── overflow:hidden clipping ───────────────────────────────────────────
-    // When overflow is hidden AND a height constraint applies, use SDL2's
-    // clip rect to prevent child content from painting outside the box.
+    // ── overflow:hidden / scroll / auto clipping ──────────────────────────
+    // When overflow restricts content AND a height constraint applies, use
+    // SDL2's clip rect to prevent child content from painting outside the box.
+    // overflow:scroll and overflow:auto additionally paint a visual scrollbar.
+    let overflow_clips = matches!(
+        s.overflow,
+        crate::dom::node::Overflow::Hidden
+        | crate::dom::node::Overflow::Scroll
+        | crate::dom::node::Overflow::Auto
+    );
     let needs_clip = is_block
-        && s.overflow == crate::dom::node::Overflow::Hidden
+        && overflow_clips
         && (resolved_max_height.is_some() || resolved_height.is_some());
     let saved_clip = canvas.clip_rect();
     if needs_clip {
@@ -314,14 +473,12 @@ pub fn layout_element(
             .or(resolved_max_height)
             .unwrap_or(0)
             .max(0);
-        let block_x_clip = ls.margin_left + ls.indent + s.margin.left;
-        let block_w_clip = (effective_max_w - block_x_clip - MARGIN_RIGHT - s.margin.right).max(0);
         let ry = start_y - ls.ctx.scroll_y;
-        if clip_h > 0 && block_w_clip > 0 {
+        if clip_h > 0 && block_w > 0 {
             canvas.set_clip_rect(sdl2::rect::Rect::new(
-                block_x_clip,
+                block_x,
                 ry,
-                block_w_clip as u32,
+                block_w as u32,
                 clip_h as u32,
             ));
         }
@@ -339,7 +496,7 @@ pub fn layout_element(
 
     if s.href.is_some() && !is_block {
         let lw = (ls.cursor_x - link_start_x).max(0);
-        let lh = (ls.line_height).max(s.font_size as i32);
+        let lh = (ls.line_height).max(font_size as i32);
         ls.link_areas.push(super::state::LinkArea {
             x: link_start_x, y: link_start_y,
             w: lw, h: lh,
@@ -351,11 +508,12 @@ pub fn layout_element(
     if is_block {
         ls.cursor_y += s.padding.bottom;
 
-        // Use saved_indent (the indent value when this block was opened) so that
-        // the border/box positions match the background that was already painted.
-        let block_x = ls.margin_left + saved_indent + s.margin.left;
-        let block_w = (effective_max_w - block_x - MARGIN_RIGHT - s.margin.right).max(0);
-        let end_y   = ls.cursor_y + ls.line_height;
+        // Only count line_height if there's an unfinished inline run on the
+        // current line (cursor_x advanced past the block's own content left
+        // edge = block_x + padding.left).
+        let content_left = block_x + s.padding.left;
+        let pending_lh = if ls.cursor_x > content_left { ls.line_height } else { 0 };
+        let end_y = ls.cursor_y + pending_lh;
         let mut block_h = (end_y - start_y).max(0);
 
         // Apply height / min-height / max-height
@@ -364,10 +522,9 @@ pub fn layout_element(
         if let Some(mx) = resolved_max_height {
             if block_h > mx {
                 block_h = mx;
-                // For overflow:hidden, snap cursor_y so children beyond max-height
-                // are not laid out further (content was already painted, so this
-                // prevents the element from pushing subsequent siblings down).
-                if s.overflow == crate::dom::node::Overflow::Hidden {
+                // For overflow:hidden/scroll/auto, snap cursor_y so children
+                // beyond max-height don't push subsequent siblings down.
+                if overflow_clips {
                     ls.cursor_y = start_y + block_h - s.padding.bottom;
                 }
             }
@@ -391,6 +548,15 @@ pub fn layout_element(
         paint_block_border(ls, canvas, s, block_x, start_y, block_w, block_h);
         ls.boxes.push(LayoutBox { x: block_x, y: start_y, w: block_w, h: block_h });
 
+        // ── overflow:scroll / auto — paint a static scrollbar ─────────────
+        let needs_scrollbar = matches!(
+            s.overflow,
+            crate::dom::node::Overflow::Scroll | crate::dom::node::Overflow::Auto
+        ) && block_h > 0 && block_w > 8;
+        if needs_scrollbar {
+            paint_scrollbar(ls, canvas, fonts, el, block_x, start_y, block_w, block_h, s);
+        }
+
         if ls.cursor_x > ls.margin_left + saved_indent {
             ls.cursor_y += ls.line_height + LINE_SPACING;
         }
@@ -405,6 +571,75 @@ pub fn layout_element(
 // ---------------------------------------------------------------------------
 // Block helpers
 // ---------------------------------------------------------------------------
+
+/// Paint a Chrome-style thin scrollbar on the right edge of a scroll/auto box.
+///
+/// - Track: full box height, 6 px wide, light grey  
+/// - Thumb: proportional to visible/content ratio, rounded, darker grey  
+/// - Horizontal indicator: small arrow chevrons at bottom-left edge  
+fn paint_scrollbar(
+    ls:      &mut LayoutState,
+    canvas:  &mut Canvas<Window>,
+    fonts:   &mut FontCache,
+    el:      &Element,
+    box_x:   i32,
+    box_y:   i32,
+    box_w:   i32,
+    box_h:   i32,
+    s:       &Style,
+) {
+    const TRACK_W: i32 = 8;  // total scrollbar column width
+    const THUMB_W: i32 = 6;  // visible thumb/track width (2 px inset on left)
+    const MIN_THUMB_H: i32 = 18;
+    const TRACK_COLOR:  [u8; 3] = [240, 240, 240];
+    const THUMB_COLOR:  [u8; 3] = [180, 180, 180];
+    const BORDER_COLOR: [u8; 3] = [210, 210, 210];
+
+    // Measure full content height to compute thumb ratio
+    let content_h = measure_block_children(ls, fonts, el, box_x + box_w, s)
+        .max(box_h);
+
+    let track_x = box_x + box_w - TRACK_W;
+    let track_y = box_y;
+
+    // ── Track ──────────────────────────────────────────────────────────────
+    fill_rect_alpha(canvas, rgba_color(TRACK_COLOR, 255), 255,
+        track_x, track_y, THUMB_W, box_h,
+        ls.ctx.scroll_y, ls.ctx.viewport_height);
+    // Left border line
+    fill_rect_alpha(canvas, rgba_color(BORDER_COLOR, 255), 255,
+        track_x, track_y, 1, box_h,
+        ls.ctx.scroll_y, ls.ctx.viewport_height);
+
+    // ── Thumb ──────────────────────────────────────────────────────────────
+    let thumb_h = ((box_h as f32 / content_h as f32) * box_h as f32) as i32;
+    let thumb_h = thumb_h.max(MIN_THUMB_H).min(box_h);
+    // Thumb is at the top (scroll position 0 — static render)
+    let thumb_y = track_y;
+    let thumb_x = track_x + 1; // 1 px inset from border
+    fill_rect_alpha(canvas, rgba_color(THUMB_COLOR, 255), 255,
+        thumb_x, thumb_y, THUMB_W - 1, thumb_h,
+        ls.ctx.scroll_y, ls.ctx.viewport_height);
+
+    // ── Horizontal scrollbar hint at the bottom ────────────────────────────
+    // A thin horizontal track along the bottom edge mirrors Chrome's behaviour
+    // of showing both scrollbars when overflow:scroll is set.
+    const HTRACK_H: i32 = 8;
+    let htrack_y = box_y + box_h - HTRACK_H;
+    let htrack_w = box_w - TRACK_W; // stop before the vertical scrollbar
+    fill_rect_alpha(canvas, rgba_color(TRACK_COLOR, 255), 255,
+        box_x, htrack_y, htrack_w, HTRACK_H - 1,
+        ls.ctx.scroll_y, ls.ctx.viewport_height);
+    // Top border of horizontal track
+    fill_rect_alpha(canvas, rgba_color(BORDER_COLOR, 255), 255,
+        box_x, htrack_y, htrack_w, 1,
+        ls.ctx.scroll_y, ls.ctx.viewport_height);
+    // Horizontal thumb (proportional to content width vs box width — use 60% as static estimate)
+    let hthumb_w = ((htrack_w as f32 * 0.6) as i32).max(MIN_THUMB_H).min(htrack_w);
+    fill_rect_alpha(canvas, rgba_color(THUMB_COLOR, 255), 255,
+        box_x, htrack_y + 1, hthumb_w, HTRACK_H - 2,
+        ls.ctx.scroll_y, ls.ctx.viewport_height);
+}
 
 fn open_block(ls: &mut LayoutState, s: &Style) {
     if ls.cursor_x > ls.margin_left + ls.indent {
@@ -447,6 +682,26 @@ fn paint_bullet(
                ls.ctx.scroll_y, ls.ctx.viewport_height);
 }
 
+/// Dry-run: measure the total text width of inline-block children using font
+/// metrics only — no SDL painting, no cursor mutation.
+fn measure_inline_block_children(fonts: &mut FontCache, children: &[Node], _font_size: u16) -> i32 {
+    let mut total = 0i32;
+    for child in children {
+        match child {
+            Node::Text(t) => {
+                let (w, _) = measure_text(fonts, t.text.trim(), &t.style);
+                total += w;
+            }
+            Node::Element(el) => {
+                if el.style.display == Display::Hidden { continue; }
+                total += measure_inline_block_children(fonts, &el.children, el.style.font_size);
+            }
+        }
+    }
+    // Clamp to at least the font size so an empty inline-block has visible height
+    total.max(0)
+}
+
 /// Dry-run: measure how tall a block element's children will be.
 fn measure_block_children(
     ls:    &LayoutState,
@@ -459,79 +714,223 @@ fn measure_block_children(
     let mut cx  = ls.cursor_x;
     let mut lh  = s.font_size as i32;
     let start_y = cy - s.padding.top;
-    measure_children_recursive(&el.children, fonts, max_w, &mut cx, &mut cy, &mut lh, ls.indent);
+    measure_children_recursive(&el.children, fonts, max_w, &mut cx, &mut cy, &mut lh, ls.indent, ls.margin_left, ls.ctx.viewport_width, ls.ctx.viewport_height);
     cy += s.padding.bottom;
-    let end_y = cy + lh;
+    // Mirror the block-close logic: if cx is back at the left margin the last
+    // child was a block that already advanced cy, so there's no pending inline
+    // content and we must not add lh (which would create a phantom gap).
+    let pending_lh = if cx > ls.margin_left + ls.indent { lh } else { 0 };
+    let end_y = cy + pending_lh;
     (end_y - start_y).max(0)
 }
 
 fn measure_children_recursive(
-    children: &[Node],
-    fonts:    &mut FontCache,
-    max_w:    i32,
-    cx:       &mut i32,
-    cy:       &mut i32,
-    lh:       &mut i32,
-    indent:   i32,
+    children:    &[Node],
+    fonts:       &mut FontCache,
+    max_w:       i32,
+    cx:          &mut i32,
+    cy:          &mut i32,
+    lh:          &mut i32,
+    indent:      i32,
+    margin_left: i32,
+    viewport_w:  i32,
+    viewport_h:  i32,
 ) {
     for child in children {
         match child {
             Node::Text(t) => {
+                // Re-resolve viewport-relative font-size (vw/vh/calc) so that
+                // height measurement matches what will actually be painted.
+                let font_size = if let Some(raw) = &t.style.font_size_raw {
+                    let ctx = crate::dom::css::LengthContext {
+                        base_font_size: t.style.font_size,
+                        percent_base:   16,
+                        viewport_width:  viewport_w,
+                        viewport_height: viewport_h,
+                    };
+                    crate::dom::css::parse_length_ctx(raw, &ctx)
+                        .map(|n| n.clamp(8, 96) as u16)
+                        .unwrap_or(t.style.font_size)
+                } else {
+                    t.style.font_size
+                };
                 let words: Vec<&str> = t.text.split_whitespace().collect();
                 if words.is_empty() { continue; }
                 let mut line = String::new();
                 for word in &words {
                     let test = if line.is_empty() { word.to_string() }
                                else { format!("{} {}", line, word) };
-                    let (tw, _) = fonts.get(t.style.font_size, t.style.bold, t.style.italic)
+                    let (tw, _) = fonts.get(font_size, t.style.bold, t.style.italic)
                         .and_then(|f| f.size_of(&test).ok())
                         .map(|(w, h)| (w as i32, h as i32))
-                        .unwrap_or((test.len() as i32 * 8, t.style.font_size as i32));
+                        .unwrap_or((test.len() as i32 * 8, font_size as i32));
                     if tw > max_w - *cx && !line.is_empty() {
-                        let line_h = (t.style.font_size as f32 * t.style.line_height_mul) as i32;
+                        let line_h = (font_size as f32 * t.style.line_height_mul) as i32;
                         *cy += (*lh).max(line_h) + LINE_SPACING;
-                        *cx  = MARGIN_LEFT + indent;
-                        *lh  = t.style.font_size as i32;
+                        *cx  = margin_left + indent;
+                        *lh  = font_size as i32;
                         line = word.to_string();
                     } else {
                         line = test;
                     }
                 }
                 if !line.is_empty() {
-                    let (_, th) = fonts.get(t.style.font_size, t.style.bold, t.style.italic)
+                    let (_, th) = fonts.get(font_size, t.style.bold, t.style.italic)
                         .and_then(|f| f.size_of(&line).ok())
                         .map(|(w, h)| (w as i32, h as i32))
-                        .unwrap_or((0, t.style.font_size as i32));
+                        .unwrap_or((0, font_size as i32));
                     if th > *lh { *lh = th; }
                 }
             }
             Node::Element(child_el) => {
                 if child_el.style.display == Display::Hidden { continue; }
                 let child_tag = child_el.tag.as_str();
+                // Re-resolve font-size for the element itself too
+                let child_font_size = if let Some(raw) = &child_el.style.font_size_raw {
+                    let ctx = crate::dom::css::LengthContext {
+                        base_font_size: child_el.style.font_size,
+                        percent_base:   16,
+                        viewport_width:  viewport_w,
+                        viewport_height: viewport_h,
+                    };
+                    crate::dom::css::parse_length_ctx(raw, &ctx)
+                        .map(|n| n.clamp(8, 96) as u16)
+                        .unwrap_or(child_el.style.font_size)
+                } else {
+                    child_el.style.font_size
+                };
                 if child_el.style.display_block {
-                    if *cx > MARGIN_LEFT + indent { *cy += *lh + LINE_SPACING; }
+                    if *cx > margin_left + indent { *cy += *lh + LINE_SPACING; }
                     *cy += BLOCK_MARGIN + child_el.style.margin.top;
-                    *cx  = MARGIN_LEFT + indent + child_el.style.margin.left;
-                    *lh  = child_el.style.font_size as i32;
+                    *cx  = margin_left + indent + child_el.style.margin.left;
+                    *lh  = child_font_size as i32;
                     if child_tag.len() == 2 && child_tag.starts_with('h')
                         && child_tag.as_bytes()[1].is_ascii_digit()
                     {
-                        *cy += child_el.style.font_size as i32 / 2;
+                        *cy += child_font_size as i32 / 2;
                     }
                     *cy += child_el.style.padding.top;
                     *cx += child_el.style.padding.left;
                     let saved = indent;
-                    let new_indent = *cx - MARGIN_LEFT;
-                    measure_children_recursive(&child_el.children, fonts, max_w, cx, cy, lh, new_indent);
+                    let new_indent = *cx - margin_left;
+                    measure_children_recursive(&child_el.children, fonts, max_w, cx, cy, lh, new_indent, margin_left, viewport_w, viewport_h);
                     *cy += child_el.style.padding.bottom;
-                    if *cx > MARGIN_LEFT { *cy += *lh + LINE_SPACING; }
+                    if *cx > margin_left { *cy += *lh + LINE_SPACING; }
                     *cy += BLOCK_MARGIN + child_el.style.margin.bottom;
-                    *cx  = MARGIN_LEFT + saved;
+                    *cx  = margin_left + saved;
                     *lh  = 16;
                 } else {
-                    measure_children_recursive(&child_el.children, fonts, max_w, cx, cy, lh, indent);
+                    measure_children_recursive(&child_el.children, fonts, max_w, cx, cy, lh, indent, margin_left, viewport_w, viewport_h);
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// visibility:hidden layout pass
+//
+// Advances the layout cursor exactly as the normal pass would, but does not
+// paint anything.  This preserves the space that the element would occupy so
+// that surrounding content is pushed down / across normally.
+// ---------------------------------------------------------------------------
+
+/// Advance cursor for a text node without painting it (for visibility:hidden).
+pub fn advance_text_invisible(
+    ls:    &mut LayoutState,
+    fonts: &mut FontCache,
+    text:  &str,
+    s:     &crate::dom::node::Style,
+) {
+    if text.trim().is_empty() { return; }
+    let (tw, th) = fonts.get(s.font_size, s.bold, s.italic)
+        .and_then(|f| f.size_of(text.trim()).ok())
+        .map(|(w, h)| (w as i32, h as i32))
+        .unwrap_or((text.len() as i32 * 8, s.font_size as i32));
+    ls.cursor_x += tw;
+    if th > ls.line_height { ls.line_height = th; }
+}
+
+fn layout_element_invisible(
+    ls:    &mut LayoutState,
+    fonts: &mut FontCache,
+    el:    &Element,
+    max_w: i32,
+) {
+    let s   = &el.style;
+    let tag = el.tag.as_str();
+
+    if s.display == Display::Hidden { return; }
+
+    // br — advance to next line
+    if tag == "br" {
+        ls.newline(s.font_size, s.line_height_mul);
+        return;
+    }
+
+    // For block elements: open block, measure children, close block
+    if s.display_block {
+        if ls.cursor_x > ls.margin_left + ls.indent {
+            ls.cursor_y += ls.line_height + LINE_SPACING;
+        }
+        ls.cursor_y   += BLOCK_MARGIN + s.margin.top;
+        ls.cursor_x    = ls.margin_left + ls.indent + s.margin.left;
+        ls.line_height = s.font_size as i32;
+
+        let start_y = ls.cursor_y;
+        ls.cursor_y += s.padding.top;
+        ls.cursor_x += s.padding.left;
+
+        let saved_indent = ls.indent;
+        ls.indent = ls.cursor_x - ls.margin_left;
+
+        // Recurse into children (also invisible)
+        for child in &el.children {
+            layout_node_invisible(ls, fonts, child, max_w);
+        }
+        ls.indent = saved_indent;
+
+        ls.cursor_y += s.padding.bottom;
+        let end_y   = ls.cursor_y + ls.line_height;
+        let block_h = (end_y - start_y).max(0);
+
+        if ls.cursor_x > ls.margin_left + saved_indent {
+            ls.cursor_y += ls.line_height + LINE_SPACING;
+        }
+        ls.cursor_y   += BLOCK_MARGIN + s.margin.bottom;
+        ls.cursor_x    = ls.margin_left + saved_indent;
+        ls.line_height = 16;
+        let _ = block_h;
+    } else {
+        // Inline — measure text width and advance cursor_x
+        for child in &el.children {
+            layout_node_invisible(ls, fonts, child, max_w);
+        }
+    }
+}
+
+fn layout_node_invisible(
+    ls:    &mut LayoutState,
+    fonts: &mut FontCache,
+    node:  &Node,
+    max_w: i32,
+) {
+    match node {
+        Node::Text(t) => {
+            // Measure text width and advance cursor as the inline pass would.
+            let s = &t.style;
+            let text = &t.text;
+            if text.trim().is_empty() { return; }
+            // Approximate: use font measurement for the whole text block
+            let (tw, th) = fonts.get(s.font_size, s.bold, s.italic)
+                .and_then(|f| f.size_of(text.trim()).ok())
+                .map(|(w, h)| (w as i32, h as i32))
+                .unwrap_or((text.len() as i32 * 8, s.font_size as i32));
+            ls.cursor_x += tw;
+            if th > ls.line_height { ls.line_height = th; }
+        }
+        Node::Element(el) => {
+            layout_element_invisible(ls, fonts, el, max_w);
         }
     }
 }
@@ -550,7 +949,17 @@ fn paint_image(
     width_hint:  Option<i32>,
     height_hint: Option<i32>,
     max_w:       i32,
+    style:       &crate::dom::node::Style,
 ) {
+    let ml = style.margin.left;
+    let mr = style.margin.right;
+    let mt = style.margin.top;
+    let mb = style.margin.bottom;
+    let pl = style.padding.left;
+    let pr = style.padding.right;
+    let pt = style.padding.top;
+    let pb = style.padding.bottom;
+
     let bytes = match images.get_bytes(src, base_url) {
         Some(b) => b,
         None    => return,
@@ -570,7 +979,8 @@ fn paint_image(
         (Some(w), None)    => { let h = if nat_w > 0 { w * nat_h / nat_w } else { nat_h }; (w, h) }
         (None, Some(h))    => { let w = if nat_h > 0 { h * nat_w / nat_h } else { nat_w }; (w, h) }
         (None, None) => {
-            let avail = (max_w - ls.cursor_x).max(1);
+            // Available width accounts for the image's own horizontal box model.
+            let avail = (max_w - ls.cursor_x - ml - pl - pr - mr).max(1);
             if nat_w > avail {
                 let h = if nat_w > 0 { avail * nat_h / nat_w } else { nat_h };
                 (avail, h)
@@ -580,20 +990,54 @@ fn paint_image(
         }
     };
     if dw <= 0 || dh <= 0 { return; }
-    if ls.cursor_x + dw > max_w && ls.cursor_x > ls.margin_left {
+
+    // Total horizontal footprint of the image including its box model.
+    let total_w = ml + pl + dw + pr + mr;
+
+    // Wrap to the next line if the image (with its spacing) won't fit.
+    if ls.cursor_x + total_w > max_w && ls.cursor_x > ls.margin_left {
         ls.cursor_y += ls.line_height + LINE_SPACING;
         ls.cursor_x  = ls.margin_left + ls.indent;
         ls.line_height = 0;
     }
-    let rx = ls.cursor_x;
-    let ry = ls.cursor_y - ls.ctx.scroll_y;
-    if ry + dh > 0 && ry < ls.ctx.viewport_height {
-        if let Ok(tex) = tc.create_texture_from_surface(&surface) {
-            let _ = canvas.copy(&tex, None, sdl2::rect::Rect::new(rx, ry, dw as u32, dh as u32));
+
+    // ── Paint positions ───────────────────────────────────────────────────
+    // cursor_y is the TOP of the current line. For inline elements we must NOT
+    // mutate cursor_y directly — only line_height is updated. The top margin
+    // and padding offset the image downward relative to the line baseline,
+    // and the bottom margin/padding inflate line_height so the next line starts
+    // far enough below.
+    let box_x = ls.cursor_x + ml;            // left edge of padding box
+    let img_x = box_x + pl;                  // left edge of image content
+    let box_y = ls.cursor_y + mt;            // top edge of padding box (scroll-adjusted later)
+    let img_y = box_y + pt;                  // top edge of image content
+
+    // Paint background behind the padding box (if any).
+    if let Some(bg) = style.bg_color {
+        let box_w = (pl + dw + pr).max(0) as u32;
+        let box_h = (pt + dh + pb).max(0) as u32;
+        let screen_y = box_y - ls.ctx.scroll_y;
+        if box_w > 0 && box_h > 0 && screen_y + box_h as i32 > 0 && screen_y < ls.ctx.viewport_height {
+            canvas.set_draw_color(Color::RGBA(bg[0], bg[1], bg[2], style.bg_alpha));
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(box_x, screen_y, box_w, box_h));
         }
     }
-    ls.cursor_x += dw + 4;
-    if dh > ls.line_height { ls.line_height = dh; }
+
+    // Paint the image texture.
+    let screen_y = img_y - ls.ctx.scroll_y;
+    if screen_y + dh > 0 && screen_y < ls.ctx.viewport_height {
+        if let Ok(tex) = tc.create_texture_from_surface(&surface) {
+            let _ = canvas.copy(&tex, None, sdl2::rect::Rect::new(img_x, screen_y, dw as u32, dh as u32));
+        }
+    }
+
+    // Advance cursor horizontally past the full box model footprint.
+    ls.cursor_x += total_w;
+
+    // The line-height contribution is the full vertical footprint of the box
+    // model so the next line starts below the bottom margin.
+    let full_h = mt + pt + dh + pb + mb;
+    if full_h > ls.line_height { ls.line_height = full_h; }
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,22 +1496,18 @@ fn paint_block_bg(
 ) {
     let radii = style.border_radius;
     if let Some(bg) = style.bg_color {
+        // Combine bg_alpha (from rgba()) with opacity (from CSS opacity property).
+        // Both are already baked into bg_alpha during the cascade, so use it
+        // directly with SDL2 blend mode rather than pre-compositing against white.
+        // Pre-compositing against white would make opacity:0.5 on a dark colour
+        // look washed-out grey instead of the correct semi-transparent dark.
         let alpha = style.bg_alpha;
-        // Pre-composite the background colour against opaque white so that
-        // semi-transparent backgrounds (rgba / hsla) look correct regardless
-        // of whether the SDL2 renderer's blend mode works as expected.
-        // Formula: out = alpha * src + (1 - alpha) * white
-        let a = alpha as u32;
-        let pre = [
-            ((a * bg[0] as u32 + (255 - a) * 255) / 255) as u8,
-            ((a * bg[1] as u32 + (255 - a) * 255) / 255) as u8,
-            ((a * bg[2] as u32 + (255 - a) * 255) / 255) as u8,
-        ];
+        let color = rgba_color(bg, alpha);
         if radii != [0, 0, 0, 0] {
-            fill_rounded_rect(canvas, rgba_color(pre, 255), 255,
+            fill_rounded_rect(canvas, color, alpha,
                               x, y, w, h, radii, ls.ctx.scroll_y, ls.ctx.viewport_height);
         } else {
-            fill_rect_alpha(canvas, rgba_color(pre, 255), 255,
+            fill_rect_alpha(canvas, color, alpha,
                             x, y, w, h, ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
     }
@@ -1081,7 +1521,7 @@ fn paint_block_border(
 ) {
     let radii = style.border_radius;
     let b     = &style.borders;
-    let alpha = 255u8;
+    let alpha = style.opacity;  // baked effective opacity (255 = fully opaque)
 
     let has_any = b.top.width > 0 || b.bottom.width > 0
                || b.left.width > 0 || b.right.width > 0;
@@ -1089,7 +1529,7 @@ fn paint_block_border(
 
     if radii != [0, 0, 0, 0] {
         let outline = if b.top.width > 0 { b.top.color } else { b.left.color };
-        draw_rounded_rect(canvas, rgba_color(outline, 255), alpha,
+        draw_rounded_rect(canvas, rgba_color(outline, alpha), alpha,
                           x, y, w, h, radii, ls.ctx.scroll_y, ls.ctx.viewport_height);
     } else {
         let bw_t = b.top.width    as i32;

@@ -122,6 +122,11 @@ pub fn apply_tag_defaults(el: &mut Element) {
             s.margin.bottom = 8;
         }
 
+        // ── Body / HTML default page margin ───────────────────────────────
+        "body" => {
+            s.margin = BoxSpacing { top: 8, right: 8, bottom: 8, left: 8 };
+        }
+
         // ── Lists ──────────────────────────────────────────────────────────
         "ul" => { s.padding.left = 28; s.margin.top = 4; s.margin.bottom = 4; }
         "ol" => {
@@ -136,19 +141,18 @@ pub fn apply_tag_defaults(el: &mut Element) {
 
         // ── Tables ─────────────────────────────────────────────────────────
         "table" => {
-            s.borders       = Borders::uniform(Border { width: 1, color: [200, 200, 200] });
+            // No default border on the table element itself — the cell borders
+            // (td/th) form the grid, matching browser border-collapse behaviour.
+            // An explicit CSS border="" or border attribute will still apply.
             s.margin.top    = 8;
             s.margin.bottom = 8;
         }
         "th" => {
             s.bold       = true;
-            s.bg_color   = Some([240, 240, 240]);
-            s.borders    = Borders::uniform(Border { width: 1, color: [200, 200, 200] });
             s.padding    = BoxSpacing { top: 6, right: 12, bottom: 6, left: 12 };
             s.text_align = TextAlign::Center;
         }
         "td" => {
-            s.borders = Borders::uniform(Border { width: 1, color: [220, 220, 220] });
             s.padding = BoxSpacing { top: 6, right: 12, bottom: 6, left: 12 };
         }
         "caption" => { s.text_align = TextAlign::Center; s.bold = true; s.margin.bottom = 4; }
