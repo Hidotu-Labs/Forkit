@@ -2,35 +2,13 @@ use sdl2::ttf::{Font, Sdl2TtfContext};
 use std::collections::HashMap;
 use std::path::Path;
 
-// Sans-serif (default)
-// NotoSans covers Latin, Latin Extended (Turkish, etc.), Greek, Cyrillic and more.
-const SANS_REGULAR:    &str = "/usr/share/fonts/noto/NotoSans-Regular.ttf";
-const SANS_BOLD:       &str = "/usr/share/fonts/noto/NotoSans-Bold.ttf";
-const SANS_ITALIC:     &str = "/usr/share/fonts/noto/NotoSans-Italic.ttf";
-const SANS_BOLDITALIC: &str = "/usr/share/fonts/noto/NotoSans-BoldItalic.ttf";
-
-// Monospace
-const MONO_REGULAR:    &str = "/usr/share/fonts/Adwaita/AdwaitaMono-Regular.ttf";
-const MONO_BOLD:       &str = "/usr/share/fonts/Adwaita/AdwaitaMono-Bold.ttf";
-const MONO_ITALIC:     &str = "/usr/share/fonts/Adwaita/AdwaitaMono-Italic.ttf";
-const MONO_BOLDITALIC: &str = "/usr/share/fonts/Adwaita/AdwaitaMono-BoldItalic.ttf";
-
-// Noto Sans Mono — better Unicode coverage than Adwaita for code blocks
-const NOTO_MONO_REGULAR: &str = "/usr/share/fonts/noto/NotoSansMono-Regular.ttf";
-const NOTO_MONO_BOLD:    &str = "/usr/share/fonts/noto/NotoSansMono-Bold.ttf";
-
-// System-level broad-coverage fallbacks (DejaVu is almost always available)
-const DEJAVU_SANS:       &str = "/usr/share/fonts/dejavu/DejaVuSans.ttf";
-const DEJAVU_SANS_BOLD:  &str = "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf";
-const DEJAVU_MONO:       &str = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf";
-
 /// Font family hint — controls which face is loaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FontFamily {
     #[default]
     SansSerif,
     Monospace,
-    // Serif falls back to sans-serif for now (no Noto Serif on all systems)
+    // Serif falls back to sans-serif for now (no Noto Serif bundled)
     Serif,
 }
 
@@ -100,42 +78,108 @@ impl<'ttf> FontCache<'ttf> {
         italic: bool,
         family: FontFamily,
     ) -> Option<Font<'ttf, 'static>> {
-        // Each family has a primary path, a same-family fallback, then broad
-        // Unicode fallbacks (DejaVu covers Latin Extended A/B, Greek, Cyrillic,
-        // Arabic, Hebrew, and more — including all Turkish characters).
-        let paths: &[&str] = match family {
-            FontFamily::Monospace => &[
-                match (bold, italic) {
-                    (true,  true)  => MONO_BOLDITALIC,
-                    (true,  false) => MONO_BOLD,
-                    (false, true)  => MONO_ITALIC,
-                    (false, false) => MONO_REGULAR,
-                },
-                // Noto Sans Mono as secondary (better Unicode than Adwaita)
-                if bold { NOTO_MONO_BOLD } else { NOTO_MONO_REGULAR },
-                MONO_REGULAR,
-                DEJAVU_MONO,
-                DEJAVU_SANS,
-                SANS_REGULAR,
-            ],
-            FontFamily::SansSerif | FontFamily::Serif => &[
-                match (bold, italic) {
-                    (true,  true)  => SANS_BOLDITALIC,
-                    (true,  false) => SANS_BOLD,
-                    (false, true)  => SANS_ITALIC,
-                    (false, false) => SANS_REGULAR,
-                },
-                SANS_REGULAR,
-                if bold { DEJAVU_SANS_BOLD } else { DEJAVU_SANS },
-                DEJAVU_SANS,
-            ],
+        // Get the executable directory to locate bundled fonts
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        // Try multiple locations for font files:
+        // 1. Bundled fonts in assets/fonts relative to executable
+        // 2. Bundled fonts in assets/fonts relative to working directory
+        // 3. System fonts (multiple common locations)
+        let search_paths = vec![
+            exe_dir.join("assets/fonts"),
+            std::path::PathBuf::from("assets/fonts"),
+            std::path::PathBuf::from("/usr/share/fonts/noto"),
+            std::path::PathBuf::from("/usr/share/fonts/truetype/noto"),
+            std::path::PathBuf::from("/usr/share/fonts/google-noto"),
+            std::path::PathBuf::from("/usr/local/share/fonts/noto"),
+            // macOS
+            std::path::PathBuf::from("/System/Library/Fonts"),
+            std::path::PathBuf::from("/Library/Fonts"),
+            // Windows
+            std::path::PathBuf::from("C:/Windows/Fonts"),
+        ];
+
+        // Determine font filename based on family and style
+        let (regular, bold_font, italic_font, bold_italic) = match family {
+            FontFamily::Monospace => (
+                "NotoSansMono-Regular.ttf",
+                "NotoSansMono-Bold.ttf",
+                "NotoSansMono-Regular.ttf", // Noto Mono doesn't have italic variants
+                "NotoSansMono-Bold.ttf",
+            ),
+            FontFamily::SansSerif | FontFamily::Serif => (
+                "NotoSans-Regular.ttf",
+                "NotoSans-Bold.ttf",
+                "NotoSans-Italic.ttf",
+                "NotoSans-BoldItalic.ttf",
+            ),
         };
 
-        for path in paths {
-            if let Ok(font) = self.ttf.load_font(Path::new(path), size) {
+        let filename = match (bold, italic) {
+            (true,  true)  => bold_italic,
+            (true,  false) => bold_font,
+            (false, true)  => italic_font,
+            (false, false) => regular,
+        };
+
+        // Try each search path
+        for base_path in &search_paths {
+            let font_path = base_path.join(filename);
+            if font_path.exists() {
+                if let Ok(font) = self.ttf.load_font(&font_path, size) {
+                    return Some(font);
+                }
+            }
+        }
+
+        // Fallback: try to load any system font
+        let fallback_fonts = self.find_system_fonts();
+        for font_path in fallback_fonts {
+            if let Ok(font) = self.ttf.load_font(&font_path, size) {
                 return Some(font);
             }
         }
+
+        eprintln!("Failed to load font: {} (size {})", filename, size);
         None
+    }
+
+    /// Find any available system fonts as a last resort
+    fn find_system_fonts(&self) -> Vec<std::path::PathBuf> {
+        let mut fonts = Vec::new();
+
+        // Common system font locations to check
+        let font_dirs = vec![
+            "/usr/share/fonts",
+            "/usr/local/share/fonts",
+            "/System/Library/Fonts",
+            "/Library/Fonts",
+            "C:/Windows/Fonts",
+        ];
+
+        for dir in font_dirs {
+            let path = std::path::Path::new(dir);
+            if path.exists() {
+                // Look for common font files
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(ext) = path.extension() {
+                            if ext == "ttf" || ext == "otf" {
+                                fonts.push(path);
+                                if fonts.len() > 10 {
+                                    return fonts; // Limit search
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        fonts
     }
 }
