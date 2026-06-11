@@ -690,5 +690,267 @@
     console.warn("JS variable test complete");
   </script>
 
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18. &lt;data&gt; Element</h2>
+  <div class="card">
+    <p style="color:#555; font-size:13px; margin-top:0;">
+      The <code>&lt;data&gt;</code> element links visible content to a machine-readable
+      value via the <code>value</code> attribute. It renders inline with muted grey color.
+    </p>
+
+    <div class="label">data with value attribute (product code)</div>
+    <div class="row pass">
+      Price: <data value="USD49.99">$49.99</data>
+    </div>
+
+    <div class="label">data with integer value (item count)</div>
+    <div class="row pass">
+      Items in stock: <data value="42">forty-two</data>
+    </div>
+
+    <div class="label">data with date-like value</div>
+    <div class="row pass">
+      Release: <data value="2024-01-15">January 15, 2024</data>
+    </div>
+
+    <div class="label">data styled inline</div>
+    <div class="row pass">
+      Score: <data value="98" style="color:#009944; font-weight:bold;">98 points</data>
+    </div>
+
+    <div class="label">multiple data elements in a sentence</div>
+    <div class="row pass">
+      Buy <data value="3">three</data> items for <data value="USD14.97">$14.97</data>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19. &lt;meter&gt; Element</h2>
+  <div class="card">
+    <p style="color:#555; font-size:13px; margin-top:0;">
+      The <code>&lt;meter&gt;</code> element represents a scalar measurement within a
+      known range. Fill color: green = normal, yellow = near boundary, red = outside low/high.
+    </p>
+
+    <div class="label">meter — 60% full (value=0.6, min=0, max=1)</div>
+    <div class="row pass">
+      <meter value="0.6" min="0" max="1" low="0.2" high="0.8">60%</meter>
+      <span style="color:#555; font-size:13px;"> value=0.6 — should be green</span>
+    </div>
+
+    <div class="label">meter — 10% full, below low threshold (warning)</div>
+    <div class="row pass">
+      <meter value="0.1" min="0" max="1" low="0.2" high="0.8">10%</meter>
+      <span style="color:#555; font-size:13px;"> value=0.1 low=0.2 — should be red</span>
+    </div>
+
+    <div class="label">meter — 95% full, above high threshold (warning)</div>
+    <div class="row pass">
+      <meter value="0.95" min="0" max="1" low="0.2" high="0.8">95%</meter>
+      <span style="color:#555; font-size:13px;"> value=0.95 high=0.8 — should be red</span>
+    </div>
+
+    <div class="label">meter — disk usage (75 of 100 GB, near high)</div>
+    <div class="row pass">
+      <meter value="75" min="0" max="100" low="20" high="80" optimum="40">75 GB</meter>
+      <span style="color:#555; font-size:13px;"> 75/100 GB near high boundary — yellow</span>
+    </div>
+
+    <div class="label">meter — custom width via style</div>
+    <div class="row pass">
+      <meter value="0.5" min="0" max="1" style="width:300px;">50%</meter>
+      <span style="color:#555; font-size:13px;"> width:300px</span>
+    </div>
+
+    <div class="label">meter — 0% (empty bar)</div>
+    <div class="row pass">
+      <meter value="0" min="0" max="1">0%</meter>
+      <span style="color:#555; font-size:13px;"> value=0 — empty bar</span>
+    </div>
+
+    <div class="label">meter — 100% (full bar)</div>
+    <div class="row pass">
+      <meter value="1" min="0" max="1">100%</meter>
+      <span style="color:#555; font-size:13px;"> value=1 — full green bar</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20. &lt;output&gt; Element</h2>
+  <div class="card">
+    <p style="color:#555; font-size:13px; margin-top:0;">
+      The <code>&lt;output&gt;</code> element represents the result of a calculation or
+      user action. Renders as a block with a light grey background and border.
+    </p>
+
+    <div class="label">output — basic calculation result</div>
+    <div class="row pass">
+      <output name="result">42</output>
+    </div>
+
+    <div class="label">output — currency result</div>
+    <div class="row pass">
+      Total: <output name="total" for="price qty">$149.97</output>
+    </div>
+
+    <div class="label">output — styled inline</div>
+    <div class="row pass">
+      Result: <output style="color:#0f3460; font-weight:bold; background-color:#ddeeff; border-color:#0f3460;">1,234.56</output>
+    </div>
+
+    <div class="label">output inside form with label</div>
+    <div class="row pass">
+      <form>
+        <label for="a">A:</label>
+        <input type="number" id="a" value="10" style="width:60px;">
+        <label for="b">B:</label>
+        <input type="number" id="b" value="20" style="width:60px;">
+        <output name="sum" for="a b">30</output>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21. Input Validation Attributes</h2>
+  <div class="card">
+    <p style="color:#555; font-size:13px; margin-top:0;">
+      HTML5 validation attributes constrain what users can enter. Forkit renders
+      all input types with correct styling; active validation requires JS (not yet implemented).
+    </p>
+
+    <div class="label">type="email" — email address field</div>
+    <div class="row pass">
+      <input type="email" placeholder="user@example.com" value="test@example.com">
+    </div>
+
+    <div class="label">type="number" — numeric input</div>
+    <div class="row pass">
+      <input type="number" min="0" max="100" step="5" value="25">
+    </div>
+
+    <div class="label">type="number" min/max/step visible in placeholder</div>
+    <div class="row pass">
+      <input type="number" min="1" max="10" step="1" placeholder="1-10">
+    </div>
+
+    <div class="label">type="url" — URL field</div>
+    <div class="row pass">
+      <input type="url" placeholder="https://example.com" value="https://forkit.rs">
+    </div>
+
+    <div class="label">type="tel" — telephone number</div>
+    <div class="row pass">
+      <input type="tel" placeholder="+1 (555) 000-0000">
+    </div>
+
+    <div class="label">type="search" — search field</div>
+    <div class="row pass">
+      <input type="search" placeholder="Search...">
+    </div>
+
+    <div class="label">type="password" — masked text</div>
+    <div class="row pass">
+      <input type="password" value="secret123">
+      <span style="color:#555; font-size:13px;"> value should be masked as dots</span>
+    </div>
+
+    <div class="label">required attribute</div>
+    <div class="row pass">
+      <input type="text" required placeholder="Required field">
+    </div>
+
+    <div class="label">pattern attribute (alphanumeric only)</div>
+    <div class="row pass">
+      <input type="text" pattern="[A-Za-z0-9]+" placeholder="Letters and digits only">
+    </div>
+
+    <div class="label">minlength / maxlength</div>
+    <div class="row pass">
+      <input type="text" minlength="3" maxlength="12" placeholder="3-12 characters">
+    </div>
+
+    <div class="label">type="range" — slider</div>
+    <div class="row pass">
+      <input type="range" min="0" max="100" value="40">
+    </div>
+
+    <div class="label">type="date"</div>
+    <div class="row pass">
+      <input type="date" value="2024-01-15">
+    </div>
+
+    <div class="label">type="color"</div>
+    <div class="row pass">
+      <input type="color" value="#0f3460">
+    </div>
+
+    <div class="label">type="checkbox" + required</div>
+    <div class="row pass">
+      <input type="checkbox" required>
+      <label>I agree to the terms (required)</label>
+    </div>
+
+    <div class="label">type="radio" group</div>
+    <div class="row pass">
+      <input type="radio" name="choice" value="a"> Option A
+      <input type="radio" name="choice" value="b" checked> Option B
+      <input type="radio" name="choice" value="c"> Option C
+    </div>
+
+    <div class="label">disabled attribute</div>
+    <div class="row pass">
+      <input type="text" disabled value="Cannot edit this">
+    </div>
+
+    <div class="label">readonly attribute</div>
+    <div class="row pass">
+      <input type="text" readonly value="Read-only value">
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>22. &lt;progress&gt; Element (updated)</h2>
+  <div class="card">
+    <p style="color:#555; font-size:13px; margin-top:0;">
+      The <code>&lt;progress&gt;</code> element shows task completion. Fill is now
+      computed from the actual <code>value</code>/<code>max</code> attributes.
+    </p>
+
+    <div class="label">progress — 0% (value=0, max=100)</div>
+    <div class="row pass">
+      <progress value="0" max="100"></progress>
+      <span style="color:#555; font-size:13px;"> 0% — empty bar</span>
+    </div>
+
+    <div class="label">progress — 40% (value=40, max=100)</div>
+    <div class="row pass">
+      <progress value="40" max="100"></progress>
+      <span style="color:#555; font-size:13px;"> 40% — blue fill</span>
+    </div>
+
+    <div class="label">progress — 75% (value=75, max=100)</div>
+    <div class="row pass">
+      <progress value="75" max="100"></progress>
+      <span style="color:#555; font-size:13px;"> 75% — blue fill</span>
+    </div>
+
+    <div class="label">progress — 100% (value=100, max=100)</div>
+    <div class="row pass">
+      <progress value="100" max="100"></progress>
+      <span style="color:#555; font-size:13px;"> 100% — full bar</span>
+    </div>
+
+    <div class="label">progress — fractional (value=0.7, max=1)</div>
+    <div class="row pass">
+      <progress value="0.7" max="1"></progress>
+      <span style="color:#555; font-size:13px;"> 70%</span>
+    </div>
+
+    <div class="label">progress — custom width (style="width:350px")</div>
+    <div class="row pass">
+      <progress value="50" max="100" style="width:350px;"></progress>
+    </div>
+  </div>
+
 </body>
 </html>

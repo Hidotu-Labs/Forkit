@@ -242,6 +242,25 @@ pub fn apply_tag_defaults(el: &mut Element) {
             s.border_radius = [8, 8, 8, 8];
         }
 
+        // ── Data element (machine-readable value) ───────────────────────────
+        "data" => {
+            // Render inline like a span, with optional muted color to indicate
+            // machine-readable data
+            s.display_block = false;
+            s.display       = Display::Inline;
+            s.color         = [80, 80, 80];
+        }
+
+        // ── Output element (form calculation result) ────────────────────────
+        "output" => {
+            s.bg_color    = Some([248, 248, 248]);
+            s.borders     = Borders::uniform(Border { width: 1, color: [200, 200, 200] });
+            s.border_radius = [4, 4, 4, 4];
+            s.padding     = BoxSpacing { top: 4, right: 8, bottom: 4, left: 8 };
+            s.margin.top  = 4;
+            s.margin.bottom = 4;
+        }
+
         // ── Media placeholders ────────────────────────────────────────────
         "video" | "canvas" => {
             if s.size.width.is_none()  { s.size.width  = Some(320); }

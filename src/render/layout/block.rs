@@ -248,7 +248,7 @@ pub fn layout_element(
     }
 
     if matches!(tag, "progress" | "meter") {
-        paint_progress(ls, canvas, s, max_w);
+        paint_progress(ls, canvas, el, s, max_w);
         return;
     }
 
@@ -1313,6 +1313,7 @@ fn paint_form_control(
 fn paint_progress(
     ls:     &mut LayoutState,
     canvas: &mut Canvas<Window>,
+    el:     &Element,
     s:      &Style,
     _max_w: i32,
 ) {
@@ -1326,13 +1327,71 @@ fn paint_progress(
     let radii = s.border_radius;
     let bg = s.bg_color.unwrap_or([220, 220, 220]);
 
+    // Read value, min, max attributes for progress/meter
+    // For <progress>: value is current progress, max defaults to 1.0
+    // For <meter>: value, min (default 0), max (default 1), optimum (optional)
+    let tag = el.tag.as_str();
+    
+    let (min_val, max_val, value) = if tag == "progress" {
+        let max = crate::dom::parser::get_attr(&el.attrs_raw, "max")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(1.0);
+        let val = crate::dom::parser::get_attr(&el.attrs_raw, "value")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        (0.0, max, val)
+    } else {
+        // meter element
+        let min = crate::dom::parser::get_attr(&el.attrs_raw, "min")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let max = crate::dom::parser::get_attr(&el.attrs_raw, "max")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(1.0);
+        let val = crate::dom::parser::get_attr(&el.attrs_raw, "value")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        (min, max, val)
+    };
+
+    // Calculate fill percentage
+    let range = (max_val - min_val).max(0.001); // avoid division by zero
+    let ratio = ((value - min_val) / range).clamp(0.0, 1.0);
+    let fill_w = (w as f64 * ratio).max(0.0) as i32;
+
+    // Determine fill color based on element type and value
+    // For meter: green for normal, yellow for warning, red for critical
+    let fill_color = if tag == "meter" {
+        // Check for low/high/optimum attributes
+        let low = crate::dom::parser::get_attr(&el.attrs_raw, "low")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(min_val);
+        let high = crate::dom::parser::get_attr(&el.attrs_raw, "high")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(max_val);
+        let _optimum = crate::dom::parser::get_attr(&el.attrs_raw, "optimum")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or((max_val + min_val) / 2.0);
+
+        // Green in normal range, yellow near edges, red outside low/high bounds
+        if value < low || value > high {
+            [220, 53, 69]   // red: critical
+        } else if (value - low).abs() < (high - low) * 0.2
+               || (value - high).abs() < (high - low) * 0.2 {
+            [255, 193, 7]   // yellow: warning
+        } else {
+            [40, 167, 69]   // green: normal
+        }
+    } else {
+        // Progress bar uses a blue color
+        [66, 133, 244]
+    };
+
     if radii != [0, 0, 0, 0] {
         fill_rounded_rect(canvas, Color::RGB(bg[0], bg[1], bg[2]), 255,
                           x, y, w, h, radii, ls.ctx.scroll_y, ls.ctx.viewport_height);
-        // Fill bar at 40% for visual
-        let fill_w = (w * 2 / 5).max(0);
         if fill_w > 0 {
-            fill_rounded_rect(canvas, Color::RGB(66, 133, 244), 255,
+            fill_rounded_rect(canvas, Color::RGB(fill_color[0], fill_color[1], fill_color[2]), 255,
                               x, y, fill_w, h, radii, ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
         draw_rounded_rect(canvas, Color::RGB(160, 160, 160), 255,
@@ -1340,9 +1399,8 @@ fn paint_progress(
     } else {
         fill_rect_alpha(canvas, Color::RGB(bg[0], bg[1], bg[2]), 255,
                         x, y, w, h, ls.ctx.scroll_y, ls.ctx.viewport_height);
-        let fill_w = (w * 2 / 5).max(0);
         if fill_w > 0 {
-            fill_rect_alpha(canvas, Color::RGB(66, 133, 244), 255,
+            fill_rect_alpha(canvas, Color::RGB(fill_color[0], fill_color[1], fill_color[2]), 255,
                             x, y, fill_w, h, ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
     }
