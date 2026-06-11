@@ -1,1 +1,33 @@
+# Rust build artifacts
 /target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# SDL2 dependencies
+*.dll
+*.so
+*.dylib
+
+# Debug and release builds
+debug/
+release/
+
+# Test results
+/test-results/
+*.profraw
+*.profdata
+
+# Documentation
+/doc/
+
+# Backup files
+*.bak
+*.tmp
