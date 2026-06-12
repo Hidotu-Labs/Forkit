@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Forkit JavaScript Test</title>
+  <style>
+    /* ── Reset / base ── */
+    body {
+      color: #222222;
+      background-color: #f0f0f0;
+      margin: 0;
+      padding: 16px;
+      font-family: sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    h1 { color: #1a1a2e; font-size: 26px; margin-bottom: 8px; }
+    h2 { color: #0f3460; font-size: 20px; margin: 20px 0 6px 0; border-bottom: 2px solid #0f3460; padding-bottom: 4px; }
+
+    .card {
+      background-color: #ffffff;
+      border: 1px solid #cccccc;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+
+    .row {
+      margin-bottom: 8px;
+      padding: 6px 8px;
+    }
+
+    .label {
+      color: #555555;
+      font-size: 12px;
+      font-family: monospace;
+      margin-bottom: 2px;
+    }
+
+    .pass { background-color: rgba(30, 160, 80, 0.1); border-left: 3px solid #009944; }
+    .na   { background-color: rgba(200, 200, 200, 0.2); border-left: 3px solid #aaaaaa; color: #777777; }
+  </style>
+</head>
+<body>
+
+  <h1>Forkit — JavaScript Test</h1>
+  <p style="color: #555; font-size: 13px; margin-top: 0;">
+    Section 17: JavaScript variable support. Output goes to the terminal console.
+    Press Q or Esc to quit, R to reload.
+  </p>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17. JavaScript — Variable Support</h2>
+  <div class="card">
+    <div class="label">var / let / const declarations</div>
+    <div class="row pass">Open the console output to verify JS execution below.</div>
+
+    <div class="label">Arithmetic operators: + - * / %</div>
+    <div class="row pass">let x = 10; x * 3 - 5 = 25</div>
+
+    <div class="label">Comparison operators: == != &lt; &gt; &lt;= &gt;=</div>
+    <div class="row pass">10 &gt; 5 → true, 3 == "3" → true (loose eq)</div>
+
+    <div class="label">Logical operators: &amp;&amp; || !</div>
+    <div class="row pass">true &amp;&amp; false → false, !false → true</div>
+
+    <div class="label">Compound assignment: += -= *= /=</div>
+    <div class="row pass">let n = 10; n += 5; n *= 2 → 30</div>
+
+    <div class="label">String concatenation via variables</div>
+    <div class="row pass">let a = "hello"; let b = "world"; a + " " + b → "hello world"</div>
+  </div>
+
+  <script>
+    // ── Variable declarations ──────────────────────────────
+    var greeting = "Forkit JS engine";
+    let version  = 2;
+    const pi     = 3.14159;
+
+    console.log(greeting + " v" + version);
+    console.log("pi =", pi);
+
+    // ── Arithmetic ─────────────────────────────────────────
+    let x = 10;
+    let y = 3;
+    console.log("x + y =", x + y);
+    console.log("x - y =", x - y);
+    console.log("x * y =", x * y);
+    console.log("x / y =", x / y);
+    console.log("x % y =", x % y);
+
+    // ── Unary minus ────────────────────────────────────────
+    let neg = -x;
+    console.log("neg x =", neg);
+
+    // ── Compound assignment ────────────────────────────────
+    let n = 10;
+    n += 5;
+    console.log("after += 5:", n);
+    n *= 2;
+    console.log("after *= 2:", n);
+    n -= 8;
+    console.log("after -= 8:", n);
+    n /= 2;
+    console.log("after /= 2:", n);
+
+    // ── String variables + concatenation ──────────────────
+    let firstName = "Fork";
+    let lastName  = "it";
+    let full      = firstName + lastName + "!";
+    console.log("full name:", full);
+
+    // ── Comparisons ────────────────────────────────────────
+    console.log("10 > 5:", 10 > 5);
+    console.log("3 == 3:", 3 == 3);
+    console.log("3 == \"3\":", 3 == "3");
+    console.log("4 != 5:", 4 != 5);
+    console.log("7 <= 7:", 7 <= 7);
+    console.log("6 >= 9:", 6 >= 9);
+
+    // ── Logical operators ──────────────────────────────────
+    console.log("true && false:", true && false);
+    console.log("true || false:", true || false);
+    console.log("!true:", !true);
+    console.log("!false:", !false);
+
+    // ── Boolean variables ──────────────────────────────────
+    const isReady = true;
+    const isDone  = false;
+    console.log("isReady && !isDone:", isReady && !isDone);
+
+    // ── Chained arithmetic expressions ────────────────────
+    let result = x * y + 2;
+    console.log("x * y + 2 =", result);
+    let expr = (x + y) * (x - y);
+    console.log("(x+y)*(x-y) =", expr);
+
+    // ── Hex literal ───────────────────────────────────────
+    const hex = 0xFF;
+    console.log("0xFF =", hex);
+
+    // ── NaN / Infinity ────────────────────────────────────
+    console.log("Infinity:", Infinity);
+
+    // ── Reassignment ──────────────────────────────────────
+    let msg = "initial";
+    msg = "reassigned";
+    console.log("msg after reassign:", msg);
+
+    console.warn("JS variable test complete");
+  </script>
+
+</body>
+</html>

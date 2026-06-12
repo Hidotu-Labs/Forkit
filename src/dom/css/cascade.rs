@@ -5,20 +5,62 @@
 /// - [`apply_cascade`] — walks the DOM and applies all stylesheet rules with
 ///   correct specificity ordering, `inherit`/`initial` keywords, and property
 ///   inheritance from parent to child.
+/// - [`apply_cascade_with_state`] — like `apply_cascade` but accepts a
+///   [`PseudoState`] for dynamic pseudo-class matching (`:hover`, `:focus`, etc.).
 
 use crate::dom::node::{Element, Node, Style, Visibility};
 use crate::dom::parser::get_attr;
-use super::stylesheet::{Selector, SimpleSelector, StyleSheet, Specificity};
+use super::stylesheet::{PseudoClass, Selector, SimpleSelector, StyleSheet, Specificity};
 use super::inline::apply_property;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PseudoState — runtime pseudo-class context
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Runtime pseudo-class state passed during cascade evaluation.
+/// Determines which elements match :hover, :focus, :checked, etc.
+pub struct PseudoState {
+    /// Path of element IDs/tags that are currently hovered (from root to leaf).
+    pub hovered_path: Vec<String>,
+    /// Raw pointer address of the hovered element (set by browser hit-test).
+    pub hovered_ptr: Option<usize>,
+    /// Raw pointer address of the focused element.
+    pub focused_ptr: Option<usize>,
+    /// Raw pointer addresses of checked inputs.
+    pub checked_ptrs: Vec<usize>,
+}
+
+impl PseudoState {
+    /// A no-op pseudo state — no element is hovered, focused, or checked.
+    pub fn none() -> Self {
+        PseudoState {
+            hovered_path: vec![],
+            hovered_ptr:  None,
+            focused_ptr:  None,
+            checked_ptrs: vec![],
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SiblingCtx — sibling context for structural pseudo-classes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Sibling context for structural pseudo-class evaluation
+/// (`:first-child`, `:nth-child`, etc.).
+struct SiblingCtx<'a> {
+    /// All children of the parent element (element + text nodes), in order.
+    siblings: &'a [Node],
+    /// Index of the current element within `siblings`.
+    index: usize,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cascade engine
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The inheritable CSS properties, by canonical lowercase name.
-///
-/// When a child has no explicit value for one of these, the parent's computed
-/// value is propagated automatically (task 8.7).
+#[allow(dead_code)]
 const INHERITABLE: &[&str] = &[
     "color",
     "font-size",
@@ -38,56 +80,44 @@ const INHERITABLE: &[&str] = &[
 ];
 
 /// Walk the entire DOM tree rooted at `root`, apply every rule from `sheets` to
-/// each element with correct specificity ordering, then overwrite with the
-/// element's own inline `style=""`, and propagate inheritable properties from
-/// parent to child.
+/// each element, then propagate inheritable properties.
 ///
-/// Priority (lowest → highest): UA defaults (already on each node) → author
-/// sheet rules sorted by specificity → inline style.
+/// This is equivalent to `apply_cascade_with_state(root, sheets, &PseudoState::none())`.
 pub fn apply_cascade(root: &mut Node, sheets: &[StyleSheet]) {
+    apply_cascade_with_state(root, sheets, &PseudoState::none());
+}
+
+/// Like [`apply_cascade`] but uses the given [`PseudoState`] for dynamic
+/// pseudo-class matching (`:hover`, `:focus`, `:checked`, etc.).
+pub fn apply_cascade_with_state(root: &mut Node, sheets: &[StyleSheet], state: &PseudoState) {
     let parent_style = Style::default();
-    cascade_node(root, sheets, &[], &parent_style);
+    cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None);
 }
 
-/// Recursive depth-first cascade walk.
-///
-/// `ancestors` — `Element` refs from the document root down to (but not
-///               including) the current node's direct parent.
-/// `parent_style` — the already-resolved `Style` of the direct parent, used
-///                  for inheritance.
-/// `inherited_opacity` — accumulated opacity multiplier from ancestor elements
-///                       (1.0 = fully opaque). CSS `opacity` composes
-///                       multiplicatively down the tree.
-fn cascade_node(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Element], parent_style: &Style) {
-    cascade_node_inner(node, sheets, ancestors, parent_style, 1.0);
-}
-
-fn cascade_node_inner(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Element], parent_style: &Style, inherited_opacity: f32) {
+fn cascade_node_inner(
+    node:             &mut Node,
+    sheets:           &[StyleSheet],
+    ancestors:        &[&Element],
+    parent_style:     &Style,
+    inherited_opacity: f32,
+    state:            &PseudoState,
+    sib:              Option<&SiblingCtx<'_>>,
+) {
     match node {
         Node::Text(t) => {
-            // Text nodes inherit all inheritable properties from their parent.
             inherit_from(&mut t.style, parent_style);
-            // Background is NOT an inherited CSS property — clear any bg_color
-            // that was copied from the parent when the text node was constructed
-            // in the parser (builder.rs clones the parent style wholesale).
             t.style.bg_color = None;
             t.style.bg_alpha = 255;
-            // Do NOT apply opacity to text color_alpha. CSS `opacity` creates a
-            // stacking context — the whole element (bg + text) composites together
-            // at the given opacity. In this renderer we approximate that by fading
-            // the element's background; fading the text separately would double-apply
-            // the effect and make text unreadable at low opacity values.
         }
         Node::Element(el) => {
             // ── 1. Collect matching rules ─────────────────────────────────
-            // Each entry: (source_sheet_index, rule_index_within_sheet, specificity, declarations)
             let mut matched: Vec<(usize, usize, Specificity, &[(String, String)])> = Vec::new();
             for (sheet_idx, sheet) in sheets.iter().enumerate() {
                 for (rule_idx, rule) in sheet.rules.iter().enumerate() {
-                    if rule.selectors.iter().any(|sel| matches(el, sel, ancestors)) {
+                    if rule.selectors.iter().any(|sel| matches_full(el, sel, ancestors, state, sib)) {
                         let spec = rule.selectors
                             .iter()
-                            .filter(|sel| matches(el, sel, ancestors))
+                            .filter(|sel| matches_full(el, sel, ancestors, state, sib))
                             .map(|sel| sel.specificity())
                             .max()
                             .unwrap_or(Specificity(0, 0, 0));
@@ -96,13 +126,10 @@ fn cascade_node_inner(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Elem
                 }
             }
 
-            // ── 2. Sort: ascending by (specificity, source_order) so the
-            //            last write wins (highest specificity / latest rule).
+            // ── 2. Sort by (specificity, source_order) so last write wins ─
             matched.sort_by_key(|(si, ri, spec, _)| (*spec, *si, *ri));
 
-            // ── 3. Start from the inherited baseline, then apply sheet rules.
-            //       We first inherit, then let stylesheet rules overwrite, then
-            //       inline style overwrites everything.
+            // ── 3. Inherit, then apply sheet rules ────────────────────────
             inherit_from(&mut el.style, parent_style);
 
             let base_font = el.style.font_size;
@@ -110,7 +137,6 @@ fn cascade_node_inner(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Elem
                 for (prop, val) in *decls {
                     let val = val.trim();
                     let prop_lc = prop.to_ascii_lowercase();
-
                     if val.eq_ignore_ascii_case("inherit") {
                         apply_inherit_keyword(&prop_lc, &mut el.style, parent_style);
                     } else if val.eq_ignore_ascii_case("initial") {
@@ -121,169 +147,53 @@ fn cascade_node_inner(node: &mut Node, sheets: &[StyleSheet], ancestors: &[&Elem
                 }
             }
 
-            // ── 4. Inline style="" overrides everything ───────────────────
+            // ── 4. Inline style overrides everything ──────────────────────
             if !el.style_attr.is_empty() {
                 let inline_attr = el.style_attr.clone();
                 super::inline::apply_inline(&inline_attr, &mut el.style);
             }
 
             // ── 4b. Bake CSS `opacity` into alpha channels ────────────────
-            // CSS opacity creates a stacking context: the element's background
-            // and borders fade, but text colour stays at its own alpha value.
-            // We approximate this by only scaling bg_alpha and storing the
-            // effective opacity for border rendering. We intentionally do NOT
-            // scale color_alpha — fading text separately from the background
-            // would look wrong (text would become invisible before the bg fades).
             let own_opacity = el.style.opacity as f32 / 255.0;
             let effective_opacity = inherited_opacity * own_opacity;
             if effective_opacity < 1.0 {
                 el.style.bg_alpha = (el.style.bg_alpha as f32 * effective_opacity).round() as u8;
-                // Store effective opacity for paint_block_border to use as border alpha.
-                el.style.opacity = (effective_opacity * 255.0).round() as u8;
+                el.style.opacity  = (effective_opacity * 255.0).round() as u8;
             }
 
             // ── 5. Recurse into children ──────────────────────────────────
-            // Build new ancestors slice: old ancestors + this element.
-            // We transmute the lifetime to allow lending el into the child walk
-            // while also mutably iterating el.children. This is safe because
-            // the ancestors slice is only read (not written) during the walk.
             let el_ptr: *const Element = el as *const Element;
             let child_ancestors: Vec<&Element> = {
                 let mut v: Vec<&Element> = ancestors.to_vec();
-                // SAFETY: el is valid for the entire duration of the child walk
-                // and is not moved or dropped during that time.
+                // SAFETY: el is valid for the entire duration of the child walk.
                 v.push(unsafe { &*el_ptr });
                 v
             };
             let child_parent_style = el.style.clone();
-            for child in &mut el.children {
-                cascade_node_inner(child, sheets, &child_ancestors, &child_parent_style, effective_opacity);
+
+            // We need a raw pointer to el.children to iterate mutably while
+            // building sibling contexts that borrow the immutable children slice.
+            // SAFETY: We only read from the immutable slice for SiblingCtx and
+            // mutate each element in turn — never aliasing.
+            let children_ptr: *const Vec<Node> = &el.children as *const Vec<Node>;
+
+            for (idx, child) in el.children.iter_mut().enumerate() {
+                let sibling_ctx = SiblingCtx {
+                    // SAFETY: children_ptr points to el.children which is alive.
+                    siblings: unsafe { &*children_ptr },
+                    index:    idx,
+                };
+                cascade_node_inner(
+                    child,
+                    sheets,
+                    &child_ancestors,
+                    &child_parent_style,
+                    effective_opacity,
+                    state,
+                    Some(&sibling_ctx),
+                );
             }
         }
-    }
-}
-
-/// Copy inheritable properties from `parent` into `child` for any field that
-/// is still at its `Style::default()` value in `child`.
-///
-/// We compare against `Style::default()` as a proxy for "not explicitly set".
-/// This is an approximation — a proper cascade would track which properties
-/// were explicitly set, but for this engine it produces correct results for
-/// the common case.
-fn inherit_from(child: &mut Style, parent: &Style) {
-    let def = Style::default();
-
-    // color
-    if child.color == def.color {
-        child.color       = parent.color;
-        child.color_alpha = parent.color_alpha;
-    }
-    // font-size — only inherit if still at the default 16px
-    if child.font_size == def.font_size {
-        child.font_size     = parent.font_size;
-        // Also inherit the raw viewport-relative value so layout-time
-        // re-resolution works for text nodes and nested elements.
-        if child.font_size_raw.is_none() {
-            child.font_size_raw = parent.font_size_raw.clone();
-        }
-    }
-    // font-weight
-    if child.bold == def.bold {
-        child.bold = parent.bold;
-    }
-    // font-style
-    if child.italic == def.italic {
-        child.italic = parent.italic;
-    }
-    // text-align
-    if child.text_align == def.text_align {
-        child.text_align = parent.text_align;
-    }
-    // line-height
-    #[allow(clippy::float_cmp)]
-    if child.line_height_mul == def.line_height_mul {
-        child.line_height_mul = parent.line_height_mul;
-    }
-    // letter-spacing
-    if child.letter_spacing == def.letter_spacing {
-        child.letter_spacing = parent.letter_spacing;
-    }
-    // word-spacing
-    if child.word_spacing == def.word_spacing {
-        child.word_spacing = parent.word_spacing;
-    }
-    // white-space
-    if child.white_space_pre == def.white_space_pre {
-        child.white_space_pre = parent.white_space_pre;
-    }
-    // text-transform
-    if child.text_transform == def.text_transform {
-        child.text_transform = parent.text_transform;
-    }
-    // font-variant-caps
-    if child.font_variant_caps == def.font_variant_caps {
-        child.font_variant_caps = parent.font_variant_caps;
-    }
-    // font-family
-    if child.font_family == def.font_family {
-        child.font_family = parent.font_family;
-    }
-    // word-break / overflow-wrap
-    if child.word_break == def.word_break {
-        child.word_break = parent.word_break;
-    }
-    // visibility — inherited: children share parent's visibility unless overridden
-    if child.visibility == def.visibility {
-        child.visibility = parent.visibility;
-    }
-}
-
-/// Apply the `inherit` keyword for a named property — copy parent's value.
-fn apply_inherit_keyword(prop: &str, child: &mut Style, parent: &Style) {
-    match prop {
-        "color"            => { child.color = parent.color; child.color_alpha = parent.color_alpha; }
-        "font-size"        => { child.font_size = parent.font_size; }
-        "font-weight"      => { child.bold = parent.bold; }
-        "font-style"       => { child.italic = parent.italic; }
-        "text-align"       => { child.text_align = parent.text_align; }
-        "line-height"      => { child.line_height_mul = parent.line_height_mul; }
-        "letter-spacing"   => { child.letter_spacing = parent.letter_spacing; }
-        "word-spacing"     => { child.word_spacing = parent.word_spacing; }
-        "white-space"      => { child.white_space_pre = parent.white_space_pre; }
-        "text-transform"   => { child.text_transform = parent.text_transform; }
-        "font-variant-caps"=> { child.font_variant_caps = parent.font_variant_caps; }
-        "font-family"      => { child.font_family = parent.font_family; }
-        "word-break" | "overflow-wrap" => { child.word_break = parent.word_break; }
-        "visibility" => { child.visibility = parent.visibility; }
-        _ => {} // non-inheritable or unknown — silently ignore
-    }
-}
-
-/// Apply the `initial` keyword for a named property — reset to CSS initial value.
-fn apply_initial_keyword(prop: &str, style: &mut Style) {
-    let def = Style::default();
-    match prop {
-        "color"            => { style.color = def.color; style.color_alpha = def.color_alpha; }
-        "font-size"        => { style.font_size = def.font_size; }
-        "font-weight"      => { style.bold = def.bold; }
-        "font-style"       => { style.italic = def.italic; }
-        "text-align"       => { style.text_align = def.text_align; }
-        "line-height"      => { style.line_height_mul = def.line_height_mul; }
-        "letter-spacing"   => { style.letter_spacing = def.letter_spacing; }
-        "word-spacing"     => { style.word_spacing = def.word_spacing; }
-        "white-space"      => { style.white_space_pre = def.white_space_pre; }
-        "text-transform"   => { style.text_transform = def.text_transform; }
-        "font-variant-caps"=> { style.font_variant_caps = def.font_variant_caps; }
-        "background-color" => { style.bg_color = def.bg_color; style.bg_alpha = def.bg_alpha; }
-        "background-image" => { style.bg_image_url = None; }
-        "background-size"  => { style.bg_size = def.bg_size; }
-        "background-repeat"=> { style.bg_repeat = def.bg_repeat; }
-        "background-position" => { style.bg_position = def.bg_position; }
-        "border-radius"    => { style.border_radius = def.border_radius; }
-        "display"          => { style.display = def.display; style.display_block = def.display_block; }
-        "visibility"       => { style.visibility = Visibility::default(); }
-        "opacity"          => { style.opacity = def.opacity; }
-        _ => {}
     }
 }
 
@@ -297,73 +207,110 @@ fn apply_initial_keyword(prop: &str, style: &mut Style) {
 /// `el`'s direct parent, i.e. `ancestors.last()` is the direct parent.
 ///
 /// This function never panics; unrecognised selector variants return `false`.
+///
+/// Uses a no-op `PseudoState` — for dynamic pseudo-classes use
+/// [`matches_with_state`] instead.
 pub fn matches(el: &Element, sel: &Selector, ancestors: &[&Element]) -> bool {
+    matches_full(el, sel, ancestors, &PseudoState::none(), None)
+}
+
+/// Like [`matches`] but accepts a `PseudoState` and sibling context for
+/// complete pseudo-class support.
+pub fn matches_with_state(
+    el:        &Element,
+    sel:       &Selector,
+    ancestors: &[&Element],
+    state:     &PseudoState,
+) -> bool {
+    matches_full(el, sel, ancestors, state, None)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal matching
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn matches_full(
+    el:        &Element,
+    sel:       &Selector,
+    ancestors: &[&Element],
+    state:     &PseudoState,
+    sib:       Option<&SiblingCtx<'_>>,
+) -> bool {
     match sel {
-        // ── Simple flat variants ──────────────────────────────────────────
-        Selector::Tag(t) => el.tag.eq_ignore_ascii_case(t),
+        Selector::Tag(t)       => el.tag.eq_ignore_ascii_case(t),
+        Selector::Class(c)     => has_class(el, c),
+        Selector::Id(id)       => el.id == *id,
+        Selector::Universal    => true,
 
-        Selector::Class(c) => has_class(el, c),
-
-        Selector::Id(id) => el.id == *id,
-
-        Selector::Universal => true,
-
-        // ── Compound: ALL components must match the same element ──────────
         Selector::Compound(parts) => {
-            parts.iter().all(|ss| matches_simple(el, ss))
+            parts.iter().all(|ss| matches_simple_with_ctx(el, ss, ancestors, state, sib))
         }
 
-        // ── Descendant: A B — el matches B, some ancestor matches A ──────
         Selector::Descendant(a, b) => {
-            matches(el, b, ancestors)
-                && ancestors.iter().any(|anc| matches(anc, a, &[]))
+            matches_full(el, b, ancestors, state, sib)
+                && ancestors.iter().any(|anc| matches_full(anc, a, &[], state, None))
         }
 
-        // ── Child: A > B — el matches B, direct parent matches A ─────────
         Selector::Child(a, b) => {
-            if !matches(el, b, ancestors) {
-                return false;
-            }
+            if !matches_full(el, b, ancestors, state, sib) { return false; }
             match ancestors.last() {
-                Some(parent) => matches(parent, a, &ancestors[..ancestors.len() - 1]),
+                Some(parent) => matches_full(
+                    parent, a,
+                    &ancestors[..ancestors.len() - 1],
+                    state, None,
+                ),
                 None => false,
             }
         }
 
-        // ── Adjacent sibling: A + B — el matches B, preceding sibling matches A
         Selector::AdjacentSibling(a, b) => {
-            if !matches(el, b, ancestors) {
-                return false;
-            }
-            // The preceding sibling is provided by the caller via the context;
-            // we cannot navigate sibling chains from within this function without
-            // access to the parent's children list.  Callers that care about
-            // adjacent siblings should pass the preceding sibling as a synthetic
-            // single-element ancestors slice and use the Child variant, OR handle
-            // sibling resolution externally.
-            //
-            // For the basic unit-test coverage in this task we support it via the
-            // `adjacent_sibling_context` convention: the caller puts the preceding
-            // sibling as the last entry of `ancestors` and we check it here.
+            if !matches_full(el, b, ancestors, state, sib) { return false; }
             match ancestors.last() {
-                Some(prev_sib) => matches(prev_sib, a, &ancestors[..ancestors.len() - 1]),
+                Some(prev_sib) => matches_full(
+                    prev_sib, a,
+                    &ancestors[..ancestors.len() - 1],
+                    state, None,
+                ),
                 None => false,
+            }
+        }
+
+        Selector::GeneralSibling(a, b) => {
+            if !matches_full(el, b, ancestors, state, sib) { return false; }
+            if let Some(s) = sib {
+                let anc_for_siblings = if ancestors.is_empty() {
+                    &[][..]
+                } else {
+                    &ancestors[..ancestors.len().saturating_sub(1)]
+                };
+                s.siblings[..s.index].iter().any(|sibling| {
+                    if let Node::Element(prev) = sibling {
+                        matches_full(prev, a, anc_for_siblings, state, None)
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
             }
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Match a single `SimpleSelector` component against `el`.
-fn matches_simple(el: &Element, ss: &SimpleSelector) -> bool {
+/// Match a single `SimpleSelector` component against `el`, with full pseudo-class
+/// and sibling context support.
+fn matches_simple_with_ctx(
+    el:        &Element,
+    ss:        &SimpleSelector,
+    ancestors: &[&Element],
+    state:     &PseudoState,
+    sib:       Option<&SiblingCtx<'_>>,
+) -> bool {
     match ss {
-        SimpleSelector::Tag(t) => el.tag.eq_ignore_ascii_case(t),
-        SimpleSelector::Class(c) => has_class(el, c),
-        SimpleSelector::Id(id) => el.id == *id,
-        SimpleSelector::Universal => true,
+        SimpleSelector::Tag(t)       => el.tag.eq_ignore_ascii_case(t),
+        SimpleSelector::Class(c)     => has_class(el, c),
+        SimpleSelector::Id(id)       => el.id == *id,
+        SimpleSelector::Universal    => true,
         SimpleSelector::AttrPresence(attr) => {
             get_attr(&el.attrs_raw, attr).is_some()
         }
@@ -372,12 +319,272 @@ fn matches_simple(el: &Element, ss: &SimpleSelector) -> bool {
                 .map(|v| v == expected.as_str())
                 .unwrap_or(false)
         }
+        SimpleSelector::AttrContainsWord(attr, word) => {
+            get_attr(&el.attrs_raw, attr)
+                .map(|v| v.split_ascii_whitespace().any(|w| w == word.as_str()))
+                .unwrap_or(false)
+        }
+        SimpleSelector::AttrStartsWith(attr, prefix) => {
+            get_attr(&el.attrs_raw, attr)
+                .map(|v| v.starts_with(prefix.as_str()))
+                .unwrap_or(false)
+        }
+        SimpleSelector::AttrEndsWith(attr, suffix) => {
+            get_attr(&el.attrs_raw, attr)
+                .map(|v| v.ends_with(suffix.as_str()))
+                .unwrap_or(false)
+        }
+        SimpleSelector::AttrContains(attr, sub) => {
+            get_attr(&el.attrs_raw, attr)
+                .map(|v| v.contains(sub.as_str()))
+                .unwrap_or(false)
+        }
+        SimpleSelector::Pseudo(pc) => {
+            matches_pseudo(el, pc, ancestors, state, sib)
+        }
     }
 }
+
+/// Evaluate a pseudo-class against the element.
+fn matches_pseudo(
+    el:        &Element,
+    pc:        &PseudoClass,
+    ancestors: &[&Element],
+    state:     &PseudoState,
+    sib:       Option<&SiblingCtx<'_>>,
+) -> bool {
+    match pc {
+        PseudoClass::Hover  => state.hovered_ptr == Some(el as *const Element as usize),
+        PseudoClass::Focus  => state.focused_ptr == Some(el as *const Element as usize),
+        PseudoClass::Active => false, // not tracked yet
+
+        PseudoClass::Link    => el.tag == "a" && get_attr(&el.attrs_raw, "href").is_some(),
+        PseudoClass::Visited => el.tag == "a" && get_attr(&el.attrs_raw, "href").is_some(),
+
+        PseudoClass::Checked  => {
+            // Either explicitly in attrs_raw OR in checked_ptrs
+            get_attr(&el.attrs_raw, "checked").is_some()
+                || state.checked_ptrs.contains(&(el as *const Element as usize))
+        }
+        PseudoClass::Disabled => get_attr(&el.attrs_raw, "disabled").is_some(),
+        PseudoClass::Enabled  => {
+            get_attr(&el.attrs_raw, "disabled").is_none()
+                && matches!(
+                    el.tag.as_str(),
+                    "input" | "button" | "select" | "textarea"
+                )
+        }
+
+        PseudoClass::Empty => {
+            el.children.iter().all(|c| {
+                matches!(c, Node::Text(t) if t.text.trim().is_empty())
+            })
+        }
+
+        // ── Structural pseudo-classes — require sibling context ───────────
+
+        PseudoClass::FirstChild => sib.map(|s| {
+            // First element-node sibling
+            s.siblings.iter().take(s.index + 1)
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count() == 1
+        }).unwrap_or(false),
+
+        PseudoClass::LastChild => sib.map(|s| {
+            let elem_count = s.siblings.iter()
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count();
+            let elem_idx = s.siblings[..=s.index].iter()
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count();
+            elem_idx == elem_count
+        }).unwrap_or(false),
+
+        PseudoClass::OnlyChild => sib.map(|s| {
+            s.siblings.iter()
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count() == 1
+        }).unwrap_or(false),
+
+        PseudoClass::FirstOfType => sib.map(|s| {
+            let my_tag = &el.tag;
+            s.siblings[..=s.index].iter()
+                .filter(|n| matches!(n, Node::Element(e) if e.tag.eq_ignore_ascii_case(my_tag)))
+                .count() == 1
+        }).unwrap_or(false),
+
+        PseudoClass::LastOfType => sib.map(|s| {
+            let my_tag = &el.tag;
+            let total = s.siblings.iter()
+                .filter(|n| matches!(n, Node::Element(e) if e.tag.eq_ignore_ascii_case(my_tag)))
+                .count();
+            let pos = s.siblings[..=s.index].iter()
+                .filter(|n| matches!(n, Node::Element(e) if e.tag.eq_ignore_ascii_case(my_tag)))
+                .count();
+            pos == total
+        }).unwrap_or(false),
+
+        PseudoClass::OnlyOfType => sib.map(|s| {
+            let my_tag = &el.tag;
+            s.siblings.iter()
+                .filter(|n| matches!(n, Node::Element(e) if e.tag.eq_ignore_ascii_case(my_tag)))
+                .count() == 1
+        }).unwrap_or(false),
+
+        PseudoClass::NthChild(a, b) => sib.map(|s| {
+            let pos = s.siblings[..=s.index].iter()
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count() as i32;
+            nth_matches(*a, *b, pos)
+        }).unwrap_or(false),
+
+        PseudoClass::NthLastChild(a, b) => sib.map(|s| {
+            let total = s.siblings.iter()
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count() as i32;
+            let pos = s.siblings[..=s.index].iter()
+                .filter(|n| matches!(n, Node::Element(_)))
+                .count() as i32;
+            nth_matches(*a, *b, total - pos + 1)
+        }).unwrap_or(false),
+
+        PseudoClass::NthOfType(a, b) => sib.map(|s| {
+            let my_tag = &el.tag;
+            let pos = s.siblings[..=s.index].iter()
+                .filter(|n| matches!(n, Node::Element(e) if e.tag.eq_ignore_ascii_case(my_tag)))
+                .count() as i32;
+            nth_matches(*a, *b, pos)
+        }).unwrap_or(false),
+
+        PseudoClass::Not(inner_ss) => {
+            !matches_simple_with_ctx(el, inner_ss, ancestors, state, sib)
+        }
+
+        PseudoClass::Unknown(_) => false,
+    }
+}
+
+/// An+B matching: returns true if `pos` satisfies the An+B expression.
+///
+/// `pos` is 1-based.  `a == 0` reduces to `pos == b`.
+fn nth_matches(a: i32, b: i32, pos: i32) -> bool {
+    if a == 0 {
+        return pos == b;
+    }
+    let n = pos - b;
+    n >= 0 && n % a == 0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Return `true` if any whitespace-separated token in `el.class_name` equals `cls`.
 fn has_class(el: &Element, cls: &str) -> bool {
     el.class_name.split_ascii_whitespace().any(|c| c == cls)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inheritance helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn inherit_from(child: &mut Style, parent: &Style) {
+    let def = Style::default();
+
+    if child.color == def.color {
+        child.color       = parent.color;
+        child.color_alpha = parent.color_alpha;
+    }
+    if child.font_size == def.font_size {
+        child.font_size = parent.font_size;
+        if child.font_size_raw.is_none() {
+            child.font_size_raw = parent.font_size_raw.clone();
+        }
+    }
+    if child.bold == def.bold {
+        child.bold = parent.bold;
+    }
+    if child.italic == def.italic {
+        child.italic = parent.italic;
+    }
+    if child.text_align == def.text_align {
+        child.text_align = parent.text_align;
+    }
+    #[allow(clippy::float_cmp)]
+    if child.line_height_mul == def.line_height_mul {
+        child.line_height_mul = parent.line_height_mul;
+    }
+    if child.letter_spacing == def.letter_spacing {
+        child.letter_spacing = parent.letter_spacing;
+    }
+    if child.word_spacing == def.word_spacing {
+        child.word_spacing = parent.word_spacing;
+    }
+    if child.white_space_pre == def.white_space_pre {
+        child.white_space_pre = parent.white_space_pre;
+    }
+    if child.text_transform == def.text_transform {
+        child.text_transform = parent.text_transform;
+    }
+    if child.font_variant_caps == def.font_variant_caps {
+        child.font_variant_caps = parent.font_variant_caps;
+    }
+    if child.font_family == def.font_family {
+        child.font_family = parent.font_family;
+    }
+    if child.word_break == def.word_break {
+        child.word_break = parent.word_break;
+    }
+    if child.visibility == def.visibility {
+        child.visibility = parent.visibility;
+    }
+}
+
+fn apply_inherit_keyword(prop: &str, child: &mut Style, parent: &Style) {
+    match prop {
+        "color"             => { child.color = parent.color; child.color_alpha = parent.color_alpha; }
+        "font-size"         => { child.font_size = parent.font_size; }
+        "font-weight"       => { child.bold = parent.bold; }
+        "font-style"        => { child.italic = parent.italic; }
+        "text-align"        => { child.text_align = parent.text_align; }
+        "line-height"       => { child.line_height_mul = parent.line_height_mul; }
+        "letter-spacing"    => { child.letter_spacing = parent.letter_spacing; }
+        "word-spacing"      => { child.word_spacing = parent.word_spacing; }
+        "white-space"       => { child.white_space_pre = parent.white_space_pre; }
+        "text-transform"    => { child.text_transform = parent.text_transform; }
+        "font-variant-caps" => { child.font_variant_caps = parent.font_variant_caps; }
+        "font-family"       => { child.font_family = parent.font_family; }
+        "word-break" | "overflow-wrap" => { child.word_break = parent.word_break; }
+        "visibility"        => { child.visibility = parent.visibility; }
+        _ => {}
+    }
+}
+
+fn apply_initial_keyword(prop: &str, style: &mut Style) {
+    let def = Style::default();
+    match prop {
+        "color"               => { style.color = def.color; style.color_alpha = def.color_alpha; }
+        "font-size"           => { style.font_size = def.font_size; }
+        "font-weight"         => { style.bold = def.bold; }
+        "font-style"          => { style.italic = def.italic; }
+        "text-align"          => { style.text_align = def.text_align; }
+        "line-height"         => { style.line_height_mul = def.line_height_mul; }
+        "letter-spacing"      => { style.letter_spacing = def.letter_spacing; }
+        "word-spacing"        => { style.word_spacing = def.word_spacing; }
+        "white-space"         => { style.white_space_pre = def.white_space_pre; }
+        "text-transform"      => { style.text_transform = def.text_transform; }
+        "font-variant-caps"   => { style.font_variant_caps = def.font_variant_caps; }
+        "background-color"    => { style.bg_color = def.bg_color; style.bg_alpha = def.bg_alpha; }
+        "background-image"    => { style.bg_image_url = None; }
+        "background-size"     => { style.bg_size = def.bg_size; }
+        "background-repeat"   => { style.bg_repeat = def.bg_repeat; }
+        "background-position" => { style.bg_position = def.bg_position; }
+        "border-radius"       => { style.border_radius = def.border_radius; }
+        "display"             => { style.display = def.display; style.display_block = def.display_block; }
+        "visibility"          => { style.visibility = Visibility::default(); }
+        "opacity"             => { style.opacity = def.opacity; }
+        _ => {}
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -449,8 +656,6 @@ mod tests {
         assert!(matches(&e, &Selector::Tag("div".into()), &[]));
     }
 
-    // ── Class matching ───────────────────────────────────────────────────────
-
     #[test]
     fn class_match() {
         let e = el("p", "", "foo bar");
@@ -464,8 +669,6 @@ mod tests {
         assert!(!matches(&e, &Selector::Class("baz".into()), &[]));
     }
 
-    // ── Id matching ──────────────────────────────────────────────────────────
-
     #[test]
     fn id_match() {
         let e = el("div", "main", "");
@@ -478,15 +681,11 @@ mod tests {
         assert!(!matches(&e, &Selector::Id("other".into()), &[]));
     }
 
-    // ── Universal ────────────────────────────────────────────────────────────
-
     #[test]
     fn universal_match() {
         let e = el("anything", "", "");
         assert!(matches(&e, &Selector::Universal, &[]));
     }
-
-    // ── Compound ─────────────────────────────────────────────────────────────
 
     #[test]
     fn compound_all_match() {
@@ -503,19 +702,16 @@ mod tests {
     fn compound_partial_miss() {
         let e = el("div", "", "box");
         let sel = Selector::Compound(vec![
-            SimpleSelector::Tag("span".into()),   // mismatch
+            SimpleSelector::Tag("span".into()),
             SimpleSelector::Class("box".into()),
         ]);
         assert!(!matches(&e, &sel, &[]));
     }
 
-    // ── Descendant combinator ─────────────────────────────────────────────────
-
     #[test]
     fn descendant_match() {
         let ancestor = el("div", "", "");
         let child = el("p", "", "");
-        // ancestor slice contains the div
         assert!(matches(
             &child,
             &Selector::Descendant(
@@ -528,7 +724,6 @@ mod tests {
 
     #[test]
     fn descendant_miss_when_not_a_descendant() {
-        // `p` inside a `span` — looking for `div p`
         let ancestor = el("span", "", "");
         let child = el("p", "", "");
         assert!(!matches(
@@ -543,7 +738,6 @@ mod tests {
 
     #[test]
     fn descendant_deep_match() {
-        // div > section > p — `div p` should still match
         let grandparent = el("div", "", "");
         let parent = el("section", "", "");
         let child = el("p", "", "");
@@ -556,8 +750,6 @@ mod tests {
             &[&grandparent, &parent],
         ));
     }
-
-    // ── Child combinator ──────────────────────────────────────────────────────
 
     #[test]
     fn child_match() {
@@ -589,8 +781,6 @@ mod tests {
 
     #[test]
     fn child_no_match_grandparent_only() {
-        // div ul > li  — but here we have div > li (no ul in between)
-        // `div > p` should not match when div is a grandparent, not a direct parent
         let grandparent = el("div", "", "");
         let parent = el("section", "", "");
         let child = el("p", "", "");
@@ -603,8 +793,6 @@ mod tests {
             &[&grandparent, &parent],
         ));
     }
-
-    // ── Attribute matching ────────────────────────────────────────────────────
 
     #[test]
     fn attr_presence_match() {
@@ -638,73 +826,55 @@ mod tests {
         assert!(!matches(&e, &sel, &[]));
     }
 
-    // ── Cascade engine tests (task 8.8) ──────────────────────────────────────
+    // ── Cascade engine tests ──────────────────────────────────────────────────
 
-    /// UA rule (already on node via apply_tag_defaults) is overridden by an
-    /// author stylesheet rule with higher specificity.
     #[test]
     fn cascade_author_overrides_ua() {
-        // Simulate UA: bold = true (as would be set for "h1")
         let mut root_el = make_el("p", "", "");
-        root_el.style.bold = true; // pretend UA set this
-
+        root_el.style.bold = true;
         let sheet = StyleSheet::parse("p { font-weight: normal; }");
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(el) = &root {
             assert!(!el.style.bold, "author rule should override UA bold");
         }
     }
 
-    /// Author rule is overridden by an inline style="" on the same element.
     #[test]
     fn cascade_inline_overrides_author() {
         let mut root_el = make_el_inline("p", "color: rgb(255,0,0)");
-        root_el.style.color = [0, 0, 0]; // default
-
+        root_el.style.color = [0, 0, 0];
         let sheet = StyleSheet::parse("p { color: rgb(0,0,255); }");
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(el) = &root {
-            // inline style (red) must win over author rule (blue)
             assert_eq!(el.style.color, [255, 0, 0],
                 "inline style should override author rule");
         }
     }
 
-    /// Higher-specificity rule overrides lower-specificity rule.
     #[test]
     fn cascade_specificity_ordering() {
-        // `.highlight` (0,1,0) should override `p` (0,0,1)
-        let mut root_el = make_el("p", "", "highlight");
-
+        let root_el = make_el("p", "", "highlight");
         let sheet = StyleSheet::parse("p { color: rgb(0,0,255); } .highlight { color: rgb(255,165,0); }");
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(el) = &root {
             assert_eq!(el.style.color, [255, 165, 0],
                 ".highlight rule (higher specificity) should win over p rule");
         }
     }
 
-    /// Child element inherits `color` from parent when it has no explicit color.
     #[test]
     fn cascade_child_inherits_color() {
         let child_el = make_el("span", "", "");
         let mut parent_el = make_el("p", "", "");
         parent_el.children.push(Node::Element(child_el));
-
         let sheet = StyleSheet::parse("p { color: rgb(200,100,50); }");
         let mut root = Node::Element(parent_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(parent) = &root {
-            // parent gets the color
             assert_eq!(parent.style.color, [200, 100, 50]);
-            // child inherits it
             if let Some(Node::Element(child)) = parent.children.first() {
                 assert_eq!(child.style.color, [200, 100, 50],
                     "child should inherit color from parent");
@@ -714,20 +884,16 @@ mod tests {
         }
     }
 
-    /// `inherit` keyword explicitly copies parent value.
     #[test]
     fn cascade_inherit_keyword() {
         let child_el = make_el("span", "", "");
         let mut parent_el = make_el("p", "", "");
         parent_el.children.push(Node::Element(child_el));
-
-        // Parent gets bold=true from sheet; child uses `inherit`
         let sheet = StyleSheet::parse(
             "p { font-weight: bold; } span { font-weight: inherit; }"
         );
         let mut root = Node::Element(parent_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(parent) = &root {
             assert!(parent.style.bold, "parent should be bold");
             if let Some(Node::Element(child)) = parent.children.first() {
@@ -738,63 +904,194 @@ mod tests {
         }
     }
 
-    /// `initial` keyword resets to the CSS initial value (Style::default()).
     #[test]
     fn cascade_initial_keyword() {
         let mut root_el = make_el("p", "", "");
-        root_el.style.bold = true; // pretend set by UA
-
+        root_el.style.bold = true;
         let sheet = StyleSheet::parse("p { font-weight: initial; }");
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(el) = &root {
             assert!(!el.style.bold, "`initial` should reset bold to false");
         }
     }
 
-    /// Empty stylesheet leaves styles unchanged.
     #[test]
     fn cascade_empty_sheets() {
         let root_el = make_el("div", "", "");
         let default_color = root_el.style.color;
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[]);
-
         if let Node::Element(el) = &root {
             assert_eq!(el.style.color, default_color);
         }
     }
 
-    /// rgba() background-color preserves the alpha channel through the cascade.
     #[test]
     fn cascade_bg_alpha_preserved() {
         let root_el = make_el("div", "", "pass");
         let sheet = StyleSheet::parse(".pass { background-color: rgba(30, 160, 80, 0.1); }");
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[sheet]);
-
         if let Node::Element(el) = &root {
             assert_eq!(el.style.bg_color, Some([30, 160, 80]),
                 "bg_color should be set to the rgba rgb components");
-            // 0.1 * 255 = 25.5 → rounds to 26
             assert_eq!(el.style.bg_alpha, 26,
                 "bg_alpha should be 26 (0.1 * 255 rounded), not 255");
         }
     }
 
-    /// Inline style rgba() background-color preserves the alpha channel.
     #[test]
     fn inline_bg_alpha_preserved() {
         let root_el = make_el_inline("div", "background-color: rgba(255, 165, 0, 0.25)");
         let mut root = Node::Element(root_el);
         apply_cascade(&mut root, &[]);
-
         if let Node::Element(el) = &root {
             assert_eq!(el.style.bg_color, Some([255, 165, 0]));
-            // 0.25 * 255 = 63.75 → rounds to 64
             assert_eq!(el.style.bg_alpha, 64,
                 "bg_alpha should be 64 (0.25 * 255 rounded), not 255");
         }
+    }
+
+    // ── New pseudo-class tests ────────────────────────────────────────────────
+
+    #[test]
+    fn pseudo_hover_matches_when_hovered() {
+        let e = el("a", "", "");
+        let ptr = &e as *const Element as usize;
+        let state = PseudoState {
+            hovered_path: vec![],
+            hovered_ptr:  Some(ptr),
+            focused_ptr:  None,
+            checked_ptrs: vec![],
+        };
+        let sel = Selector::Compound(vec![
+            SimpleSelector::Tag("a".into()),
+            SimpleSelector::Pseudo(PseudoClass::Hover),
+        ]);
+        assert!(matches_with_state(&e, &sel, &[], &state));
+    }
+
+    #[test]
+    fn pseudo_hover_no_match_when_not_hovered() {
+        let e = el("a", "", "");
+        let state = PseudoState::none();
+        let sel = Selector::Compound(vec![
+            SimpleSelector::Tag("a".into()),
+            SimpleSelector::Pseudo(PseudoClass::Hover),
+        ]);
+        assert!(!matches_with_state(&e, &sel, &[], &state));
+    }
+
+    #[test]
+    fn pseudo_first_child_matches() {
+        let e1 = make_el("li", "", "");
+        let e2 = make_el("li", "", "");
+        let children = vec![Node::Element(e1), Node::Element(e2)];
+        if let Node::Element(first_li) = &children[0] {
+            let sib = SiblingCtx { siblings: &children, index: 0 };
+            assert!(matches_pseudo(first_li, &PseudoClass::FirstChild, &[], &PseudoState::none(), Some(&sib)));
+        }
+    }
+
+    #[test]
+    fn pseudo_first_child_no_match_second() {
+        let e1 = make_el("li", "", "");
+        let e2 = make_el("li", "", "");
+        let children = vec![Node::Element(e1), Node::Element(e2)];
+        if let Node::Element(second_li) = &children[1] {
+            let sib = SiblingCtx { siblings: &children, index: 1 };
+            assert!(!matches_pseudo(second_li, &PseudoClass::FirstChild, &[], &PseudoState::none(), Some(&sib)));
+        }
+    }
+
+    #[test]
+    fn pseudo_nth_child_odd() {
+        let e1 = make_el("li", "", "");
+        let e2 = make_el("li", "", "");
+        let e3 = make_el("li", "", "");
+        let children = vec![
+            Node::Element(e1),
+            Node::Element(e2),
+            Node::Element(e3),
+        ];
+        // :nth-child(odd) = (2, 1) — positions 1 and 3
+        if let Node::Element(li1) = &children[0] {
+            let sib = SiblingCtx { siblings: &children, index: 0 };
+            assert!(matches_pseudo(li1, &PseudoClass::NthChild(2, 1), &[], &PseudoState::none(), Some(&sib)));
+        }
+        if let Node::Element(li2) = &children[1] {
+            let sib = SiblingCtx { siblings: &children, index: 1 };
+            assert!(!matches_pseudo(li2, &PseudoClass::NthChild(2, 1), &[], &PseudoState::none(), Some(&sib)));
+        }
+        if let Node::Element(li3) = &children[2] {
+            let sib = SiblingCtx { siblings: &children, index: 2 };
+            assert!(matches_pseudo(li3, &PseudoClass::NthChild(2, 1), &[], &PseudoState::none(), Some(&sib)));
+        }
+    }
+
+    #[test]
+    fn pseudo_not() {
+        let e = el("p", "", "foo");
+        // :not(.foo) — p.foo should NOT match :not(.foo)
+        let pc = PseudoClass::Not(Box::new(SimpleSelector::Class("foo".into())));
+        assert!(!matches_pseudo(&e, &pc, &[], &PseudoState::none(), None));
+
+        // :not(.bar) — p.foo SHOULD match :not(.bar)
+        let pc2 = PseudoClass::Not(Box::new(SimpleSelector::Class("bar".into())));
+        assert!(matches_pseudo(&e, &pc2, &[], &PseudoState::none(), None));
+    }
+
+    #[test]
+    fn attr_contains_word_match() {
+        let e = el_with_attrs("div", "", "", r#"class="foo bar baz""#);
+        let sel = Selector::Compound(vec![
+            SimpleSelector::AttrContainsWord("class".into(), "bar".into()),
+        ]);
+        assert!(matches(&e, &sel, &[]));
+    }
+
+    #[test]
+    fn attr_starts_with_match() {
+        let e = el_with_attrs("a", "", "", r#"href="https://example.com""#);
+        let sel = Selector::Compound(vec![
+            SimpleSelector::AttrStartsWith("href".into(), "https".into()),
+        ]);
+        assert!(matches(&e, &sel, &[]));
+    }
+
+    #[test]
+    fn attr_ends_with_match() {
+        let e = el_with_attrs("a", "", "", r#"href="document.pdf""#);
+        let sel = Selector::Compound(vec![
+            SimpleSelector::AttrEndsWith("href".into(), ".pdf".into()),
+        ]);
+        assert!(matches(&e, &sel, &[]));
+    }
+
+    #[test]
+    fn attr_contains_sub_match() {
+        let e = el_with_attrs("a", "", "", r#"href="https://example.com/page""#);
+        let sel = Selector::Compound(vec![
+            SimpleSelector::AttrContains("href".into(), "example".into()),
+        ]);
+        assert!(matches(&e, &sel, &[]));
+    }
+
+    #[test]
+    fn nth_matches_pure_integer() {
+        // :nth-child(3) matches only position 3
+        assert!( nth_matches(0, 3, 3));
+        assert!(!nth_matches(0, 3, 1));
+        assert!(!nth_matches(0, 3, 2));
+    }
+
+    #[test]
+    fn nth_matches_even() {
+        // :nth-child(even) = (2, 0)
+        assert!(!nth_matches(2, 0, 1));
+        assert!( nth_matches(2, 0, 2));
+        assert!(!nth_matches(2, 0, 3));
+        assert!( nth_matches(2, 0, 4));
     }
 }

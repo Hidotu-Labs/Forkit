@@ -2,7 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::dom::node::Node;
-use crate::dom::parser::{parse, extract_page_meta};
+use crate::dom::parser::{parse_with_sheets, extract_page_meta};
+use crate::dom::css::StyleSheet;
 use crate::js;
 use crate::net;
 
@@ -14,12 +15,12 @@ pub struct PageMeta {
 }
 
 /// Load an HTML document from a local file path, a `file://` URI, or an
-/// `http(s)://` URL.  Returns `(resolved_url, Node, PageMeta)` or `None` on
+/// `http(s)://` URL.  Returns `(resolved_url, Node, PageMeta, Vec<StyleSheet>)` or `None` on
 /// hard error.
-pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta)> {
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>)> {
     let (final_url, html) = fetch_html(source)?;
     let (title, favicon_url) = extract_page_meta(&html, &final_url);
-    let dom  = parse(&html, &final_url);
+    let (dom, sheets)  = crate::dom::parser::parse_with_sheets(&html, &final_url);
     let meta = PageMeta { title, favicon_url };
 
     // Run inline + external <script> blocks — output goes to the terminal only.
@@ -32,7 +33,7 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta)> {
         }
     }
 
-    Some((final_url, dom, meta))
+    Some((final_url, dom, meta, sheets))
 }
 
 fn fetch_html(source: &str) -> Option<(String, String)> {

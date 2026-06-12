@@ -72,6 +72,8 @@ pub struct LoadResult {
     /// Whether this load should push a new history entry (`true`) or replace
     /// the current entry (`false`, used for back/forward/reload).
     pub push_history: bool,
+    /// Parsed stylesheets, stored for re-applying the cascade each frame.
+    pub style_sheets: Vec<crate::dom::css::StyleSheet>,
 }
 
 /// Lifecycle state of a single tab's background loader.
@@ -111,13 +113,20 @@ pub struct Tab {
     pub favicon_url: Option<String>,
     /// Background load state for this tab.
     pub load_state: LoadState,
+    /// Raw pointer address of the currently hovered element (for :hover matching).
+    pub hovered_ptr: Option<usize>,
+    /// Raw pointer address of the currently focused element (for :focus matching).
+    pub focused_ptr: Option<usize>,
+    /// Parsed stylesheets for this tab, stored so the cascade can be re-applied
+    /// each frame with the current PseudoState.
+    pub style_sheets: Vec<crate::dom::css::StyleSheet>,
 }
 
 impl Tab {
     /// Synchronously load the initial tab (only used for startup — after that
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
-        let (resolved, dom, meta) = load_dom(url)?;
+        let (resolved, dom, meta, sheets) = load_dom(url)?;
         Some(Tab {
             dom,
             scroll_y:       0,
@@ -132,6 +141,9 @@ impl Tab {
             page_title:     meta.title,
             favicon_url:    meta.favicon_url,
             load_state:     LoadState::Idle,
+            hovered_ptr:    None,
+            focused_ptr:    None,
+            style_sheets:   sheets,
         })
     }
 
@@ -220,12 +232,13 @@ impl Tab {
             let send_val = match result {
                 Err(msg) => Err(msg),
                 Ok(None) => Err(format!("Failed to load: {url}")),
-                Ok(Some((final_url, dom, meta))) => Ok(LoadResult {
+                Ok(Some((final_url, dom, meta, sheets))) => Ok(LoadResult {
                     final_url,
                     dom,
                     meta,
                     images: ImageCache::new(),
                     push_history,
+                    style_sheets: sheets,
                 }),
             };
 
@@ -253,6 +266,9 @@ impl Tab {
                         self.button_areas  = Vec::new();
                         self.page_title    = result.meta.title;
                         self.favicon_url   = result.meta.favicon_url;
+                        self.hovered_ptr   = None;
+                        self.focused_ptr   = None;
+                        self.style_sheets  = result.style_sheets;
                         if result.push_history {
                             self.history.push(result.final_url);
                         }
@@ -277,6 +293,9 @@ impl Tab {
                         self.input_values = Vec::new();
                         self.focused_input = None;
                         self.button_areas = Vec::new();
+                        self.hovered_ptr  = None;
+                        self.focused_ptr  = None;
+                        self.style_sheets = Vec::new();
                         self.load_state   = LoadState::Crashed(msg);
                         true
                     }
@@ -395,6 +414,19 @@ impl Tab {
         self.input_values.clear();
         self.focused_input = None;
     }
+
+    /// Find the DOM element at content coordinates `(x, y)` and return its
+    /// raw pointer (as `usize`) for use with `:hover` pseudo-class matching.
+    ///
+    /// Currently uses link_areas and input_areas as a lightweight proxy for
+    /// element hit-testing.  Full DOM hit-testing requires layout boxes that
+    /// carry element pointers — this is the initial implementation.
+    pub fn find_element_at(&self, _x: i32, _y: i32) -> Option<usize> {
+        // Full DOM hit-testing not yet implemented.
+        // A complete implementation would walk LayoutBox entries that carry
+        // element raw pointers and return the topmost hit.
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +446,10 @@ pub struct Browser<'ttf> {
     /// If the user is dragging the scrollbar thumb, stores the y offset within the thumb
     /// where the drag started (screen-relative to the content area top).
     pub scrollbar_drag: Option<i32>,
+    /// Current mouse X position in window coordinates (for :hover matching).
+    pub mouse_x: i32,
+    /// Current mouse Y position in content-area coordinates (for :hover matching).
+    pub mouse_y: i32,
 }
 
 impl<'ttf> Browser<'ttf> {
@@ -438,6 +474,8 @@ impl<'ttf> Browser<'ttf> {
             bar:            SearchBar::new(&bar_url),
             need_draw:      true,
             scrollbar_drag: None,
+            mouse_x:        0,
+            mouse_y:        0,
         })
     }
 
@@ -561,6 +599,18 @@ impl<'ttf> Browser<'ttf> {
 
     pub fn can_back(&self)    -> bool { self.tab().can_back() }
     pub fn can_forward(&self) -> bool { self.tab().can_forward() }
+
+    /// Build a `PseudoState` from the current browser state.
+    /// Used to apply dynamic pseudo-classes before each draw.
+    pub fn pseudo_state(&self) -> crate::dom::css::PseudoState {
+        let tab = self.tab();
+        crate::dom::css::PseudoState {
+            hovered_path: vec![],
+            hovered_ptr:  tab.hovered_ptr,
+            focused_ptr:  tab.focused_ptr,
+            checked_ptrs: vec![],
+        }
+    }
 
     // ---- click handling ----
 
@@ -710,7 +760,16 @@ impl<'ttf> Browser<'ttf> {
         )));
 
         {
+            let ps   = self.pseudo_state();
             let tab  = &mut self.tabs[self.active];
+
+            // Re-apply cascade with current pseudo state so dynamic pseudo-classes
+            // like :hover and :focus are reflected in this frame's styles.
+            if !tab.style_sheets.is_empty() {
+                let sheets = tab.style_sheets.clone();
+                crate::dom::css::apply_cascade_with_state(&mut tab.dom, &sheets, &ps);
+            }
+
             let ctx  = RenderCtx {
                 viewport_width:  win_w,
                 viewport_height: content_h,

@@ -73,7 +73,22 @@ pub fn handle_event(browser: &mut Browser, event: Event) -> bool {
         }
 
         // ---- Mouse motion — scroll while dragging thumb ----
-        Event::MouseMotion { y, .. } => {
+        Event::MouseMotion { x, y, .. } => {
+            let chrome_h = chrome_height();
+            let content_y = y - chrome_h;
+
+            // Track mouse position for :hover matching
+            browser.mouse_x = x;
+            browser.mouse_y = content_y;
+
+            // Find the hovered element and update Tab.hovered_ptr
+            let hovered = browser.tab().find_element_at(x, content_y);
+            if browser.tab().hovered_ptr != hovered {
+                browser.tab_mut().hovered_ptr = hovered;
+                browser.need_draw = true;
+            }
+
+            // Scrollbar drag
             if let Some(drag_offset) = browser.scrollbar_drag {
                 let (_, win_h) = browser.window.canvas.output_size()
                     .map(|(w, h)| (w as i32, h as i32))

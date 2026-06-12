@@ -59,6 +59,13 @@ pub fn get_attr<'a>(attrs: &'a str, key: &str) -> Option<&'a str> {
 /// Parse an HTML string into a `Node` tree rooted at `#document`.
 /// `base_url` is used to resolve relative `<link rel="stylesheet">` hrefs.
 pub fn parse(html: &str, base_url: &str) -> Node {
+    let (node, _) = parse_with_sheets(html, base_url);
+    node
+}
+
+/// Like [`parse`] but also returns the parsed `StyleSheet` list so the caller
+/// can store them for re-applying the cascade each frame (e.g. for `:hover`).
+pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) {
     let mut lexer = Lexer::new(html);
 
     let mut stack: Vec<Element> = vec![Element {
@@ -251,15 +258,18 @@ pub fn parse(html: &str, base_url: &str) -> Node {
     // Parse all collected <style> text blocks and apply the cascade to the
     // fully-built DOM tree.  This runs after the tree is complete so that
     // selector matching can walk ancestors correctly.
-    if !style_texts.is_empty() {
-        let sheets: Vec<StyleSheet> = style_texts
+    let sheets: Vec<StyleSheet> = if !style_texts.is_empty() {
+        let parsed: Vec<StyleSheet> = style_texts
             .iter()
             .map(|css| StyleSheet::parse(css))
             .collect();
-        apply_cascade(&mut root, &sheets);
-    }
+        apply_cascade(&mut root, &parsed);
+        parsed
+    } else {
+        Vec::new()
+    };
 
-    root
+    (root, sheets)
 }
 
 // ---------------------------------------------------------------------------

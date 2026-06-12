@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Forkit — CSS Test</title>
+  <style>
+    /* ── Base ── */
+    body {
+      color: #1a1a2e;
+      background-color: #f4f6f9;
+      margin: 0;
+      padding: 20px 24px;
+      font-family: sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    h1 {
+      font-size: 24px;
+      color: #0f3460;
+      margin: 0 0 4px 0;
+      border-bottom: 3px solid #0f3460;
+      padding-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 13px;
+      margin: 0 0 24px 0;
+    }
+
+    /* Section heading */
+    h2 {
+      font-size: 16px;
+      font-weight: bold;
+      color: #ffffff;
+      background-color: #0f3460;
+      margin: 24px 0 0 0;
+      padding: 8px 14px;
+      border-radius: 6px 6px 0 0;
+    }
+
+    /* Card wraps a section's tests */
+    .card {
+      background-color: #ffffff;
+      border: 1px solid #d0d7e2;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      padding: 14px 16px 8px;
+      margin-bottom: 20px;
+    }
+
+    /* Each individual test row */
+    .test {
+      display: block;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      background-color: #f9fafb;
+      border: 1px solid #e4e8ef;
+    }
+
+    .test-label {
+      font-size: 11px;
+      font-family: monospace;
+      color: #0f3460;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    .test-result {
+      font-size: 14px;
+    }
+
+    /* Status badges */
+    .ok   { border-left: 4px solid #009944; }
+    .na   { border-left: 4px solid #aaaaaa; color: #888; }
+
+    /* ── Selectors for Section 11 ── */
+    #sel-id-demo       { color: #7c3aed; }
+    .sel-compound      { font-weight: bold; font-style: italic; }
+    .sel-ancestor p    { letter-spacing: 3px; }
+    .sel-parent > span { color: #c2410c; }
+    h2 + .card         { /* already styled */ }
+
+    /* ── Text transforms / alignment ── */
+    .txt-upper  { text-transform: uppercase; }
+    .txt-lower  { text-transform: lowercase; }
+    .txt-cap    { text-transform: capitalize; }
+    .txt-center { text-align: center; }
+    .txt-right  { text-align: right; }
+    .sm-caps    { font-variant-caps: small-caps; }
+    .pre-wrap   { white-space: pre-wrap; }
+    .break-all  { word-break: break-all; }
+
+    /* ── List style helpers ── */
+    .list-circle  { list-style-type: circle; }
+    .list-square  { list-style-type: square; }
+    .list-decimal { list-style-type: decimal; }
+    .list-none    { list-style-type: none; }
+
+    /* ── Display helpers ── */
+    .d-none       { display: none; }
+    .d-ib         { display: inline-block; background-color: #dbeafe; padding: 3px 8px; border-radius: 4px; margin-right: 4px; }
+    .vis-hidden   { visibility: hidden; }
+    .ov-hidden    { overflow: hidden; }
+
+    /* ── Shadow ── */
+    .shadow-sm { box-shadow: 2px 2px 4px rgba(0,0,0,0.15); }
+    .shadow-lg { box-shadow: 4px 8px 16px rgba(0,0,0,0.25); }
+
+    /* ── Borders ── */
+    .b-all    { border: 2px solid #0f3460; border-radius: 6px; padding: 8px; }
+    .b-top    { border-top: 3px solid #e94560; padding-top: 6px; }
+    .b-right  { border-right: 3px solid #009944; padding-right: 6px; }
+    .b-bottom { border-bottom: 3px solid #ff9900; padding-bottom: 6px; }
+    .b-left   { border-left: 3px solid #6600cc; padding-left: 6px; }
+    .b-pill   { border: 1px solid #0f3460; border-radius: 999px; padding: 4px 14px; display: inline-block; }
+
+    /* ── Sizing ── */
+    .w-200   { width: 200px; background-color: #dbeafe; padding: 4px; }
+    .w-pct   { width: 60%; background-color: #fef3c7; padding: 4px; }
+    .w-max   { max-width: 300px; background-color: #d1fae5; padding: 4px; }
+    .h-50    { height: 50px; background-color: #fce7f3; padding: 4px; }
+    .inherit-color { color: #7c3aed; font-size: 17px; }
+
+    /* ────────────────────────────────────────────────
+       Section 17: Pseudo-class styles
+       ──────────────────────────────────────────────── */
+
+    /* :first-child / :last-child / :nth-child */
+    .pc-list li:first-child { color: #059669; font-weight: bold; }
+    .pc-list li:last-child  { color: #dc2626; }
+    .pc-list li:nth-child(even) { background-color: #eff6ff; }
+
+    /* :not() */
+    .pc-list li:not(:first-child):not(:last-child) { color: #374151; }
+
+    /* :first-of-type / :last-of-type */
+    .pc-type-demo p:first-of-type { color: #0f3460; font-weight: bold; }
+    .pc-type-demo p:last-of-type  { color: #e94560; }
+
+    /* :nth-child formulas */
+    .pc-nth-3n li:nth-child(3n)   { background-color: #fef9c3; }
+    .pc-nth-2n1 li:nth-child(2n+1){ font-weight: bold; color: #1d4ed8; }
+
+    /* :only-child / :only-of-type */
+    .pc-only > p:only-child    { color: #059669; font-weight: bold; }
+    .pc-only-type p:only-of-type { background-color: #d1fae5; padding: 4px; }
+
+    /* :empty */
+    .pc-empty:empty { background-color: #fecaca; min-height: 20px; border: 1px dashed #dc2626; }
+
+    /* attribute extended selectors */
+    a[href^="https"] { color: #059669; }
+    a[href$=".pdf"]  { color: #dc2626; }
+    a[href*="wiki"]  { color: #7c3aed; }
+
+    /* :link / :visited */
+    a:link    { color: #0f3460; }
+    a:visited { color: #6b21a8; }
+
+    /* :disabled / :enabled */
+    input:disabled { background-color: #e5e7eb; color: #9ca3af; }
+    input:enabled  { background-color: #ffffff; }
+
+    /* :checked — style the label next to a checked checkbox */
+    input:checked + label { color: #059669; font-weight: bold; }
+
+    /* :focus */
+    input:focus { border: 2px solid #0f3460; background-color: #eff6ff; outline: none; }
+
+    /* General sibling ~ */
+    .gs-trigger ~ .gs-target { color: #059669; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<h1>Forkit — CSS Test Suite</h1>
+<p class="subtitle">CSS properties, selectors, and pseudo-classes. R = reload, Q/Esc = quit.</p>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>1. Color &amp; Alpha</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">color: named keyword</div>
+    <div class="test-result" style="color: tomato;">tomato</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: #rrggbb hex</div>
+    <div class="test-result" style="color: #0066cc;">#0066cc — blue</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: #rgb shorthand</div>
+    <div class="test-result" style="color: #09c;">#09c — cyan</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: rgb(r, g, b)</div>
+    <div class="test-result" style="color: rgb(200,0,100);">rgb(200,0,100)</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: rgba(r, g, b, a) — 70% opacity</div>
+    <div class="test-result" style="color: rgba(0,100,200,0.7);">rgba(0,100,200,0.7)</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: hsl(120, 60%, 35%)</div>
+    <div class="test-result" style="color: hsl(120,60%,35%);">hsl — dark green</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: hsla(30, 100%, 45%, 0.8)</div>
+    <div class="test-result" style="color: hsla(30,100%,45%,0.8);">hsla — 80% orange</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">background-color: rgba — semi-transparent orange tint</div>
+    <div class="test-result" style="background-color: rgba(255,165,0,0.25); padding: 4px;">rgba bg</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: transparent — text invisible, grey bg visible</div>
+    <div class="test-result" style="color: transparent; background-color: #ccc; padding:4px;">(invisible text)</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>2. Background</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">background-color: solid</div>
+    <div class="test-result" style="background-color: #1a6e3c; color: white; padding: 8px; border-radius: 4px;">solid #1a6e3c</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">background-image + background-size: cover</div>
+    <div class="test-result" style="background-image: url(https://placehold.co/600x60/0f3460/white?text=cover); background-size: cover; background-repeat: no-repeat; height: 60px; border-radius: 4px;"></div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">background-image + background-repeat: repeat (tile)</div>
+    <div class="test-result" style="background-image: url(https://placehold.co/30x30/e94560/white); background-repeat: repeat; height: 60px; border-radius: 4px;"></div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">background-image + no-repeat + center</div>
+    <div class="test-result" style="background-image: url(https://placehold.co/80x40/009944/white?text=center); background-repeat: no-repeat; background-position: center; height: 60px; background-color: #f0f0f0; border-radius: 4px;"></div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">background-size: contain</div>
+    <div class="test-result" style="background-image: url(https://placehold.co/80x40/0f3460/white?text=contain); background-size: contain; background-repeat: no-repeat; background-color: #eee; height: 60px; border-radius: 4px;"></div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>3. Typography</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">font-size: 22px / 1.4em / 1.2rem</div>
+    <div class="test-result">
+      <span style="font-size:22px;">22px</span>
+      &nbsp;
+      <span style="font-size:1.4em;">1.4em</span>
+      &nbsp;
+      <span style="font-size:1.2rem;">1.2rem</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">font-weight: bold / 700 / normal</div>
+    <div class="test-result">
+      <span style="font-weight:bold;">bold</span>
+      &nbsp;
+      <span style="font-weight:700;">700</span>
+      &nbsp;
+      <span style="font-weight:normal;">normal</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">font-style: italic / oblique</div>
+    <div class="test-result">
+      <span style="font-style:italic;">italic</span>
+      &nbsp;
+      <span style="font-style:oblique;">oblique</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">font-family: monospace / serif / sans-serif</div>
+    <div class="test-result">
+      <span style="font-family:monospace;">monospace fixed</span>
+      &nbsp;|&nbsp;
+      <span style="font-family:serif;">serif</span>
+      &nbsp;|&nbsp;
+      <span style="font-family:sans-serif;">sans-serif</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">font-variant-caps: small-caps</div>
+    <div class="test-result sm-caps">Hello World — Small Caps</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">text-decoration: underline / line-through / both</div>
+    <div class="test-result">
+      <span style="text-decoration:underline;">underline</span>
+      &nbsp;
+      <span style="text-decoration:line-through;">line-through</span>
+      &nbsp;
+      <span style="text-decoration:underline line-through;">both</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">text-align: left / center / right</div>
+    <div class="test-result" style="background-color:#f9f9f9; padding:4px;">
+      <div style="text-align:left;">left aligned text</div>
+      <div class="txt-center">center aligned text</div>
+      <div class="txt-right">right aligned text</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">text-transform: uppercase / lowercase / capitalize</div>
+    <div class="test-result">
+      <span class="txt-upper">hello world</span>
+      &nbsp;|&nbsp;
+      <span class="txt-lower">HELLO WORLD</span>
+      &nbsp;|&nbsp;
+      <span class="txt-cap">hello world</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">line-height: 2.0 (double spaced)</div>
+    <div class="test-result" style="line-height:2.0;">Line one<br>Line two</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">letter-spacing: 4px</div>
+    <div class="test-result" style="letter-spacing:4px;">spaced out letters</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">word-spacing: 12px</div>
+    <div class="test-result" style="word-spacing:12px;">extra space between words here</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">white-space: pre-wrap — preserves indentation</div>
+    <div class="test-result pre-wrap">line one
+  indented two
+    deeply indented three</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">word-break: break-all (max-width: 160px)</div>
+    <div class="test-result break-all" style="max-width:160px;">VERYLONGWORDWITHNOSPACESATALLBREAKSNOW</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>4. Box Model — Spacing</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">padding shorthand — 1 / 2 / 3 / 4 values</div>
+    <div class="test-result">
+      <div style="background-color:#dbeafe; padding:16px; margin-bottom:4px;">padding: 16px</div>
+      <div style="background-color:#dbeafe; padding:8px 24px; margin-bottom:4px;">padding: 8px 24px</div>
+      <div style="background-color:#dbeafe; padding:4px 8px 12px 20px;">padding: 4px 8px 12px 20px</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">margin shorthand</div>
+    <div class="test-result">
+      <div style="background-color:#d1fae5; margin:8px 16px;">margin: 8px 16px</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>5. Borders</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">border: 2px solid + border-radius: 12px</div>
+    <div class="test-result b-all" style="border-radius:12px;">rounded border</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border per-side: top / right / bottom / left</div>
+    <div class="test-result">
+      <div class="b-top" style="margin-bottom:4px;">border-top red</div>
+      <div class="b-right" style="margin-bottom:4px;">border-right green</div>
+      <div class="b-bottom" style="margin-bottom:4px;">border-bottom orange</div>
+      <div class="b-left">border-left purple</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border-radius: pill (999px)</div>
+    <div class="test-result"><span class="b-pill">pill shape</span></div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border-radius: 4-value (4px 16px 4px 16px)</div>
+    <div class="test-result" style="border:1px solid #ccc; border-radius:4px 16px 4px 16px; padding:8px;">alternating radii</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border-top-left-radius + border-bottom-right-radius</div>
+    <div class="test-result" style="border:1px solid #ccc; border-top-left-radius:20px; border-bottom-right-radius:20px; padding:8px;">asymmetric corners</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>6. Sizing</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">width: 200px</div>
+    <div class="test-result w-200">200px wide</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">width: 60%</div>
+    <div class="test-result w-pct">60% of parent</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">max-width: 300px</div>
+    <div class="test-result w-max">max 300px — text wraps inside the constrained box</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">height: 50px</div>
+    <div class="test-result h-50">height 50px</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">max-height: 40px + overflow: hidden</div>
+    <div class="test-result" style="max-height:40px; overflow:hidden; background-color:#fef9c3; padding:4px;">this text is taller than 40px and should be clipped at the box boundary by overflow hidden</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">width: 50vw / height: 10vh</div>
+    <div class="test-result">
+      <div style="width:50vw; background-color:#ede9fe; padding:4px;">50vw wide</div>
+      <div style="height:10vh; background-color:#fce7f3; padding:4px;">10vh tall</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>7. CSS Math Functions</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">calc(100% - 40px)</div>
+    <div class="test-result" style="width:calc(100% - 40px); background-color:#dbeafe; padding:6px;">calc width</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">calc(2em * 3)</div>
+    <div class="test-result" style="width:calc(2em * 3); background-color:#d1fae5; padding:6px;">calc 2em*3</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">calc(80px / 2) = 40px</div>
+    <div class="test-result" style="width:calc(80px / 2); background-color:#fce7f3; padding:6px;">40px</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">font-size: clamp(14px, 2vw, 24px)</div>
+    <div class="test-result" style="font-size:clamp(14px, 2vw, 24px);">clamp responsive font</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">max-width: min(300px, 80vw)</div>
+    <div class="test-result" style="max-width:min(300px, 80vw); background-color:#fef3c7; padding:6px;">min() constraint</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>8. Display &amp; Visibility</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">display: inline-block — three boxes side by side</div>
+    <div class="test-result">
+      <span class="d-ib">box 1</span>
+      <span class="d-ib">box 2</span>
+      <span class="d-ib">box 3</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">display: none — hidden element below (you should NOT see "HIDDEN")</div>
+    <div class="d-none">HIDDEN — display:none</div>
+    <div class="test-result" style="background-color:#d1fae5; padding:4px;">Element above has display:none — not visible</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">visibility: hidden — occupies space but invisible</div>
+    <div class="test-result">
+      <span class="vis-hidden">INVISIBLE SPAN</span>
+      <span>(gap to the left is the hidden span's space)</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">overflow: hidden + fixed height</div>
+    <div class="test-result ov-hidden" style="height:36px; background-color:#fef9c3; padding:4px;">overflow hidden — this long text should be clipped at 36px height and not extend beyond the box boundary</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>9. Opacity &amp; Box Shadow</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">opacity: 1.0 / 0.5 / 0.2</div>
+    <div class="test-result">
+      <div style="opacity:1.0; background-color:#0f3460; color:white; padding:5px; border-radius:4px; margin-bottom:4px;">opacity 1.0 — fully visible</div>
+      <div style="opacity:0.5; background-color:#0f3460; color:white; padding:5px; border-radius:4px; margin-bottom:4px;">opacity 0.5 — half</div>
+      <div style="opacity:0.2; background-color:#0f3460; color:white; padding:5px; border-radius:4px;">opacity 0.2 — mostly transparent</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">box-shadow: small / large / named color</div>
+    <div class="test-result">
+      <div class="shadow-sm" style="background:#fff; border:1px solid #ddd; padding:6px; margin-bottom:6px; border-radius:4px;">shadow-sm: 2px 2px 4px</div>
+      <div class="shadow-lg" style="background:#fff; border:1px solid #ddd; padding:6px; margin-bottom:6px; border-radius:4px;">shadow-lg: 4px 8px 16px</div>
+      <div style="box-shadow:3px 3px 8px navy; background:#fff; border:1px solid #ddd; padding:6px; border-radius:4px;">named color: navy</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">box-shadow: none (overrides class shadow)</div>
+    <div class="test-result shadow-lg" style="box-shadow:none; background:#fff; border:1px solid #ddd; padding:6px; border-radius:4px;">box-shadow: none resets class shadow</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>10. Lists</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">list-style-type: disc (default ul)</div>
+    <ul style="margin:4px 0;">
+      <li>item one</li>
+      <li>item two</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">circle / square / decimal / none</div>
+    <div class="test-result">
+      <ul class="list-circle" style="display:inline-block; vertical-align:top; margin:0 24px 0 0; padding-left:20px;">
+        <li>circle</li>
+        <li>circle</li>
+      </ul>
+      <ul class="list-square" style="display:inline-block; vertical-align:top; margin:0 24px 0 0; padding-left:20px;">
+        <li>square</li>
+        <li>square</li>
+      </ul>
+      <ol class="list-decimal" style="display:inline-block; vertical-align:top; margin:0 24px 0 0; padding-left:20px;">
+        <li>decimal</li>
+        <li>decimal</li>
+      </ol>
+      <ul class="list-none" style="display:inline-block; vertical-align:top; margin:0; padding-left:20px;">
+        <li>no bullet</li>
+        <li>no bullet</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>11. Selectors</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">ID selector — #sel-id-demo → purple</div>
+    <div class="test-result" id="sel-id-demo">This text is purple from #sel-id-demo rule</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Compound selector — .sel-compound → bold + italic</div>
+    <div class="test-result sel-compound">Bold and italic from compound rule</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Descendant combinator — .sel-ancestor p → letter-spacing: 3px</div>
+    <div class="test-result sel-ancestor">
+      <p style="margin:0;">letter spacing from ancestor combinator</p>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Child combinator — .sel-parent > span → orange</div>
+    <div class="test-result sel-parent">
+      Direct child: <span>orange span</span>
+      — deeper: <em><span>not orange (not direct child)</span></em>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Attribute selectors — [attr], [attr=val]</div>
+    <div class="test-result">
+      <a href="https://example.com">link with href attr present</a>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>12. Cascade, Specificity &amp; Inheritance</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">Specificity — .class (0,1,0) wins over tag (0,0,1)</div>
+    <div class="test-result" style="color:rgb(255,165,0);">Inline orange wins over any tag rule</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Inline style overrides stylesheet class</div>
+    <div class="test-result txt-upper" style="text-transform:none;">Class sets uppercase — inline resets to none (should be lowercase)</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Inheritance — child inherits color + font-size from parent</div>
+    <div class="test-result inherit-color">
+      Parent: purple 17px
+      <span style="background-color:rgba(124,58,237,0.08); padding:2px 4px;">child inherits both</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: inherit keyword</div>
+    <div class="test-result" style="color:#cc0000; font-size:18px;">
+      Parent red 18px — <span style="color:inherit; font-size:inherit;">child uses inherit</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">color: initial keyword — resets to CSS default black</div>
+    <div class="test-result inherit-color">
+      Parent purple — <span style="color:initial; font-size:initial; background-color:rgba(0,0,0,0.05); padding:2px 4px;">initial resets</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>13. CSS Length Units</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">px / pt / em / rem / vw / ch / %</div>
+    <div class="test-result">
+      <span style="font-size:20px;">20px</span> &nbsp;
+      <span style="font-size:14pt;">14pt</span> &nbsp;
+      <span style="font-size:1.5em;">1.5em</span> &nbsp;
+      <span style="font-size:1.3rem;">1.3rem</span> &nbsp;
+      <span style="font-size:3vw;">3vw</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">width: 20ch</div>
+    <div class="test-result" style="width:20ch; background-color:#dbeafe; padding:4px;">20ch wide</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">width: 75% of parent</div>
+    <div class="test-result" style="width:75%; background-color:#fef3c7; padding:4px;">75%</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">margin: 0 (bare zero, no unit)</div>
+    <div class="test-result" style="margin:0; padding:4px; background-color:#d1fae5;">margin: 0</div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>14. Margin Auto / Centering</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">width: 300px + margin: 0 auto — centered</div>
+    <div class="test-result">
+      <div style="width:300px; margin:0 auto; background-color:#0f3460; color:white; padding:8px; border-radius:6px; text-align:center;">centered 300px</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">margin-left: auto — flush right</div>
+    <div class="test-result">
+      <div style="width:180px; margin-left:auto; margin-right:0; background-color:#e94560; color:white; padding:8px; border-radius:6px; text-align:center;">flush right</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">width: 60% + margin: 0 auto — centered at 60%</div>
+    <div class="test-result">
+      <div style="width:60%; margin:0 auto; background-color:#009944; color:white; padding:8px; border-radius:6px; text-align:center;">60% centered</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>15. Images</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">img — no spacing (baseline)</div>
+    <div class="test-result">
+      <img src="https://placehold.co/60x40/0f3460/white?text=A" width="60" height="40">
+      <img src="https://placehold.co/60x40/e94560/white?text=B" width="60" height="40">
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">img — margin: 10px</div>
+    <div class="test-result">
+      <img src="https://placehold.co/60x40/009944/white?text=C" width="60" height="40" style="margin:10px;">
+      <img src="https://placehold.co/60x40/ff9900/white?text=D" width="60" height="40" style="margin:10px;">
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">img — padding: 8px + background-color</div>
+    <div class="test-result">
+      <img src="https://placehold.co/60x40/0f3460/white?text=E" width="60" height="40" style="padding:8px; background-color:#ffe0a0;">
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>16. General Sibling Combinator (~)</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">.gs-trigger ~ .gs-target — siblings after trigger → green bold</div>
+    <div class="test-result">
+      <p style="margin:2px 0;">before trigger (normal)</p>
+      <p class="gs-trigger" style="margin:2px 0; color:#666;">trigger element</p>
+      <p class="gs-target" style="margin:2px 0;">this follows trigger — should be green bold</p>
+      <p class="gs-target" style="margin:2px 0;">this also follows — green bold too</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>17. Pseudo-classes</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">:first-child → green bold, :last-child → red, :nth-child(even) → light blue bg</div>
+    <ul class="pc-list" style="margin:4px 0; padding-left:24px;">
+      <li>Item 1 — first-child: green bold</li>
+      <li>Item 2 — nth-child(even): light blue bg</li>
+      <li>Item 3</li>
+      <li>Item 4 — nth-child(even): light blue bg</li>
+      <li>Item 5 — last-child: red</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:not(:first-child):not(:last-child) — middle items grey</div>
+    <ul class="pc-list" style="margin:4px 0; padding-left:24px; list-style:none;">
+      <li>Item A — first (green, excluded from :not)</li>
+      <li>Item B — middle (grey from :not rule)</li>
+      <li>Item C — middle (grey)</li>
+      <li>Item D — last (red, excluded from :not)</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:first-of-type → blue bold, :last-of-type → red (among p tags)</div>
+    <div class="test-result pc-type-demo">
+      <p style="margin:2px 0;">first p — blue bold</p>
+      <span style="color:#666; font-size:12px;">(span is a different type)</span>
+      <p style="margin:2px 0;">middle p</p>
+      <p style="margin:2px 0;">last p — red</p>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:nth-child(3n) → yellow bg — every 3rd item</div>
+    <ul class="pc-nth-3n" style="margin:4px 0; padding-left:24px; list-style:none;">
+      <li>1</li>
+      <li>2</li>
+      <li>3 — yellow</li>
+      <li>4</li>
+      <li>5</li>
+      <li>6 — yellow</li>
+      <li>7</li>
+      <li>8</li>
+      <li>9 — yellow</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:nth-child(2n+1) → bold blue (odd items)</div>
+    <ul class="pc-nth-2n1" style="margin:4px 0; padding-left:24px; list-style:none;">
+      <li>1 — odd: bold blue</li>
+      <li>2 — even: normal</li>
+      <li>3 — odd: bold blue</li>
+      <li>4 — even: normal</li>
+      <li>5 — odd: bold blue</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:only-child → green bold</div>
+    <div class="test-result pc-only">
+      <p style="margin:2px 0;">I am the only child — should be green bold</p>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:only-of-type — only p in mixed-content parent → green bg</div>
+    <div class="test-result pc-only-type">
+      <span style="color:#666; font-size:12px;">span sibling</span>
+      <p style="margin:2px 0;">Only p here — green bg from :only-of-type</p>
+      <span style="color:#666; font-size:12px;">another span</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:empty → red dashed box visible (empty div matches, has no content)</div>
+    <div class="test-result">
+      <div class="pc-empty"></div>
+      <div style="font-size:12px; color:#666; margin-top:2px;">The red dashed box above has no children — matches :empty</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:link → navy, :visited → purple (after visiting)</div>
+    <div class="test-result">
+      <a href="https://example.com">example.com (link: navy)</a>
+      &nbsp;&nbsp;
+      <a href="https://mozilla.org">mozilla.org (may be visited: purple)</a>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:hover on link — move mouse over link to see color change</div>
+    <div class="test-result">
+      <a href="#" style="color:#0f3460;">Hover me — should change color on hover</a>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Attribute selectors — [href^="https"] → green, [href$=".pdf"] → red, [href*="wiki"] → purple</div>
+    <div class="test-result">
+      <a href="https://example.com">https link — green</a>
+      &nbsp;&nbsp;
+      <a href="document.pdf">PDF link — red</a>
+      &nbsp;&nbsp;
+      <a href="https://en.wikipedia.org">wiki link — purple</a>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:disabled → grey bg, :enabled → white bg</div>
+    <div class="test-result">
+      <input type="text" value="enabled field" style="margin-right:12px;">
+      <input type="text" value="disabled field" disabled>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:checked + label → green bold (check the checkbox)</div>
+    <div class="test-result">
+      <input type="checkbox" id="cb1">
+      <label for="cb1">Check me — label turns green when checked</label>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:focus → blue border + light bg (click the input)</div>
+    <div class="test-result">
+      <input type="text" placeholder="Click to focus — border turns blue">
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
