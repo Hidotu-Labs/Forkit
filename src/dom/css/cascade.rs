@@ -90,8 +90,38 @@ pub fn apply_cascade(root: &mut Node, sheets: &[StyleSheet]) {
 /// Like [`apply_cascade`] but uses the given [`PseudoState`] for dynamic
 /// pseudo-class matching (`:hover`, `:focus`, `:checked`, etc.).
 pub fn apply_cascade_with_state(root: &mut Node, sheets: &[StyleSheet], state: &PseudoState) {
+    // Reset every element's computed style back to UA defaults + inline style
+    // before re-applying the cascade. This is necessary because this function
+    // is called every frame and styles from the previous frame must not bleed
+    // into the current one (e.g. :hover styles persisting after mouse-out).
+    reset_styles(root);
     let parent_style = Style::default();
     cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None);
+}
+
+/// Walk the DOM and reset every element's `style` field to UA defaults +
+/// inline style. Text nodes get `Style::default()`. This undoes any
+/// previously applied cascade rules so each frame starts clean.
+fn reset_styles(node: &mut Node) {
+    match node {
+        Node::Text(t) => {
+            t.style = Style::default();
+        }
+        Node::Element(el) => {
+            // Reset to a clean Style, then re-apply UA tag defaults and inline
+            // style so structural defaults (display:block, font sizes, etc.)
+            // are preserved while author rules from previous frames are gone.
+            el.style = Style::default();
+            super::ua::apply_tag_defaults(el);
+            if !el.style_attr.is_empty() {
+                let inline = el.style_attr.clone();
+                super::inline::apply_inline(&inline, &mut el.style);
+            }
+            for child in &mut el.children {
+                reset_styles(child);
+            }
+        }
+    }
 }
 
 fn cascade_node_inner(

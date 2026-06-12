@@ -758,7 +758,7 @@ fn split_simple_selectors(token: &str) -> Vec<SimpleSelector> {
                 let arg = if i < len && chars[i] == '(' {
                     i += 1; // skip `(`
                     let arg_str = take_pseudo_arg(&chars, &mut i);
-                    i += 1; // skip `)`
+                    // take_pseudo_arg already consumed the closing `)`
                     Some(arg_str)
                 } else {
                     None
@@ -864,25 +864,22 @@ fn take_until(chars: &[char], pos: &mut usize, stop: char) -> String {
 }
 
 /// Collect the content of a pseudo-class argument `(…)`, handling nested parens.
-/// Assumes the opening `(` was already consumed.  Stops at the matching `)`.
+/// Assumes the opening `(` was already consumed.  Stops when the matching `)`
+/// is found.  On return, `*pos` points to the character AFTER the closing `)`.
 fn take_pseudo_arg(chars: &[char], pos: &mut usize) -> String {
     let mut s = String::new();
     let mut depth = 1usize;
     while *pos < chars.len() && depth > 0 {
         match chars[*pos] {
-            '(' => { depth += 1; s.push('('); }
+            '(' => { depth += 1; s.push('('); *pos += 1; }
             ')' => {
                 depth -= 1;
+                *pos += 1;
                 if depth > 0 { s.push(')'); }
             }
-            c => { s.push(c); }
+            c => { s.push(c); *pos += 1; }
         }
-        *pos += 1;
     }
-    // Backtrack: take_pseudo_arg is called after `(` is consumed; caller will
-    // advance past `)` with `i += 1` after calling us.  But we consumed the `)` here.
-    // To keep the contract consistent, we "un-advance" by decrementing pos once.
-    if *pos > 0 { *pos -= 1; }
     s
 }
 
