@@ -1,6 +1,6 @@
 use crate::dom::node::{
     Style, TextAlign, ListStyleType, Display, Visibility, TextTransform, Overflow,
-    Border, Borders, FontFamilyHint, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
+    Border, BorderStyle, Borders, FontFamilyHint, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
     LinearGradient, GradientStop,
 };
 use super::color::parse_color_alpha;
@@ -20,7 +20,7 @@ pub fn apply_inline(css: &str, s: &mut Style) {
     }
 }
 
-pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
+pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
     match prop {
         // ---- color ----
         "color" => {
@@ -372,6 +372,31 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 s.borders.left.color   = rgb;
             }
         }
+        "border-style" => {
+            if let Some(style) = parse_border_style_kw(val) {
+                apply_border_style(&mut s.borders, &BorderSide::All, style);
+            }
+        }
+        "border-top-style"    => {
+            if let Some(style) = parse_border_style_kw(val) {
+                apply_border_style(&mut s.borders, &BorderSide::Top, style);
+            }
+        }
+        "border-right-style"  => {
+            if let Some(style) = parse_border_style_kw(val) {
+                apply_border_style(&mut s.borders, &BorderSide::Right, style);
+            }
+        }
+        "border-bottom-style" => {
+            if let Some(style) = parse_border_style_kw(val) {
+                apply_border_style(&mut s.borders, &BorderSide::Bottom, style);
+            }
+        }
+        "border-left-style"   => {
+            if let Some(style) = parse_border_style_kw(val) {
+                apply_border_style(&mut s.borders, &BorderSide::Left, style);
+            }
+        }
 
         // ---- border radius ----
         "border-radius" => {
@@ -702,15 +727,42 @@ fn parse_border_shorthand(val: &str, base: u16, borders: &mut Borders, side: Bor
     }
     let mut width: u8 = 1;
     let mut color: [u8; 3] = [0, 0, 0];
+    let mut style = BorderStyle::Solid;
     for token in val.split_whitespace() {
         if let Some(w) = parse_length(token, base, 0) {
             width = w.clamp(0, 20) as u8;
         } else if let Some((c, _alpha)) = parse_color_alpha(token) {
             color = c;
+        } else if let Some(s) = parse_border_style_kw(token) {
+            style = s;
         }
-        // "solid" / "dashed" / "dotted" — style ignored, we always draw solid
     }
-    apply_border(borders, &side, Border { width, color });
+    apply_border(borders, &side, Border { width, color, style });
+}
+
+fn parse_border_style_kw(token: &str) -> Option<BorderStyle> {
+    match token.trim().to_ascii_lowercase().as_str() {
+        "solid"  => Some(BorderStyle::Solid),
+        "dashed" => Some(BorderStyle::Dashed),
+        "dotted" => Some(BorderStyle::Dotted),
+        "none"   => Some(BorderStyle::None),
+        _        => None,
+    }
+}
+
+fn apply_border_style(borders: &mut Borders, side: &BorderSide, style: BorderStyle) {
+    match side {
+        BorderSide::All    => {
+            borders.top.style    = style;
+            borders.right.style  = style;
+            borders.bottom.style = style;
+            borders.left.style   = style;
+        }
+        BorderSide::Top    => { borders.top.style    = style; }
+        BorderSide::Right  => { borders.right.style  = style; }
+        BorderSide::Bottom => { borders.bottom.style = style; }
+        BorderSide::Left   => { borders.left.style   = style; }
+    }
 }
 
 fn apply_border(borders: &mut Borders, side: &BorderSide, b: Border) {

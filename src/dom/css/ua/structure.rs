@@ -16,7 +16,7 @@ pub fn apply_structure_defaults(tag: &str, s: &mut Style) {
             s.margin.top = 4;
         }
         "details" => {
-            s.borders       = Borders::uniform(Border { width: 1, color: [220, 220, 220] });
+            s.borders       = Borders::uniform(Border { width: 1, color: [220, 220, 220], ..Default::default() });
             s.border_radius = [4, 4, 4, 4];
             s.padding       = BoxSpacing { top: 4, right: 8, bottom: 4, left: 8 };
             s.margin.top    = 4;

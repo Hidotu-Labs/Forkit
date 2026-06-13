@@ -117,6 +117,15 @@
     .b-left   { border-left: 3px solid #6600cc; padding-left: 6px; }
     .b-pill   { border: 1px solid #0f3460; border-radius: 999px; padding: 4px 14px; display: inline-block; }
 
+    /* dashed / dotted */
+    .b-dashed         { border: 2px dashed #e94560; padding: 8px; border-radius: 4px; }
+    .b-dotted         { border: 3px dotted #009944; padding: 8px; border-radius: 4px; }
+    .b-dashed-thick   { border: 4px dashed #0f3460; padding: 8px; }
+    .b-dotted-thick   { border: 4px dotted #ff9900; padding: 8px; }
+    .b-mixed-sides    { border-top: 3px dashed #e94560; border-bottom: 3px dotted #009944; border-left: 2px solid #0f3460; padding: 8px; }
+    .b-style-override { border: 3px solid #7c3aed; border-style: dashed; padding: 8px; }
+    .b-side-style     { border: 2px solid #ccc; border-left-style: dotted; border-right-style: dashed; padding: 8px; }
+
     /* ── Sizing ── */
     .w-200   { width: 200px; background-color: #dbeafe; padding: 4px; }
     .w-pct   { width: 60%; background-color: #fef3c7; padding: 4px; }
@@ -182,6 +191,46 @@
 
     /* General sibling ~ */
     .gs-trigger ~ .gs-target { color: #059669; font-weight: bold; }
+
+    /* ── :root & CSS custom properties ── */
+    :root {
+      --brand-primary:   #0f3460;
+      --brand-accent:    #e94560;
+      --brand-green:     #009944;
+      --brand-orange:    #ff9900;
+      --brand-purple:    #7c3aed;
+      --spacing-sm:      6px;
+      --spacing-md:      12px;
+      --spacing-lg:      20px;
+      --radius-sm:       4px;
+      --radius-md:       8px;
+      --font-size-sm:    12px;
+      --font-size-base:  15px;
+      --font-size-lg:    18px;
+    }
+
+    /* Elements styled purely via var() */
+    .var-primary   { color: var(--brand-primary); }
+    .var-accent    { color: var(--brand-accent); }
+    .var-green     { color: var(--brand-green); }
+    .var-orange    { color: var(--brand-orange); }
+    .var-purple    { color: var(--brand-purple); }
+
+    .var-bg-primary  { background-color: var(--brand-primary); color: #fff; padding: var(--spacing-md); border-radius: var(--radius-md); }
+    .var-bg-accent   { background-color: var(--brand-accent);  color: #fff; padding: var(--spacing-md); border-radius: var(--radius-md); }
+    .var-bg-green    { background-color: var(--brand-green);   color: #fff; padding: var(--spacing-sm); border-radius: var(--radius-sm); }
+
+    .var-font-sm   { font-size: var(--font-size-sm); }
+    .var-font-base { font-size: var(--font-size-base); }
+    .var-font-lg   { font-size: var(--font-size-lg); }
+
+    /* Fallback: var(--undefined, fallback-value) */
+    .var-fallback-color  { color: var(--no-such-var, #dc2626); }
+    .var-fallback-bg     { background-color: var(--missing-bg, #fef9c3); padding: var(--spacing-sm); border-radius: var(--radius-sm); }
+
+    /* :root specificity — :root has higher specificity than html tag alone */
+    html  { background-color: #f4f6f9; }  /* should lose to :root below */
+    :root { background-color: #f4f6f9; }  /* confirms :root matches html element */
   </style>
 </head>
 <body>
@@ -436,6 +485,51 @@
   <div class="test ok">
     <div class="test-label">border-top-left-radius + border-bottom-right-radius</div>
     <div class="test-result" style="border:1px solid #ccc; border-top-left-radius:20px; border-bottom-right-radius:20px; padding:8px;">asymmetric corners</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border-style: dashed — 2px red dashed all sides</div>
+    <div class="test-result b-dashed">border: 2px dashed #e94560</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border-style: dotted — 3px green dotted all sides</div>
+    <div class="test-result b-dotted">border: 3px dotted #009944</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">dashed thick — 4px navy dashed</div>
+    <div class="test-result b-dashed-thick">border: 4px dashed #0f3460</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">dotted thick — 4px orange dotted</div>
+    <div class="test-result b-dotted-thick">border: 4px dotted #ff9900</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">mixed sides — top:dashed red / bottom:dotted green / left:solid navy</div>
+    <div class="test-result b-mixed-sides">three different border styles on different sides</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">border-style override — set solid shorthand then border-style: dashed</div>
+    <div class="test-result b-style-override">should render as 3px dashed purple</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">per-side border-style — left: dotted, right: dashed, top/bottom: solid grey</div>
+    <div class="test-result b-side-style">left=dotted · right=dashed · top/bottom=solid</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">inline dashed — border: 2px dashed #7c3aed in style=""</div>
+    <div class="test-result" style="border: 2px dashed #7c3aed; padding: 8px;">inline dashed purple</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">inline dotted — border: 2px dotted #e94560 in style=""</div>
+    <div class="test-result" style="border: 2px dotted #e94560; padding: 8px;">inline dotted red</div>
   </div>
 
 </div>
@@ -1022,6 +1116,74 @@
       and a newline
       leading     spaces
     </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>19. :root &amp; CSS Custom Properties (var())</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">:root selector — sets --brand-primary (#0f3460). Used via var() below.</div>
+    <div class="test-result var-primary">This text uses var(--brand-primary) → navy</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">var(--brand-accent) → color: #e94560 (red)</div>
+    <div class="test-result var-accent">var(--brand-accent) text</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">var(--brand-green) / var(--brand-orange) / var(--brand-purple)</div>
+    <div class="test-result">
+      <span class="var-green">green</span>
+      &nbsp;&nbsp;
+      <span class="var-orange">orange</span>
+      &nbsp;&nbsp;
+      <span class="var-purple">purple</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">var() in background-color + padding + border-radius</div>
+    <div class="test-result">
+      <div class="var-bg-primary" style="margin-bottom:6px;">var(--brand-primary) bg · var(--spacing-md) padding · var(--radius-md) radius</div>
+      <div class="var-bg-accent"  style="margin-bottom:6px;">var(--brand-accent) bg</div>
+      <div class="var-bg-green">var(--brand-green) bg · var(--spacing-sm) padding · var(--radius-sm) radius</div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">var() for font-size — sm (12px) / base (15px) / lg (18px)</div>
+    <div class="test-result">
+      <span class="var-font-sm">small (12px via --font-size-sm)</span>
+      &nbsp;&nbsp;
+      <span class="var-font-base">base (15px via --font-size-base)</span>
+      &nbsp;&nbsp;
+      <span class="var-font-lg">large (18px via --font-size-lg)</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">var(--undefined, fallback) — undefined var falls back to explicit value</div>
+    <div class="test-result">
+      <span class="var-fallback-color">color fallback: should be red (#dc2626)</span>
+      <br>
+      <span class="var-fallback-bg">background fallback: should be light yellow (#fef9c3)</span>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:root specificity — :root (0,1,0) beats html tag (0,0,1)</div>
+    <div class="test-result" style="padding:4px; background-color:#e0f2fe;">
+      The page background is set by both <code>html</code> and <code>:root</code> — :root wins due to higher specificity (pseudo-class adds to class count).
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">var() in inline style — direct var() reference in style="" attribute</div>
+    <div class="test-result" style="color: var(--brand-purple); font-size: var(--font-size-lg);">Inline style using var(--brand-purple) and var(--font-size-lg)</div>
   </div>
 
 </div>

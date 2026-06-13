@@ -4,7 +4,7 @@ pub fn apply_form_defaults(tag: &str, el: &mut Element) {
     let s = &mut el.style;
     match tag {
         "fieldset" => {
-            s.borders       = Borders::uniform(Border { width: 1, color: [200, 200, 200] });
+            s.borders       = Borders::uniform(Border { width: 1, color: [200, 200, 200], ..Default::default() });
             s.border_radius = [4, 4, 4, 4];
             s.padding       = BoxSpacing { top: 8, right: 12, bottom: 8, left: 12 };
             s.margin.top    = 8;
@@ -25,7 +25,7 @@ pub fn apply_form_defaults(tag: &str, el: &mut Element) {
                 s.display = Display::Hidden;
             } else {
                 s.border_radius = [4, 4, 4, 4];
-                s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180] });
+                s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180], ..Default::default() });
 
                 let is_button = input_type == "button" || input_type == "submit" || input_type == "reset";
 
@@ -55,14 +55,14 @@ pub fn apply_form_defaults(tag: &str, el: &mut Element) {
         }
         "select" => {
             s.bg_color      = Some([255, 255, 255]);
-            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180] });
+            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180], ..Default::default() });
             s.border_radius = [4, 4, 4, 4];
             s.padding       = BoxSpacing { top: 4, right: 8, bottom: 4, left: 8 };
             s.size.width    = Some(200);
         }
         "button" => {
             s.bg_color      = Some([240, 240, 240]);
-            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180] });
+            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180], ..Default::default() });
             s.border_radius = [4, 4, 4, 4];
             s.padding       = BoxSpacing { top: 6, right: 14, bottom: 6, left: 14 };
         }
@@ -75,7 +75,7 @@ pub fn apply_form_defaults(tag: &str, el: &mut Element) {
             s.size.width    = Some(200);
             s.size.height   = Some(16);
             s.bg_color      = Some([220, 220, 220]);
-            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180] });
+            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180], ..Default::default() });
             s.border_radius = [8, 8, 8, 8];
         }
         "data" => {

@@ -1,6 +1,6 @@
 mod color;
 mod length;
-mod inline;
+pub(crate) mod inline;
 mod ua;
 mod stylesheet;
 pub mod cascade;

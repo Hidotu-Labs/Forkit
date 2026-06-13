@@ -35,7 +35,7 @@ pub fn apply_text_defaults(tag: &str, s: &mut Style) {
             s.bg_color      = Some([240, 240, 240]);
             s.font_family   = FontFamilyHint::Monospace;
             s.font_size     = (s.font_size as f32 * 0.9) as u16;
-            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180] });
+            s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180], ..Default::default() });
             s.border_radius = [3, 3, 3, 3];
             s.padding       = BoxSpacing { top: 1, right: 5, bottom: 1, left: 5 };
         }
@@ -43,7 +43,7 @@ pub fn apply_text_defaults(tag: &str, s: &mut Style) {
             s.white_space_pre = true;
             s.font_family     = FontFamilyHint::Monospace;
             s.bg_color        = Some([248, 248, 248]);
-            s.borders         = Borders::uniform(Border { width: 1, color: [220, 220, 220] });
+            s.borders         = Borders::uniform(Border { width: 1, color: [220, 220, 220], ..Default::default() });
             s.border_radius   = [4, 4, 4, 4];
             s.padding         = BoxSpacing { top: 12, right: 12, bottom: 12, left: 12 };
             s.margin.top      = 8;
@@ -53,7 +53,7 @@ pub fn apply_text_defaults(tag: &str, s: &mut Style) {
         "blockquote" => {
             s.margin       = BoxSpacing { top: 8, right: 16, bottom: 8, left: 24 };
             s.color        = [80, 80, 80];
-            s.borders.left = Border { width: 4, color: [180, 180, 180] };
+            s.borders.left = Border { width: 4, color: [180, 180, 180], ..Default::default() };
             s.padding.left = 16;
         }
 

@@ -91,8 +91,15 @@ pub fn apply_cascade(root: &mut Node, sheets: &[StyleSheet]) {
 /// pseudo-class matching (`:hover`, `:focus`, `:checked`, etc.).
 pub fn apply_cascade_with_state(root: &mut Node, sheets: &[StyleSheet], state: &PseudoState) {
     reset_styles(root);
+
+    // ── Collect CSS custom properties from :root ──────────────────────────
+    // Any declaration whose property name starts with `--` on the :root
+    // element is a custom property.  We gather them here so `var()` can be
+    // resolved for every element in the tree.
+    let css_vars = collect_root_vars(root, sheets);
+
     let parent_style = Style::default();
-    cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None);
+    cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None, &css_vars);
 }
 
 /// Walk the DOM and reset every element's `style` field to UA defaults +
@@ -120,6 +127,107 @@ fn reset_styles(node: &mut Node) {
     }
 }
 
+/// Collect all CSS custom properties (`--name: value`) declared on the
+/// `:root` element by walking every sheet.  Returns a map of
+/// `property_name → value` (without the leading `--`).
+fn collect_root_vars(root: &Node, sheets: &[StyleSheet]) -> std::collections::HashMap<String, String> {
+    let mut vars = std::collections::HashMap::new();
+
+    // We need the root element to test :root matching (ancestors = []).
+    let root_el = match root {
+        Node::Element(el) => el,
+        _ => return vars,
+    };
+
+    for sheet in sheets {
+        for rule in &sheet.rules {
+            let matches_root = rule.selectors.iter().any(|sel| {
+                matches_full(root_el, sel, &[], &PseudoState::none(), None)
+            });
+            if matches_root {
+                for (prop, val) in &rule.declarations {
+                    if prop.starts_with("--") {
+                        // Store without the `--` prefix for easy lookup.
+                        vars.insert(prop.clone(), val.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    vars
+}
+
+/// Resolve all `var(--name)` and `var(--name, fallback)` references in `val`
+/// using the provided custom-property map.
+fn resolve_vars(val: &str, vars: &std::collections::HashMap<String, String>) -> String {
+    if !val.contains("var(") {
+        return val.to_owned();
+    }
+
+    let mut result = String::new();
+    let chars: Vec<char> = val.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // Look for "var("
+        if i + 4 <= len && chars[i..i+4].iter().collect::<String>().eq_ignore_ascii_case("var(") {
+            i += 4; // skip "var("
+            // Collect the argument, tracking nested parens
+            let mut depth = 1usize;
+            let mut arg = String::new();
+            while i < len && depth > 0 {
+                match chars[i] {
+                    '(' => { depth += 1; arg.push(chars[i]); }
+                    ')' => {
+                        depth -= 1;
+                        if depth > 0 { arg.push(chars[i]); }
+                    }
+                    c => { arg.push(c); }
+                }
+                i += 1;
+            }
+            // arg is now the content inside var(…)
+            // Split on first comma to get name and optional fallback
+            let (name_part, fallback_part) = if let Some(comma) = find_comma_outside_parens(&arg) {
+                (&arg[..comma], Some(arg[comma+1..].trim().to_owned()))
+            } else {
+                (arg.as_str(), None)
+            };
+            let name = name_part.trim();
+            if let Some(resolved) = vars.get(name) {
+                // Recursively resolve in case the value itself uses vars
+                let resolved = resolve_vars(resolved.trim(), vars);
+                result.push_str(&resolved);
+            } else if let Some(fallback) = fallback_part {
+                let fallback = resolve_vars(&fallback, vars);
+                result.push_str(&fallback);
+            }
+            // If neither found and no fallback, nothing is emitted (property will be ignored)
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Find the position of the first comma that is not nested inside parentheses.
+fn find_comma_outside_parens(s: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn cascade_node_inner(
     node:             &mut Node,
     sheets:           &[StyleSheet],
@@ -128,6 +236,7 @@ fn cascade_node_inner(
     inherited_opacity: f32,
     state:            &PseudoState,
     sib:              Option<&SiblingCtx<'_>>,
+    css_vars:         &std::collections::HashMap<String, String>,
 ) {
     match node {
         Node::Text(t) => {
@@ -159,7 +268,14 @@ fn cascade_node_inner(
             let base_font = el.style.font_size;
             for (_, _, _, decls) in &matched {
                 for (prop, val) in *decls {
-                    let val = val.trim();
+                    // Skip custom property declarations (--name) — they are
+                    // consumed by collect_root_vars, not applied to Style.
+                    if prop.starts_with("--") {
+                        continue;
+                    }
+                    // Resolve any var() references before applying.
+                    let resolved_val = resolve_vars(val.trim(), css_vars);
+                    let val = resolved_val.trim();
                     let prop_lc = prop.to_ascii_lowercase();
                     if val.eq_ignore_ascii_case("inherit") {
                         apply_inherit_keyword(&prop_lc, &mut el.style, parent_style);
@@ -173,7 +289,11 @@ fn cascade_node_inner(
 
             // ── 4. Inline style overrides everything ──────────────────────
             if !el.style_attr.is_empty() {
-                let inline_attr = el.style_attr.clone();
+                let inline_attr = if el.style_attr.contains("var(") {
+                    resolve_vars(&el.style_attr, css_vars)
+                } else {
+                    el.style_attr.clone()
+                };
                 super::inline::apply_inline(&inline_attr, &mut el.style);
             }
 
@@ -215,6 +335,7 @@ fn cascade_node_inner(
                     effective_opacity,
                     state,
                     Some(&sibling_ctx),
+                    css_vars,
                 );
             }
         }
@@ -412,6 +533,11 @@ fn matches_pseudo(
             el.children.iter().all(|c| {
                 matches!(c, Node::Text(t) if t.text.trim().is_empty())
             })
+        }
+
+        PseudoClass::Root => {
+            // :root matches the document root — the element with no ancestors.
+            ancestors.is_empty()
         }
 
         // ── Structural pseudo-classes — require sibling context ───────────

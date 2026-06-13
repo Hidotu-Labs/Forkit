@@ -1,4 +1,4 @@
-/// Read-only DOM view exposed to the JS engine.
+/// DOM view exposed to the JS engine — supports both read and write operations.
 ///
 /// Wraps the parsed `Node` tree and provides the subset of DOM read APIs
 /// that scripts commonly use:
@@ -9,17 +9,59 @@
 ///   document.querySelector("tag" | "#id" | ".class")   — simple selectors only
 ///   document.querySelectorAll(...)                       — returns array-like
 ///   document.title
+///   document.createElement("tag")
 ///
-/// On any matched element the following properties/methods are available:
+/// On any matched element the following read properties/methods are available:
 ///   .id  .className  .tagName  .textContent  .innerHTML  .innerText
 ///   .getAttribute("name")
 ///   .children  (array-like: .length, [0], [1], …)
+///
+/// Write support (mutations collected and applied after JS runs):
+///   el.textContent = "..."
+///   el.innerHTML   = "..."
+///   el.setAttribute("name", "value")
+///   el.removeAttribute("name")
+///   el.style.color = "red"  (and other CSS properties)
+///   el.className   = "..."
+///   el.id          = "..."
+///   el.appendChild(child)
+///   el.remove()
 
-use crate::dom::node::{Node, Element};
+use std::cell::RefCell;
+use crate::dom::node::{Node, Element, TextNode, Style};
 use crate::dom::parser::get_attr;
 
 // ---------------------------------------------------------------------------
-// A "live" element handle — a snapshot of one DOM element
+// Pending DOM write operations
+// ---------------------------------------------------------------------------
+
+/// A pending mutation produced during JS execution.
+/// `path` is the sequence of child-indices from the document root to the target element.
+#[derive(Debug, Clone)]
+pub enum DomMutation {
+    /// Set `textContent` — replaces all children with a single text node.
+    SetTextContent { path: Vec<usize>, value: String },
+    /// Set `innerHTML` — replaces all children with parsed HTML fragment nodes.
+    SetInnerHtml    { path: Vec<usize>, value: String },
+    /// Set or update a named attribute.
+    SetAttribute    { path: Vec<usize>, name: String, value: String },
+    /// Remove a named attribute.
+    RemoveAttribute { path: Vec<usize>, name: String },
+    /// Set `el.className`.
+    SetClassName    { path: Vec<usize>, value: String },
+    /// Set `el.id`.
+    SetId           { path: Vec<usize>, value: String },
+    /// Apply one CSS property via `el.style.prop = value`.
+    SetStyleProp    { path: Vec<usize>, prop: String, value: String },
+    /// Append a newly-created element as the last child.
+    AppendChild     { path: Vec<usize>, child_tag: String, child_text: String },
+    /// Remove the element from its parent.
+    Remove          { path: Vec<usize> },
+}
+
+// ---------------------------------------------------------------------------
+// A "live" element handle — a snapshot of one DOM element, extended with a
+// node path so that write operations can locate it back in the tree.
 // ---------------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct JsElement {
@@ -33,10 +75,22 @@ pub struct JsElement {
     pub inner_html:   String,
     /// Direct child element snapshots.
     pub children:     Vec<JsElement>,
+    /// Path of child-indices from the document root to this element.
+    /// Used to apply write mutations back to the live tree.
+    pub path: Vec<usize>,
 }
 
 impl JsElement {
-    fn from_element(el: &Element) -> Self {
+    fn from_element(el: &Element, path: Vec<usize>) -> Self {
+        let children: Vec<JsElement> = el.children.iter().enumerate().filter_map(|(i, n)| {
+            if let Node::Element(c) = n {
+                let mut child_path = path.clone();
+                child_path.push(i);
+                Some(JsElement::from_element(c, child_path))
+            } else {
+                None
+            }
+        }).collect();
         JsElement {
             tag:          el.tag.clone(),
             id:           el.id.clone(),
@@ -44,9 +98,8 @@ impl JsElement {
             attrs_raw:    el.attrs_raw.clone(),
             text_content: collect_text(&el.children),
             inner_html:   serialize_inner(&el.children),
-            children:     el.children.iter().filter_map(|n| {
-                if let Node::Element(c) = n { Some(JsElement::from_element(c)) } else { None }
-            }).collect(),
+            children,
+            path,
         }
     }
 
@@ -65,22 +118,35 @@ impl JsElement {
 // DOM context passed into the interpreter
 // ---------------------------------------------------------------------------
 pub struct JsDom<'a> {
-    root:  &'a Node,
-    pub title: String,
+    root:       &'a Node,
+    pub title:  String,
+    /// Pending mutations collected during JS execution.
+    /// Applied to the live DOM after all scripts finish via `take_mutations()`.
+    pub mutations: RefCell<Vec<DomMutation>>,
 }
 
 impl<'a> JsDom<'a> {
     pub fn new(root: &'a Node) -> Self {
-        JsDom { root, title: String::new() }
+        JsDom { root, title: String::new(), mutations: RefCell::new(Vec::new()) }
     }
 
     pub fn with_title(root: &'a Node, title: String) -> Self {
-        JsDom { root, title }
+        JsDom { root, title, mutations: RefCell::new(Vec::new()) }
+    }
+
+    /// Consume and return all pending mutations.
+    pub fn take_mutations(&self) -> Vec<DomMutation> {
+        self.mutations.borrow_mut().drain(..).collect()
+    }
+
+    /// Queue a write mutation.
+    pub fn push_mutation(&self, m: DomMutation) {
+        self.mutations.borrow_mut().push(m);
     }
 
     /// document.getElementById(id)  — returns first match or None
     pub fn get_element_by_id(&self, id: &str) -> Option<JsElement> {
-        find_first(self.root, &|el| el.id == id)
+        find_first(self.root, &|el| el.id == id, &[])
     }
 
     /// document.getElementsByTagName(tag)  — returns all matches
@@ -88,7 +154,7 @@ impl<'a> JsDom<'a> {
         let t = tag.to_ascii_lowercase();
         find_all(self.root, &|el| {
             t == "*" || el.tag.to_ascii_lowercase() == t
-        })
+        }, &[])
     }
 
     /// document.getElementsByClassName(cls)  — space-separated classes, all must match
@@ -97,7 +163,7 @@ impl<'a> JsDom<'a> {
         find_all(self.root, &|el| {
             let classes: Vec<&str> = el.class_name.split_ascii_whitespace().collect();
             required.iter().all(|r| classes.iter().any(|c| c.eq_ignore_ascii_case(r)))
-        })
+        }, &[])
     }
 
     /// document.querySelector — supports: tag, #id, .class, tag.class, tag#id
@@ -105,14 +171,30 @@ impl<'a> JsDom<'a> {
     pub fn query_selector(&self, sel: &str) -> Option<JsElement> {
         let sel = sel.trim();
         let pred = build_predicate(sel);
-        find_first(self.root, &pred)
+        find_first(self.root, &pred, &[])
     }
 
     /// document.querySelectorAll — same selector, all matches
     pub fn query_selector_all(&self, sel: &str) -> Vec<JsElement> {
         let sel = sel.trim();
         let pred = build_predicate(sel);
-        find_all(self.root, &pred)
+        find_all(self.root, &pred, &[])
+    }
+
+    /// document.createElement("tag") — creates a detached element snapshot
+    /// that can be appended via el.appendChild(child).
+    pub fn create_element(&self, tag: &str) -> JsElement {
+        JsElement {
+            tag:          tag.to_ascii_lowercase(),
+            id:           String::new(),
+            class_name:   String::new(),
+            attrs_raw:    String::new(),
+            text_content: String::new(),
+            inner_html:   String::new(),
+            children:     Vec::new(),
+            // Detached — path is empty; will be ignored in encoding
+            path:         vec![],
+        }
     }
 
     /// document.title — from the pre-extracted page title
@@ -121,10 +203,226 @@ impl<'a> JsDom<'a> {
             return self.title.clone();
         }
         // fallback: walk the DOM (works if <title> isn't in SKIP_TAGS)
-        find_first(self.root, &|el| el.tag == "title")
+        find_first(self.root, &|el| el.tag == "title", &[])
             .map(|e| e.text_content)
             .unwrap_or_default()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Mutation application — walks the mutable DOM tree by path and applies writes
+// ---------------------------------------------------------------------------
+
+/// Apply a list of `DomMutation`s to the live DOM tree.
+/// Call this after all JS scripts have finished executing.
+pub fn apply_mutations(root: &mut Node, mutations: Vec<DomMutation>) {
+    for mutation in mutations {
+        apply_one(root, mutation);
+    }
+}
+
+fn apply_one(root: &mut Node, mutation: DomMutation) {
+    match mutation {
+        DomMutation::SetTextContent { path, value } => {
+            if path.is_empty() { return; } // detached element — no-op
+            if let Some(el) = navigate_mut(root, &path) {
+                el.children.clear();
+                if !value.is_empty() {
+                    el.children.push(Node::Text(TextNode {
+                        text:  value,
+                        style: Style::default(),
+                    }));
+                }
+            }
+        }
+        DomMutation::SetInnerHtml { path, value } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                // Parse a simple HTML fragment and replace children.
+                el.children = parse_html_fragment(&value, &el.style);
+            }
+        }
+        DomMutation::SetAttribute { path, name, value } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                match name.to_ascii_lowercase().as_str() {
+                    "id"    => { el.id = value; }
+                    "class" => { el.class_name = value; }
+                    "style" => {
+                        el.style_attr = value.clone();
+                        crate::dom::css::inline::apply_inline(&value, &mut el.style);
+                    }
+                    other   => {
+                        set_attr_raw(&mut el.attrs_raw, other, &value);
+                    }
+                }
+            }
+        }
+        DomMutation::RemoveAttribute { path, name } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                match name.to_ascii_lowercase().as_str() {
+                    "id"    => { el.id.clear(); }
+                    "class" => { el.class_name.clear(); }
+                    "style" => { el.style_attr.clear(); }
+                    other   => { remove_attr_raw(&mut el.attrs_raw, other); }
+                }
+            }
+        }
+        DomMutation::SetClassName { path, value } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                el.class_name = value;
+            }
+        }
+        DomMutation::SetId { path, value } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                el.id = value;
+            }
+        }
+        DomMutation::SetStyleProp { path, prop, value } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                let base = el.style.font_size;
+                crate::dom::css::inline::apply_property(&prop, &value, base, &mut el.style);
+                // Also update style_attr so the cascade picks it up on reset
+                update_style_attr(&mut el.style_attr, &prop, &value);
+            }
+        }
+        DomMutation::AppendChild { path, child_tag, child_text } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                let mut child_el = Element {
+                    tag:        child_tag.clone(),
+                    id:         String::new(),
+                    class_name: String::new(),
+                    style_attr: String::new(),
+                    attrs_raw:  String::new(),
+                    style:      Style::default(),
+                    children:   Vec::new(),
+                };
+                crate::dom::css::apply_tag_defaults(&mut child_el);
+                if !child_text.is_empty() {
+                    child_el.children.push(Node::Text(TextNode {
+                        text:  child_text,
+                        style: Style::default(),
+                    }));
+                }
+                el.children.push(Node::Element(child_el));
+            }
+        }
+        DomMutation::Remove { path } => {
+            if path.is_empty() { return; }
+            let parent_path = &path[..path.len() - 1];
+            let child_idx   = path[path.len() - 1];
+            if let Some(parent) = navigate_mut(root, parent_path) {
+                if child_idx < parent.children.len() {
+                    parent.children.remove(child_idx);
+                }
+            }
+        }
+    }
+}
+
+/// Walk the DOM tree following `path` (each value is a child index) and
+/// return a mutable reference to the target `Element`, or `None` if the
+/// path is invalid.
+fn navigate_mut<'a>(node: &'a mut Node, path: &[usize]) -> Option<&'a mut Element> {
+    match node {
+        Node::Text(_) => None,
+        Node::Element(el) => {
+            if path.is_empty() {
+                return Some(el);
+            }
+            let idx = path[0];
+            if idx < el.children.len() {
+                navigate_mut(&mut el.children[idx], &path[1..])
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Set or update a key="value" pair inside a raw attrs string.
+fn set_attr_raw(attrs_raw: &mut String, name: &str, value: &str) {
+    // Remove old occurrence first, then append.
+    remove_attr_raw(attrs_raw, name);
+    if !attrs_raw.is_empty() { attrs_raw.push(' '); }
+    attrs_raw.push_str(&format!("{}=\"{}\"", name, value.replace('"', "&quot;")));
+}
+
+/// Remove a key="value" pair from a raw attrs string.
+fn remove_attr_raw(attrs_raw: &mut String, name: &str) {
+    // Build new string without the key.
+    let mut result = String::new();
+    let mut rest = attrs_raw.as_str();
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        if rest.is_empty() { break; }
+        // Find the attribute name (up to `=` or whitespace).
+        let key_end = rest.find(|c: char| c == '=' || c.is_ascii_whitespace())
+            .unwrap_or(rest.len());
+        let key = &rest[..key_end];
+        rest = &rest[key_end..];
+        // Skip `=` and optional value.
+        let value_part;
+        if rest.starts_with('=') {
+            rest = &rest[1..]; // skip '='
+            if rest.starts_with('"') {
+                // Quoted value.
+                let end = rest[1..].find('"').map(|p| p + 2).unwrap_or(rest.len());
+                value_part = &rest[..end];
+                rest = &rest[end..];
+            } else if rest.starts_with('\'') {
+                let end = rest[1..].find('\'').map(|p| p + 2).unwrap_or(rest.len());
+                value_part = &rest[..end];
+                rest = &rest[end..];
+            } else {
+                let end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
+                value_part = &rest[..end];
+                rest = &rest[end..];
+            }
+        } else {
+            value_part = "";
+        }
+        // Only keep this attr if its key doesn't match.
+        if !key.eq_ignore_ascii_case(name) {
+            if !result.is_empty() { result.push(' '); }
+            result.push_str(key);
+            if !value_part.is_empty() {
+                result.push('=');
+                result.push_str(value_part);
+            }
+        }
+    }
+    *attrs_raw = result;
+}
+
+/// Update or append a CSS property in a `style_attr` string.
+fn update_style_attr(style_attr: &mut String, prop: &str, value: &str) {
+    // Strip existing `prop: ...;` then append.
+    let lower_prop = prop.to_ascii_lowercase();
+    let mut result = String::new();
+    for part in style_attr.split(';') {
+        let part = part.trim();
+        if part.is_empty() { continue; }
+        if let Some(colon) = part.find(':') {
+            let p = part[..colon].trim().to_ascii_lowercase();
+            if p == lower_prop { continue; } // skip old value
+        }
+        result.push_str(part);
+        result.push(';');
+    }
+    result.push_str(&format!("{}:{};", lower_prop, value));
+    *style_attr = result;
+}
+
+/// Parse a very simple HTML fragment into a list of `Node`s.
+/// Supports plain text and `<tag>text</tag>` elements (one level deep).
+fn parse_html_fragment(html: &str, _parent_style: &Style) -> Vec<Node> {
+    crate::dom::parser::parse_fragment(html)
 }
 
 // ---------------------------------------------------------------------------
@@ -174,27 +472,31 @@ fn build_predicate(sel: &str) -> Box<dyn Fn(&Element) -> bool> {
 // ---------------------------------------------------------------------------
 // Tree walkers
 // ---------------------------------------------------------------------------
-fn find_first(node: &Node, pred: &dyn Fn(&Element) -> bool) -> Option<JsElement> {
+fn find_first(node: &Node, pred: &dyn Fn(&Element) -> bool, path: &[usize]) -> Option<JsElement> {
     if let Node::Element(el) = node {
-        if pred(el) { return Some(JsElement::from_element(el)); }
-        for child in &el.children {
-            if let Some(found) = find_first(child, pred) { return Some(found); }
+        if pred(el) { return Some(JsElement::from_element(el, path.to_vec())); }
+        for (i, child) in el.children.iter().enumerate() {
+            let mut child_path = path.to_vec();
+            child_path.push(i);
+            if let Some(found) = find_first(child, pred, &child_path) { return Some(found); }
         }
     }
     None
 }
 
-fn find_all(node: &Node, pred: &dyn Fn(&Element) -> bool) -> Vec<JsElement> {
+fn find_all(node: &Node, pred: &dyn Fn(&Element) -> bool, path: &[usize]) -> Vec<JsElement> {
     let mut out = Vec::new();
-    collect_all(node, pred, &mut out);
+    collect_all(node, pred, path, &mut out);
     out
 }
 
-fn collect_all(node: &Node, pred: &dyn Fn(&Element) -> bool, out: &mut Vec<JsElement>) {
+fn collect_all(node: &Node, pred: &dyn Fn(&Element) -> bool, path: &[usize], out: &mut Vec<JsElement>) {
     if let Node::Element(el) = node {
-        if pred(el) { out.push(JsElement::from_element(el)); }
-        for child in &el.children {
-            collect_all(child, pred, out);
+        if pred(el) { out.push(JsElement::from_element(el, path.to_vec())); }
+        for (i, child) in el.children.iter().enumerate() {
+            let mut child_path = path.to_vec();
+            child_path.push(i);
+            collect_all(child, pred, &child_path, out);
         }
     }
 }

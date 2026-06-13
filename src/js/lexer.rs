@@ -35,6 +35,9 @@ pub enum Token {
     AmpAmp,    // &&
     PipePipe,  // ||
     Bang,      // !
+    // Increment / decrement
+    PlusPlus,  // ++
+    MinusMinus,// --
     // Compound assignment
     PlusEq,    // +=
     MinusEq,   // -=
@@ -214,12 +217,12 @@ impl Lexer {
             }
             '+' => {
                 if self.peek() == Some('=') { self.bump(); Token::PlusEq }
-                else if self.peek() == Some('+') { self.bump(); Token::Plus } // ++
+                else if self.peek() == Some('+') { self.bump(); Token::PlusPlus }
                 else { Token::Plus }
             }
             '-' => {
                 if self.peek() == Some('=') { self.bump(); Token::MinusEq }
-                else if self.peek() == Some('-') { self.bump(); Token::Minus } // --
+                else if self.peek() == Some('-') { self.bump(); Token::MinusMinus }
                 else { Token::Minus }
             }
             '*' => {

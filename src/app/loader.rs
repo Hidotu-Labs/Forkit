@@ -18,7 +18,7 @@ pub struct PageMeta {
 pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<ConsoleEntry>)> {
     let (final_url, html) = fetch_html(source)?;
     let (title, favicon_url) = extract_page_meta(&html, &final_url);
-    let (dom, sheets) = parse_with_sheets(&html, &final_url);
+    let (mut dom, sheets) = parse_with_sheets(&html, &final_url);
     let meta = PageMeta { title, favicon_url };
 
     let mut console_entries: Vec<ConsoleEntry> = Vec::new();
@@ -27,6 +27,15 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>
         for entry in js::execute_with_dom(&src, &js_dom) {
             console_entries.push(entry);
         }
+    }
+    // Apply any DOM mutations queued by JS scripts, then re-run the cascade
+    // so that class/style changes take effect in the computed style.
+    let mutations = js_dom.take_mutations();
+    if !mutations.is_empty() {
+        js::apply_mutations(&mut dom, mutations);
+        // Re-apply the cascade so that JS-mutated class names and inline styles
+        // are reflected in each element's computed `style` field before rendering.
+        crate::dom::css::apply_cascade(&mut dom, &sheets);
     }
 
     Some((final_url, dom, meta, sheets, console_entries))

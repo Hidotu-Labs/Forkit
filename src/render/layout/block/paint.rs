@@ -3,7 +3,7 @@ use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
 use sdl2::image::ImageRWops;
 
-use crate::dom::node::{Style, ListStyleType, BgSize, BgRepeat, Border};
+use crate::dom::node::{Style, ListStyleType, BgSize, BgRepeat, Border, BorderStyle};
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::layout::paint::{
@@ -441,8 +441,80 @@ fn draw_block_border_segment(
     alpha:  u8,
     rx: i32, ry: i32, rw: i32, rh: i32
 ) {
-    if brd.width > 0 {
-        fill_rect_alpha(canvas, rgba_color(brd.color, 255), alpha,
-                        rx, ry, rw, rh, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+    if brd.width == 0 { return; }
+
+    let color = rgba_color(brd.color, 255);
+    let scroll_y   = ls.ctx.scroll_y;
+    let viewport_h = ls.ctx.viewport_height;
+
+    match brd.style {
+        BorderStyle::None => {}
+
+        BorderStyle::Solid => {
+            fill_rect_alpha(canvas, color, alpha,
+                            rx, ry, rw, rh,
+                            ls.rounding_clip.as_ref(), scroll_y, viewport_h);
+        }
+
+        BorderStyle::Dashed => {
+            // CSS spec / browser behaviour: dash ≈ 3× border-width, gap ≈ 1× border-width.
+            let w = brd.width as i32;
+            let dash_len = (w * 3).max(4);
+            let gap_len  = w.max(2);
+            let step     = dash_len + gap_len;
+            let is_horizontal = rw >= rh;
+            if is_horizontal {
+                let mut x = rx;
+                while x < rx + rw {
+                    let end = (x + dash_len).min(rx + rw);
+                    fill_rect_alpha(canvas, color, alpha,
+                                    x, ry, end - x, rh,
+                                    ls.rounding_clip.as_ref(), scroll_y, viewport_h);
+                    x += step;
+                }
+            } else {
+                let mut y = ry;
+                while y < ry + rh {
+                    let end = (y + dash_len).min(ry + rh);
+                    fill_rect_alpha(canvas, color, alpha,
+                                    rx, y, rw, end - y,
+                                    ls.rounding_clip.as_ref(), scroll_y, viewport_h);
+                    y += step;
+                }
+            }
+        }
+
+        BorderStyle::Dotted => {
+            // CSS spec: dots are circles with diameter = border-width, gap = border-width.
+            let w    = brd.width as i32;
+            let dot  = w.max(1);           // diameter
+            let step = (dot * 2).max(2);   // dot + equal gap
+            let r    = [dot as u16 / 2; 4]; // radius for fill_rounded_rect
+            let is_horizontal = rw >= rh;
+            if is_horizontal {
+                // Centre dot vertically within the border stripe.
+                let cy = ry + (rh - dot) / 2;
+                let mut x = rx;
+                while x < rx + rw {
+                    let end = (x + dot).min(rx + rw);
+                    let dw  = end - x;
+                    fill_rounded_rect(canvas, color, alpha,
+                                      x, cy, dw, dot, r,
+                                      scroll_y, viewport_h);
+                    x += step;
+                }
+            } else {
+                let cx = rx + (rw - dot) / 2;
+                let mut y = ry;
+                while y < ry + rh {
+                    let end = (y + dot).min(ry + rh);
+                    let dh  = end - y;
+                    fill_rounded_rect(canvas, color, alpha,
+                                      cx, y, dot, dh, r,
+                                      scroll_y, viewport_h);
+                    y += step;
+                }
+            }
+        }
     }
 }

@@ -40,11 +40,21 @@ pub enum WordBreak { #[default] Normal, BreakAll, BreakWord }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontFamilyHint { #[default] SansSerif, Monospace, Serif }
 
+/// CSS `border-style`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BorderStyle {
+    #[default] Solid,
+    Dashed,
+    Dotted,
+    None,
+}
+
 /// A simple uniform border
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Border {
     pub width: u8,
     pub color: [u8; 3],
+    pub style: BorderStyle,
 }
 
 /// Per-side borders

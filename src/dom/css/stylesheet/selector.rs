@@ -22,6 +22,8 @@ pub enum PseudoClass {
     NthLastChild(i32, i32),
     NthOfType(i32, i32),
     Empty,
+    /// `:root` — matches the document root element (`<html>`).
+    Root,
     /// `:not(<simple-selector>)`
     Not(Box<SimpleSelector>),
     /// Any pseudo-class the engine does not recognise.
@@ -201,6 +203,7 @@ pub fn parse_pseudo_class(name: &str, arg: Option<&str>) -> PseudoClass {
             let ss = parts.into_iter().next().unwrap_or(SimpleSelector::Universal);
             PseudoClass::Not(Box::new(ss))
         }
+        "root" => PseudoClass::Root,
         other => PseudoClass::Unknown(other.to_string()),
     }
 }

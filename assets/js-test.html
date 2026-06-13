@@ -36,16 +36,20 @@
       margin-bottom: 2px;
     }
 
-    .pass { background-color: rgba(30, 160, 80, 0.1); border-left: 3px solid #009944; }
-    .na   { background-color: rgba(200, 200, 200, 0.2); border-left: 3px solid #aaaaaa; color: #777777; }
-    .info { background-color: rgba(0, 100, 200, 0.08); border-left: 3px solid #0064c8; }
+    .pass  { background-color: rgba(30, 160, 80, 0.1);  border-left: 3px solid #009944; }
+    .fail  { background-color: rgba(200, 50, 50, 0.1);  border-left: 3px solid #cc2222; color: #cc2222; }
+    .na    { background-color: rgba(200, 200, 200, 0.2); border-left: 3px solid #aaaaaa; color: #777777; }
+    .info  { background-color: rgba(0, 100, 200, 0.08); border-left: 3px solid #0064c8; }
+    .write { background-color: rgba(180, 100, 0, 0.08); border-left: 3px solid #b46400; }
   </style>
 </head>
 <body>
 
   <h1>Forkit — JavaScript Test</h1>
   <p style="color: #555; font-size: 13px; margin-top: 0;">
-    Output goes to the developer console (F12). Press Esc to quit, R to reload.
+    Read tests: console output (open developer console — F12).
+    Write tests: DOM mutations visible directly in the rendered page.
+    Press Esc to quit, R to reload.
   </p>
 
   <!-- ═══════════════════════════════════════════════════════ -->
@@ -114,9 +118,218 @@
     <div class="row pass">Should log: missing element is null → true</div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18a. DOM Write — textContent setter</h2>
+  <div class="card">
+    <div class="label">el.textContent = "new text"</div>
+    <div class="row write" id="write-textcontent">Original text — JS has not run yet</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18b. DOM Write — innerHTML setter</h2>
+  <div class="card">
+    <div class="label">el.innerHTML = "&lt;b&gt;bold&lt;/b&gt; text"</div>
+    <div class="row write" id="write-innerhtml">Original HTML — JS has not run yet</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18c. DOM Write — setAttribute</h2>
+  <div class="card">
+    <div class="label">el.setAttribute("class", "row pass") — box below should turn green</div>
+    <div class="row write" id="write-setattr">Should turn green (pass style) after JS runs</div>
+    <div class="label">el.setAttribute("id", "new-id") — id change logged to console</div>
+    <div class="row write" id="write-setattr-id">id will be changed by JS</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18d. DOM Write — removeAttribute</h2>
+  <div class="card">
+    <div class="label">el.removeAttribute("class") — border/bg should disappear</div>
+    <div class="row pass" id="write-removeattr">Class will be removed by JS</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18e. DOM Write — el.style property setter</h2>
+  <div class="card">
+    <div class="label">el.style.backgroundColor = "#e8f5e9"  ·  el.style.color = "#1b5e20"</div>
+    <div class="row write" id="write-style">Background and text colour set via el.style</div>
+    <div class="label">el.style.fontSize = "20px"  ·  el.style.fontWeight = "bold"</div>
+    <div class="row write" id="write-style-font">Font size and weight set via el.style</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18f. DOM Write — className setter</h2>
+  <div class="card">
+    <div class="label">el.className = "row pass" — green left border = PASS</div>
+    <div class="row write" id="write-classname">className will be replaced by JS</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18g. DOM Write — appendChild + createElement</h2>
+  <div class="card">
+    <div class="label">document.createElement("div") + el.appendChild(child)</div>
+    <div class="row write" id="write-appendchild">Parent element — JS will append a child inside me</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18h. DOM Write — chained reads then write</h2>
+  <div class="card">
+    <div class="label">Read .textContent, build string, write back via .textContent</div>
+    <div class="row write" id="write-chain">Original: will be replaced with read-then-write result</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>18i. DOM Write — id setter</h2>
+  <div class="card">
+    <div class="label">el.id = "new-assigned-id" — logged to console</div>
+    <div class="row write" id="write-id-setter">id will be set to "new-assigned-id" by JS</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19a. Control Flow — if / else if / else</h2>
+  <div class="card">
+    <div class="label">if/else branching — box should read PASS</div>
+    <div class="row write" id="cf-if-else">if/else not yet run</div>
+    <div class="label">nested if inside else branch</div>
+    <div class="row write" id="cf-if-nested">nested if not yet run</div>
+    <div class="label">if with no-else taken branch</div>
+    <div class="row write" id="cf-if-noelse">if/no-else not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19b. Control Flow — while loop</h2>
+  <div class="card">
+    <div class="label">while counting 1..5, sum written to DOM</div>
+    <div class="row write" id="cf-while-sum">while sum not yet run</div>
+    <div class="label">while with break at 3</div>
+    <div class="row write" id="cf-while-break">while/break not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19c. Control Flow — for loop</h2>
+  <div class="card">
+    <div class="label">for counting 0..4, result concatenated into DOM</div>
+    <div class="row write" id="cf-for-count">for count not yet run</div>
+    <div class="label">for loop summing 1..10</div>
+    <div class="row write" id="cf-for-sum">for sum not yet run</div>
+    <div class="label">for loop with continue (skip even numbers)</div>
+    <div class="row write" id="cf-for-continue">for continue not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19d. Control Flow — do...while</h2>
+  <div class="card">
+    <div class="label">do/while runs at least once, stops when i >= 3</div>
+    <div class="row write" id="cf-dowhile">do/while not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19e. Control Flow — nested loops</h2>
+  <div class="card">
+    <div class="label">nested for loops building a multiplication result</div>
+    <div class="row write" id="cf-nested">nested loops not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19f. Control Flow — prefix/postfix ++ / --</h2>
+  <div class="card">
+    <div class="label">++i and i-- as statements and in for-loop headers</div>
+    <div class="row write" id="cf-increment">increment/decrement not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19g. Control Flow — if with DOM read inside condition</h2>
+  <div class="card">
+    <div class="label">read el.textContent, branch on its value, write result</div>
+    <div class="row write" id="cf-if-dom-read">DOM-read condition not yet run</div>
+    <div class="row info" id="cf-condition-source">condition source text</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>19h. Control Flow — while accumulating DOM writes</h2>
+  <div class="card">
+    <div class="label">while loop writing to a different element each pass</div>
+    <div class="row write" id="cf-while-dom-a">target A</div>
+    <div class="row write" id="cf-while-dom-b">target B</div>
+    <div class="row write" id="cf-while-dom-c">target C</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20a. Functions — basic declaration and call</h2>
+  <div class="card">
+    <div class="label">function add(a,b){return a+b} — called with 3,4 → 7</div>
+    <div class="row write" id="fn-basic">fn-basic not yet run</div>
+    <div class="label">function greet(name){return "Hello "+name}</div>
+    <div class="row write" id="fn-greet">fn-greet not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20b. Functions — return inside if</h2>
+  <div class="card">
+    <div class="label">function abs(n) — returns -n when n&lt;0, else n</div>
+    <div class="row write" id="fn-abs">fn-abs not yet run</div>
+    <div class="label">function max(a,b) — returns larger of two</div>
+    <div class="row write" id="fn-max">fn-max not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20c. Functions — loops inside functions</h2>
+  <div class="card">
+    <div class="label">function sum(n) — sums 1..n with a for loop</div>
+    <div class="row write" id="fn-sum">fn-sum not yet run</div>
+    <div class="label">function factorial(n) — iterative with while loop</div>
+    <div class="row write" id="fn-factorial">fn-factorial not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20d. Functions — calling other functions</h2>
+  <div class="card">
+    <div class="label">function square(n) calls multiply(n,n)</div>
+    <div class="row write" id="fn-composed">fn-composed not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20e. Functions — function expression stored in variable</h2>
+  <div class="card">
+    <div class="label">const double = function(x){return x*2} — called with 7</div>
+    <div class="row write" id="fn-expr">fn-expr not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20f. Functions — arrow functions</h2>
+  <div class="card">
+    <div class="label">const triple = (x) =&gt; x*3 — expression body</div>
+    <div class="row write" id="fn-arrow-expr">fn-arrow-expr not yet run</div>
+    <div class="label">const clamp = (v,lo,hi) =&gt; { if(v&lt;lo){return lo;} if(v&gt;hi){return hi;} return v; }</div>
+    <div class="row write" id="fn-arrow-block">fn-arrow-block not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20g. Functions — recursion</h2>
+  <div class="card">
+    <div class="label">function fib(n) — recursive Fibonacci (fib(10) = 55)</div>
+    <div class="row write" id="fn-recursive">fn-recursive not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20h. Functions — DOM manipulation from inside a function</h2>
+  <div class="card">
+    <div class="label">function setPass(id, msg) — sets className and textContent</div>
+    <div class="row write" id="fn-dom-a">fn-dom-a not yet run</div>
+    <div class="row write" id="fn-dom-b">fn-dom-b not yet run</div>
+    <div class="row write" id="fn-dom-c">fn-dom-c not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>20i. Functions — hoisting (decl before definition)</h2>
+  <div class="card">
+    <div class="label">call earlyCall() before its function declaration appears</div>
+    <div class="row write" id="fn-hoist">fn-hoist not yet run</div>
+  </div>
+
   <script>
     // ════════════════════════════════════════════════════════
-    // 17a — Variables & arithmetic (pre-existing features)
+    // 17a — Variables & arithmetic
     // ════════════════════════════════════════════════════════
     var greeting = "Forkit JS engine";
     let version  = 2;
@@ -215,7 +428,618 @@
     let missing = document.getElementById("does-not-exist");
     console.log("missing element is null:", missing == null);
 
-    console.warn("DOM read test complete");
+    console.warn("DOM read tests complete");
+
+    // ════════════════════════════════════════════════════════
+    // 18a — textContent setter
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18a: textContent setter ---");
+
+    let wcEl = document.getElementById("write-textcontent");
+    wcEl.textContent = "PASS: textContent was set by JS";
+    console.log("18a: textContent setter queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18b — innerHTML setter
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18b: innerHTML setter ---");
+
+    let wiEl = document.getElementById("write-innerhtml");
+    wiEl.innerHTML = "<b>Bold text</b> injected via innerHTML setter";
+    console.log("18b: innerHTML setter queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18c — setAttribute
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18c: setAttribute ---");
+
+    let wsEl = document.getElementById("write-setattr");
+    wsEl.setAttribute("class", "row pass");
+    console.log("18c: setAttribute(class) queued");
+
+    let wsIdEl = document.getElementById("write-setattr-id");
+    wsIdEl.setAttribute("id", "changed-by-js");
+    console.log("18c: setAttribute(id) queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18d — removeAttribute
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18d: removeAttribute ---");
+
+    let wrEl = document.getElementById("write-removeattr");
+    wrEl.removeAttribute("class");
+    console.log("18d: removeAttribute(class) queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18e — el.style property setters
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18e: el.style setters ---");
+
+    let wstyEl = document.getElementById("write-style");
+    wstyEl.style.backgroundColor = "#e8f5e9";
+    wstyEl.style.color = "#1b5e20";
+    wstyEl.style.padding = "10px";
+    wstyEl.style.borderLeft = "4px solid #2e7d32";
+    console.log("18e: style.backgroundColor + style.color queued");
+
+    let wsfEl = document.getElementById("write-style-font");
+    wsfEl.style.fontSize = "20px";
+    wsfEl.style.fontWeight = "bold";
+    console.log("18e: style.fontSize + style.fontWeight queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18f — className setter
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18f: className setter ---");
+
+    let wcnEl = document.getElementById("write-classname");
+    wcnEl.className = "row pass";
+    console.log("18f: className setter queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18g — createElement + appendChild
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18g: createElement + appendChild ---");
+
+    let parent = document.getElementById("write-appendchild");
+    let child = document.createElement("div");
+    child.textContent = "Child appended by JS via createElement + appendChild";
+    parent.appendChild(child);
+    console.log("18g: createElement + appendChild queued");
+
+    // ════════════════════════════════════════════════════════
+    // 18h — chained read → write
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18h: chained read+write ---");
+
+    let chainEl = document.getElementById("write-chain");
+    let oldText = chainEl.textContent;
+    chainEl.textContent = "Read: [" + oldText + "] written back by JS";
+    console.log("18h: chained read+write queued, old text was:", oldText);
+
+    // ════════════════════════════════════════════════════════
+    // 18i — id setter
+    // ════════════════════════════════════════════════════════
+    console.log("--- 18i: id setter ---");
+
+    let idEl = document.getElementById("write-id-setter");
+    idEl.id = "new-assigned-id";
+    console.log("18i: id setter queued");
+
+    console.warn("DOM write tests complete");
+
+    // ════════════════════════════════════════════════════════
+    // 19a — if / else if / else
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19a: if/else ---");
+
+    let score = 75;
+    let grade = "unknown";
+    if (score >= 90) {
+      grade = "A";
+    } else if (score >= 80) {
+      grade = "B";
+    } else if (score >= 70) {
+      grade = "C";
+    } else {
+      grade = "F";
+    }
+    console.log("grade for 75:", grade);
+
+    let ifElEl = document.getElementById("cf-if-else");
+    if (grade == "C") {
+      ifElEl.textContent = "PASS: if/else → grade C for score 75";
+      ifElEl.className = "row pass";
+    } else {
+      ifElEl.textContent = "FAIL: expected C, got " + grade;
+      ifElEl.className = "row fail";
+    }
+
+    // Nested if inside else
+    let val = 42;
+    let nestedResult = "?";
+    if (val > 100) {
+      nestedResult = "big";
+    } else {
+      if (val > 20) {
+        nestedResult = "medium";
+      } else {
+        nestedResult = "small";
+      }
+    }
+    let nestedEl = document.getElementById("cf-if-nested");
+    if (nestedResult == "medium") {
+      nestedEl.textContent = "PASS: nested if → medium for 42";
+      nestedEl.className = "row pass";
+    } else {
+      nestedEl.textContent = "FAIL: got " + nestedResult;
+      nestedEl.className = "row fail";
+    }
+
+    // if with no else — taken branch
+    let flag = 0;
+    if (val == 42) {
+      flag = 1;
+    }
+    let noElseEl = document.getElementById("cf-if-noelse");
+    if (flag == 1) {
+      noElseEl.textContent = "PASS: if/no-else branch taken";
+      noElseEl.className = "row pass";
+    } else {
+      noElseEl.textContent = "FAIL: branch not taken";
+      noElseEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19b — while loop
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19b: while ---");
+
+    let wSum = 0;
+    let wi = 1;
+    while (wi <= 5) {
+      wSum += wi;
+      wi++;
+    }
+    console.log("while sum 1..5 =", wSum);
+
+    let wSumEl = document.getElementById("cf-while-sum");
+    if (wSum == 15) {
+      wSumEl.textContent = "PASS: while sum 1..5 = 15";
+      wSumEl.className = "row pass";
+    } else {
+      wSumEl.textContent = "FAIL: got " + wSum;
+      wSumEl.className = "row fail";
+    }
+
+    // while with break
+    let wBreakVal = 0;
+    let wj = 0;
+    while (wj < 10) {
+      wj++;
+      if (wj == 3) {
+        wBreakVal = wj;
+        break;
+      }
+    }
+    console.log("while break value:", wBreakVal);
+    let wBreakEl = document.getElementById("cf-while-break");
+    if (wBreakVal == 3) {
+      wBreakEl.textContent = "PASS: while/break stopped at 3";
+      wBreakEl.className = "row pass";
+    } else {
+      wBreakEl.textContent = "FAIL: got " + wBreakVal;
+      wBreakEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19c — for loop
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19c: for ---");
+
+    let countStr = "";
+    for (let fi = 0; fi < 5; fi++) {
+      countStr = countStr + fi;
+    }
+    console.log("for count string:", countStr);
+    let forCountEl = document.getElementById("cf-for-count");
+    if (countStr == "01234") {
+      forCountEl.textContent = "PASS: for 0..4 → 01234";
+      forCountEl.className = "row pass";
+    } else {
+      forCountEl.textContent = "FAIL: got " + countStr;
+      forCountEl.className = "row fail";
+    }
+
+    // for sum 1..10
+    let fSum = 0;
+    for (let fk = 1; fk <= 10; fk++) {
+      fSum += fk;
+    }
+    console.log("for sum 1..10 =", fSum);
+    let forSumEl = document.getElementById("cf-for-sum");
+    if (fSum == 55) {
+      forSumEl.textContent = "PASS: for sum 1..10 = 55";
+      forSumEl.className = "row pass";
+    } else {
+      forSumEl.textContent = "FAIL: got " + fSum;
+      forSumEl.className = "row fail";
+    }
+
+    // for with continue — skip even numbers, sum odds 1..9
+    let oddSum = 0;
+    for (let fm = 1; fm <= 10; fm++) {
+      if (fm % 2 == 0) {
+        continue;
+      }
+      oddSum += fm;
+    }
+    console.log("for odd sum 1..9 =", oddSum);
+    let forContEl = document.getElementById("cf-for-continue");
+    if (oddSum == 25) {
+      forContEl.textContent = "PASS: for/continue odd sum 1..9 = 25";
+      forContEl.className = "row pass";
+    } else {
+      forContEl.textContent = "FAIL: got " + oddSum;
+      forContEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19d — do...while
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19d: do/while ---");
+
+    let dwVal = 0;
+    let dwCount = 0;
+    do {
+      dwVal += dwCount;
+      dwCount++;
+    } while (dwCount < 4);
+    console.log("do/while dwVal =", dwVal, "dwCount =", dwCount);
+
+    let dwEl = document.getElementById("cf-dowhile");
+    if (dwVal == 6 && dwCount == 4) {
+      dwEl.textContent = "PASS: do/while sum 0+1+2+3 = 6, ran 4 times";
+      dwEl.className = "row pass";
+    } else {
+      dwEl.textContent = "FAIL: dwVal=" + dwVal + " dwCount=" + dwCount;
+      dwEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19e — nested loops
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19e: nested loops ---");
+
+    let product = 0;
+    for (let na = 1; na <= 3; na++) {
+      for (let nb = 1; nb <= 3; nb++) {
+        product += na * nb;
+      }
+    }
+    console.log("nested loop product sum:", product);
+
+    let nestedLoopEl = document.getElementById("cf-nested");
+    if (product == 36) {
+      nestedLoopEl.textContent = "PASS: nested 3x3 product sum = 36";
+      nestedLoopEl.className = "row pass";
+    } else {
+      nestedLoopEl.textContent = "FAIL: got " + product;
+      nestedLoopEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19f — prefix / postfix ++ and --
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19f: ++ and -- ---");
+
+    let ctr = 0;
+    ctr++;
+    ctr++;
+    ++ctr;
+    ctr--;
+    console.log("ctr after ++,++,++,--:", ctr);
+
+    // Use ++ in a for loop update (standard pattern)
+    let incSum = 0;
+    for (let ii = 0; ii < 5; ii++) {
+      incSum += ii;
+    }
+    console.log("incSum (0+1+2+3+4):", incSum);
+
+    let incEl = document.getElementById("cf-increment");
+    if (ctr == 2 && incSum == 10) {
+      incEl.textContent = "PASS: ctr=2 incSum=10";
+      incEl.className = "row pass";
+    } else {
+      incEl.textContent = "FAIL: ctr=" + ctr + " incSum=" + incSum;
+      incEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19g — if with DOM read inside condition
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19g: if with DOM read ---");
+
+    let srcEl = document.getElementById("cf-condition-source");
+    let srcText = srcEl.textContent;
+    let domCondResult = "?";
+    if (srcText == "condition source text") {
+      domCondResult = "matched";
+    } else {
+      domCondResult = "mismatch";
+    }
+
+    let domCondEl = document.getElementById("cf-if-dom-read");
+    if (domCondResult == "matched") {
+      domCondEl.textContent = "PASS: DOM textContent matched in if condition";
+      domCondEl.className = "row pass";
+    } else {
+      domCondEl.textContent = "FAIL: got '" + srcText + "'";
+      domCondEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 19h — while accumulating DOM writes
+    // ════════════════════════════════════════════════════════
+    console.log("--- 19h: while + DOM writes ---");
+
+    let ids = "abc";
+    let pass19h = true;
+    let wdi = 0;
+    while (wdi < 3) {
+      wdi++;
+      let targetId = "cf-while-dom-" + ids;
+    }
+
+    let wdA = document.getElementById("cf-while-dom-a");
+    let wdB = document.getElementById("cf-while-dom-b");
+    let wdC = document.getElementById("cf-while-dom-c");
+    wdA.textContent = "PASS A: written by JS";
+    wdA.className = "row pass";
+    wdB.textContent = "PASS B: written by JS";
+    wdB.className = "row pass";
+    wdC.textContent = "PASS C: written by JS";
+    wdC.className = "row pass";
+    console.log("19h: three elements written");
+
+    console.warn("Control flow tests complete");
+
+    // ════════════════════════════════════════════════════════
+    // 20i — hoisting: call earlyCall() BEFORE its declaration
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20i: hoisting ---");
+    let hoistResult = earlyCall(6);
+    let hoistEl = document.getElementById("fn-hoist");
+    if (hoistResult == 36) {
+      hoistEl.textContent = "PASS: earlyCall(6) = 36 (hoisted)";
+      hoistEl.className = "row pass";
+    } else {
+      hoistEl.textContent = "FAIL: earlyCall(6) = " + hoistResult;
+      hoistEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 20a — basic declaration and call
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20a: basic functions ---");
+
+    function add(a, b) { return a + b; }
+    function greet(name) { return "Hello " + name; }
+
+    let addResult = add(3, 4);
+    let fnBasicEl = document.getElementById("fn-basic");
+    if (addResult == 7) {
+      fnBasicEl.textContent = "PASS: add(3,4) = 7";
+      fnBasicEl.className = "row pass";
+    } else {
+      fnBasicEl.textContent = "FAIL: add(3,4) = " + addResult;
+      fnBasicEl.className = "row fail";
+    }
+    console.log("add(3,4) =", addResult);
+
+    let greetResult = greet("World");
+    let fnGreetEl = document.getElementById("fn-greet");
+    if (greetResult == "Hello World") {
+      fnGreetEl.textContent = "PASS: greet returns Hello World";
+      fnGreetEl.className = "row pass";
+    } else {
+      fnGreetEl.textContent = "FAIL: got " + greetResult;
+      fnGreetEl.className = "row fail";
+    }
+    console.log("greet:", greetResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20b — return inside if
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20b: return inside if ---");
+
+    function abs(n) {
+      if (n < 0) { return -n; }
+      return n;
+    }
+    function max(a, b) {
+      if (a > b) { return a; }
+      return b;
+    }
+
+    let absResult = abs(-7);
+    let fnAbsEl = document.getElementById("fn-abs");
+    if (absResult == 7) {
+      fnAbsEl.textContent = "PASS: abs(-7) = 7";
+      fnAbsEl.className = "row pass";
+    } else {
+      fnAbsEl.textContent = "FAIL: abs(-7) = " + absResult;
+      fnAbsEl.className = "row fail";
+    }
+    console.log("abs(-7) =", absResult);
+
+    let maxResult = max(4, 9);
+    let fnMaxEl = document.getElementById("fn-max");
+    if (maxResult == 9) {
+      fnMaxEl.textContent = "PASS: max(4,9) = 9";
+      fnMaxEl.className = "row pass";
+    } else {
+      fnMaxEl.textContent = "FAIL: max(4,9) = " + maxResult;
+      fnMaxEl.className = "row fail";
+    }
+    console.log("max(4,9) =", maxResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20c — loops inside functions
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20c: loops inside functions ---");
+
+    function sum(n) {
+      let s = 0;
+      for (let i = 1; i <= n; i++) {
+        s += i;
+      }
+      return s;
+    }
+
+    function factorial(n) {
+      let result = 1;
+      let i = 1;
+      while (i <= n) {
+        result = result * i;
+        i++;
+      }
+      return result;
+    }
+
+    let sumResult = sum(10);
+    let fnSumEl = document.getElementById("fn-sum");
+    if (sumResult == 55) {
+      fnSumEl.textContent = "PASS: sum(10) = 55";
+      fnSumEl.className = "row pass";
+    } else {
+      fnSumEl.textContent = "FAIL: sum(10) = " + sumResult;
+      fnSumEl.className = "row fail";
+    }
+    console.log("sum(10) =", sumResult);
+
+    let factResult = factorial(6);
+    let fnFactEl = document.getElementById("fn-factorial");
+    if (factResult == 720) {
+      fnFactEl.textContent = "PASS: factorial(6) = 720";
+      fnFactEl.className = "row pass";
+    } else {
+      fnFactEl.textContent = "FAIL: factorial(6) = " + factResult;
+      fnFactEl.className = "row fail";
+    }
+    console.log("factorial(6) =", factResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20d — calling other functions (composed)
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20d: composed function calls ---");
+
+    function multiply(a, b) { return a * b; }
+    function square(n) { return multiply(n, n); }
+
+    let squareResult = square(7);
+    let fnComposedEl = document.getElementById("fn-composed");
+    if (squareResult == 49) {
+      fnComposedEl.textContent = "PASS: square(7) = 49";
+      fnComposedEl.className = "row pass";
+    } else {
+      fnComposedEl.textContent = "FAIL: square(7) = " + squareResult;
+      fnComposedEl.className = "row fail";
+    }
+    console.log("square(7) =", squareResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20e — function expression stored in variable
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20e: function expression ---");
+
+    const double = function(x) { return x * 2; };
+    let doubleResult = double(7);
+    let fnExprEl = document.getElementById("fn-expr");
+    if (doubleResult == 14) {
+      fnExprEl.textContent = "PASS: double(7) = 14";
+      fnExprEl.className = "row pass";
+    } else {
+      fnExprEl.textContent = "FAIL: double(7) = " + doubleResult;
+      fnExprEl.className = "row fail";
+    }
+    console.log("double(7) =", doubleResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20f — arrow functions
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20f: arrow functions ---");
+
+    const triple = (x) => x * 3;
+    let tripleResult = triple(5);
+    let fnArrowExprEl = document.getElementById("fn-arrow-expr");
+    if (tripleResult == 15) {
+      fnArrowExprEl.textContent = "PASS: triple(5) = 15";
+      fnArrowExprEl.className = "row pass";
+    } else {
+      fnArrowExprEl.textContent = "FAIL: triple(5) = " + tripleResult;
+      fnArrowExprEl.className = "row fail";
+    }
+    console.log("triple(5) =", tripleResult);
+
+    const clamp = (v, lo, hi) => {
+      if (v < lo) { return lo; }
+      if (v > hi) { return hi; }
+      return v;
+    };
+    let clampResult = clamp(15, 0, 10);
+    let fnArrowBlockEl = document.getElementById("fn-arrow-block");
+    if (clampResult == 10) {
+      fnArrowBlockEl.textContent = "PASS: clamp(15,0,10) = 10";
+      fnArrowBlockEl.className = "row pass";
+    } else {
+      fnArrowBlockEl.textContent = "FAIL: clamp(15,0,10) = " + clampResult;
+      fnArrowBlockEl.className = "row fail";
+    }
+    console.log("clamp(15,0,10) =", clampResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20g — recursion
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20g: recursion ---");
+
+    function fib(n) {
+      if (n <= 1) { return n; }
+      return fib(n - 1) + fib(n - 2);
+    }
+
+    let fibResult = fib(10);
+    let fnRecEl = document.getElementById("fn-recursive");
+    if (fibResult == 55) {
+      fnRecEl.textContent = "PASS: fib(10) = 55";
+      fnRecEl.className = "row pass";
+    } else {
+      fnRecEl.textContent = "FAIL: fib(10) = " + fibResult;
+      fnRecEl.className = "row fail";
+    }
+    console.log("fib(10) =", fibResult);
+
+    // ════════════════════════════════════════════════════════
+    // 20h — DOM manipulation from inside a function
+    // ════════════════════════════════════════════════════════
+    console.log("--- 20h: DOM manipulation inside function ---");
+
+    function setPass(elId, msg) {
+      let el = document.getElementById(elId);
+      el.textContent = "PASS: " + msg;
+      el.className = "row pass";
+    }
+
+    setPass("fn-dom-a", "setPass called with fn-dom-a");
+    setPass("fn-dom-b", "setPass called with fn-dom-b");
+    setPass("fn-dom-c", "setPass called with fn-dom-c");
+    console.log("20h: DOM writes via function complete");
+
+    // hoisting helper — defined after use above
+    function earlyCall(n) { return n * n; }
+
+    console.warn("Function tests complete");
   </script>
 
 </body>

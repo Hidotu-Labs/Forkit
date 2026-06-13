@@ -189,7 +189,51 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
     (root, sheets)
 }
 
-/// Rewrite all relative `url(...)` references inside a CSS string so they are
+/// Parse a simple HTML fragment string into a list of `Node`s.
+///
+/// Used by JS `innerHTML` setter.  Runs the same tokeniser / builder as the
+/// full page parser but wraps the input in a temporary `<div>` to give
+/// the builder a container, then extracts its children.
+/// No external stylesheets are fetched; the cascade is not applied.
+pub fn parse_fragment(html: &str) -> Vec<Node> {
+    let wrapped = format!("<div>{}</div>", html);
+    let (root, _) = parse_with_sheets(&wrapped, "about:blank");
+    // root = #document > body? > div > children
+    // Walk down to find the first <div> and return its children.
+    fn find_div(node: &Node) -> Option<Vec<Node>> {
+        if let Node::Element(el) = node {
+            if el.tag == "div" {
+                // Re-clone children. Can't move out because the tree is owned.
+                return Some(el.children.iter().map(|c| clone_node(c)).collect());
+            }
+            for child in &el.children {
+                if let Some(result) = find_div(child) {
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+    find_div(&root).unwrap_or_default()
+}
+
+fn clone_node(node: &Node) -> Node {
+    match node {
+        Node::Text(t) => Node::Text(crate::dom::node::TextNode {
+            text:  t.text.clone(),
+            style: t.style.clone(),
+        }),
+        Node::Element(e) => Node::Element(crate::dom::node::Element {
+            tag:        e.tag.clone(),
+            id:         e.id.clone(),
+            class_name: e.class_name.clone(),
+            style_attr: e.style_attr.clone(),
+            attrs_raw:  e.attrs_raw.clone(),
+            style:      e.style.clone(),
+            children:   e.children.iter().map(|c| clone_node(c)).collect(),
+        }),
+    }
+}
 /// absolute URLs resolved against `css_base_url` (the URL the CSS was fetched from).
 ///
 /// Already-absolute URLs (`http://`, `https://`, `data:`, `//`) are left unchanged.
