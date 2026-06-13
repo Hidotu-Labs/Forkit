@@ -1,6 +1,7 @@
 use crate::dom::node::{
     Style, TextAlign, ListStyleType, Display, Visibility, TextTransform, Overflow,
     Border, Borders, FontFamilyHint, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
+    LinearGradient, GradientStop,
 };
 use super::color::parse_color_alpha;
 use super::length::{parse_length, parse_length_ctx, parse_box_spacing, LengthContext};
@@ -33,7 +34,7 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             if lower_val == "none" || lower_val == "transparent" {
                 s.bg_color = None;
                 s.bg_alpha = 0;
-                if prop == "background" { s.bg_image_url = None; }
+                if prop == "background" { s.bg_image_url = None; s.bg_gradient = None; }
                 return;
             }
 
@@ -71,6 +72,12 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 return;
             }
 
+            // Handle linear-gradient() inside the shorthand (no url())
+            if !is_color_only_prop && lower_val.contains("linear-gradient(") {
+                s.bg_gradient = parse_linear_gradient(val);
+                return;
+            }
+
             // No url() — treat as a plain background-color value.
             // rgba() and hsla() contain spaces, so we must NOT split on whitespace for them.
             let is_functional_color = lower_val.starts_with("rgba(")
@@ -93,16 +100,55 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             let lower = val.to_ascii_lowercase();
             if lower == "none" {
                 s.bg_image_url = None;
+                s.bg_gradient  = None;
+            } else if lower.contains("linear-gradient(") {
+                s.bg_gradient = parse_linear_gradient(val);
+                // Also check for a url() layer in addition to the gradient
+                if lower.contains("url(") {
+                    if let Some(url) = extract_css_url(val) {
+                        s.bg_image_url = Some(url);
+                    }
+                }
             } else if let Some(url) = extract_css_url(val) {
                 s.bg_image_url = Some(url);
             }
         }
         "background-size" => {
-            s.bg_size = match val.to_ascii_lowercase().as_str() {
-                "cover"   => BgSize::Cover,
-                "contain" => BgSize::Contain,
-                _         => BgSize::Auto,
-            };
+            let lv = val.to_ascii_lowercase();
+            match lv.trim() {
+                "cover"   => s.bg_size = BgSize::Cover,
+                "contain" => s.bg_size = BgSize::Contain,
+                "auto"    => s.bg_size = BgSize::Auto,
+                _ => {
+                    // Two-value explicit size like "1500px 300px" or "50% auto".
+                    // Store as explicit pixel dimensions in BgSize::Explicit if
+                    // we can parse the first value as a width.
+                    // For now we treat any explicit width as Cover-like sizing
+                    // (stretch to fill the declared dimensions). If the value
+                    // contains two tokens and the first is a concrete length,
+                    // store the width so the painter can use it.
+                    let tokens: Vec<&str> = val.split_whitespace().collect();
+                    match tokens.as_slice() {
+                        [w_tok, _h_tok] => {
+                            // Parse width — store as explicit size.
+                            // We reuse the BgSize enum; add Explicit variant below.
+                            if let Some(w) = parse_length(w_tok, base, 0) {
+                                if let Some(h) = parse_length(_h_tok, base, 0) {
+                                    s.bg_size = BgSize::Explicit(w, h);
+                                } else {
+                                    s.bg_size = BgSize::Explicit(w, w);
+                                }
+                            }
+                        }
+                        [single] => {
+                            if let Some(w) = parse_length(single, base, 0) {
+                                s.bg_size = BgSize::Explicit(w, w);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
         "background-repeat" => {
             s.bg_repeat = match val.to_ascii_lowercase().as_str() {
@@ -121,7 +167,16 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                     "top"    => if !is_x { 0 } else { 0 },
                     "bottom" => if !is_x { 10000 } else { 0 },
                     "center" => 5000,                            // sentinel: 5000 = 50%
-                    t => parse_length(t, base, 0).unwrap_or(0),
+                    t => {
+                        // Handle percentage values: store as sentinel (percent * 100).
+                        // e.g. 25% → 2500, 75% → 7500.
+                        if let Some(pct_str) = t.strip_suffix('%') {
+                            if let Ok(pct) = pct_str.trim().parse::<f32>() {
+                                return (pct * 100.0).round() as i32;
+                            }
+                        }
+                        parse_length(t, base, 0).unwrap_or(0)
+                    },
                 }
             };
             match tokens.as_slice() {
@@ -146,11 +201,14 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
         // ---- font ----
         "font-size" => {
-            // Viewport-relative units (vw, vh) and calc() cannot be resolved
-            // until layout time when the real viewport dimensions are known.
+            // Viewport-relative units (vw, vh) and math functions (calc, clamp, min, max)
+            // cannot be resolved until layout time when the real viewport dimensions are known.
             // Store them raw; block.rs will re-resolve them.
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with("vw") || lv.ends_with("vh") || lv.starts_with("calc(") {
+            if lv.ends_with("vw") || lv.ends_with("vh")
+                || lv.starts_with("calc(") || lv.starts_with("clamp(")
+                || lv.starts_with("min(") || lv.starts_with("max(")
+            {
                 s.font_size_raw = Some(val.to_owned());
             } else {
                 s.font_size_raw = None;
@@ -243,12 +301,13 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
         // ---- sizing ----
         // Absolute units (px, em, pt, rem) are resolved immediately.
-        // Viewport-relative (vw, vh) and percentage (%) values are stored raw
-        // so they can be re-resolved in block.rs with the real containing-block
-        // width, height, and viewport dimensions.
+        // Viewport-relative (vw, vh), percentage (%), and math functions
+        // (calc, clamp, min, max) are stored raw so they can be re-resolved
+        // in block.rs with the real containing-block width, height, and
+        // viewport dimensions.
         "width" => {
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+            if needs_deferred_resolve(&lv) {
                 s.size.width     = None;
                 s.size.width_raw = Some(val.to_owned());
             } else {
@@ -258,7 +317,7 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
         }
         "height" => {
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+            if needs_deferred_resolve(&lv) {
                 s.size.height     = None;
                 s.size.height_raw = Some(val.to_owned());
             } else {
@@ -273,7 +332,7 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 return;
             }
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+            if needs_deferred_resolve(&lv) {
                 s.size.max_width     = None;
                 s.size.max_width_raw = Some(val.to_owned());
             } else {
@@ -283,7 +342,7 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
         }
         "min-width" => {
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+            if needs_deferred_resolve(&lv) {
                 s.size.min_width     = None;
                 s.size.min_width_raw = Some(val.to_owned());
             } else {
@@ -503,7 +562,7 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 return;
             }
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+            if needs_deferred_resolve(&lv) {
                 s.size.max_height     = None;
                 s.size.max_height_raw = Some(val.to_owned());
             } else {
@@ -513,7 +572,7 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
         }
         "min-height" => {
             let lv = val.to_ascii_lowercase();
-            if lv.ends_with('%') || lv.ends_with("vw") || lv.ends_with("vh") {
+            if needs_deferred_resolve(&lv) {
                 s.size.min_height     = None;
                 s.size.min_height_raw = Some(val.to_owned());
             } else {
@@ -524,6 +583,24 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
         _ => {} // unrecognised property — silently ignore
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sizing helper
+// ---------------------------------------------------------------------------
+
+/// Returns true if a CSS length value needs to be deferred to layout time
+/// because it references viewport dimensions or contains a math function.
+/// The input should already be ASCII-lowercased.
+#[inline]
+fn needs_deferred_resolve(lv: &str) -> bool {
+    lv.ends_with('%')
+        || lv.ends_with("vw")
+        || lv.ends_with("vh")
+        || lv.starts_with("calc(")
+        || lv.starts_with("clamp(")
+        || lv.starts_with("min(")
+        || lv.starts_with("max(")
 }
 
 // ---------------------------------------------------------------------------
@@ -706,4 +783,179 @@ fn parse_box_shadow(val: &str, base: u16) -> Option<BoxShadow> {
         color,
         alpha,
     })
+}
+
+// ---------------------------------------------------------------------------
+// linear-gradient() parser
+// ---------------------------------------------------------------------------
+
+/// Parse a CSS `linear-gradient(…)` value.
+///
+/// Supports:
+/// - `linear-gradient(to right, #f00, #00f)`
+/// - `linear-gradient(45deg, red, blue)`
+/// - `linear-gradient(#f00 0%, #00f 100%)`
+/// - `linear-gradient(to bottom, rgba(0,0,0,0.5), transparent)`
+///
+/// Returns `None` only if there are fewer than two colour stops after parsing.
+pub(crate) fn parse_linear_gradient(val: &str) -> Option<LinearGradient> {
+    // Extract the argument list inside `linear-gradient(…)`.
+    let lower = val.to_ascii_lowercase();
+    let grad_start = lower.find("linear-gradient(")?;
+    let after_open = grad_start + "linear-gradient(".len();
+
+    let chars: Vec<char> = val[after_open..].chars().collect();
+    let mut depth = 1usize;
+    let mut end = 0usize;
+    for (i, &ch) in chars.iter().enumerate() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 { end = i; break; }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 { return None; }
+    let byte_end = after_open + chars[..end].iter().map(|c| c.len_utf8()).sum::<usize>();
+    let inner = val[after_open..byte_end].trim();
+
+    // Split the argument list on commas, respecting nested parens.
+    let args = split_gradient_args(inner);
+    if args.is_empty() { return None; }
+
+    // ── 1. Direction / angle ────────────────────────────────────────────────
+    let first_lc = args[0].trim().to_ascii_lowercase();
+    let (angle_deg, stops_start) = if first_lc.ends_with("deg") {
+        let a = first_lc.trim_end_matches("deg").trim().parse::<f32>().unwrap_or(180.0);
+        (a, 1)
+    } else if first_lc.starts_with("to ") {
+        let dir = first_lc["to ".len()..].trim();
+        let a = match dir {
+            "top"          => 0.0,
+            "right"        => 90.0,
+            "bottom"       => 180.0,
+            "left"         => 270.0,
+            "top right" | "right top"       => 45.0,
+            "bottom right" | "right bottom" => 135.0,
+            "bottom left"  | "left bottom"  => 225.0,
+            "top left"     | "left top"     => 315.0,
+            _              => 180.0,
+        };
+        (a, 1)
+    } else {
+        // No explicit direction — default is "to bottom" (180°)
+        (180.0, 0)
+    };
+
+    // ── 2. Colour stops ─────────────────────────────────────────────────────
+    let stop_args = &args[stops_start..];
+    if stop_args.is_empty() { return None; }
+
+    let mut stops: Vec<GradientStop> = Vec::new();
+    for raw in stop_args {
+        let s = raw.trim();
+        if let Some(stop) = parse_gradient_stop(s) {
+            stops.push(stop);
+        }
+    }
+    if stops.len() < 2 { return None; }
+
+    // Resolve missing positions: distribute evenly.
+    resolve_stop_positions(&mut stops);
+
+    Some(LinearGradient { angle_deg, stops })
+}
+
+/// Parse a single gradient colour-stop token like `red`, `#abc`, `blue 40%`,
+/// `rgba(0,0,0,0.5) 0%`, or `transparent`.
+fn parse_gradient_stop(s: &str) -> Option<GradientStop> {
+    // Tokenise: split on whitespace outside parens.
+    let parts = tokenise_bg_shorthand(s);
+    if parts.is_empty() { return None; }
+
+    // The colour part is the first token that parses as a colour.
+    // The optional position is the last token if it ends with % or px.
+    let mut color_opt: Option<([u8; 3], u8)> = None;
+    let mut pos_opt: Option<f32> = None;
+
+    for (i, tok) in parts.iter().enumerate() {
+        let tl = tok.to_ascii_lowercase();
+        if (tl.ends_with('%') || tl.ends_with("px")) && i > 0 {
+            // Try as a position
+            if tl.ends_with('%') {
+                if let Ok(n) = tl.trim_end_matches('%').parse::<f32>() {
+                    pos_opt = Some(n / 100.0);
+                    continue;
+                }
+            } else if tl.ends_with("px") {
+                // px stops are unusual in gradients; store as a sentinel > 1 to indicate "unknown"
+                // We'll leave it as None and let resolve_stop_positions handle it.
+                continue;
+            }
+        }
+        if color_opt.is_none() {
+            if let Some(c) = parse_color_alpha(tok) {
+                color_opt = Some(c);
+            }
+        }
+    }
+
+    let (color, alpha) = color_opt?;
+    Some(GradientStop { color, alpha, pos: pos_opt })
+}
+
+/// Distribute `None` positions evenly between their neighbours.
+fn resolve_stop_positions(stops: &mut Vec<GradientStop>) {
+    let n = stops.len();
+    if n == 0 { return; }
+
+    // First stop defaults to 0, last to 1.
+    if stops[0].pos.is_none()     { stops[0].pos = Some(0.0); }
+    if stops[n-1].pos.is_none() { stops[n-1].pos = Some(1.0); }
+
+    // Fill in gaps by linear interpolation.
+    let mut i = 0;
+    while i < n {
+        if stops[i].pos.is_none() {
+            // Find the next defined stop.
+            let mut j = i + 1;
+            while j < n && stops[j].pos.is_none() { j += 1; }
+            if j < n {
+                let p0 = stops[i-1].pos.unwrap_or(0.0);
+                let p1 = stops[j].pos.unwrap_or(1.0);
+                let count = (j - i + 1) as f32;
+                for k in i..j {
+                    stops[k].pos = Some(p0 + (p1 - p0) * (k - i + 1) as f32 / count);
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Split gradient argument list on top-level commas (respecting parens).
+fn split_gradient_args(s: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '(' => { depth += 1; cur.push(ch); }
+            ')' => {
+                if depth > 0 { depth -= 1; }
+                cur.push(ch);
+            }
+            ',' if depth == 0 => {
+                let t = cur.trim().to_string();
+                if !t.is_empty() { result.push(t); }
+                cur.clear();
+            }
+            _ => { cur.push(ch); }
+        }
+    }
+    let t = cur.trim().to_string();
+    if !t.is_empty() { result.push(t); }
+    result
 }

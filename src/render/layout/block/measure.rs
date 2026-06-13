@@ -40,6 +40,30 @@ pub fn measure_inline_block_children(fonts: &mut FontCache, children: &[Node], _
     total.max(0)
 }
 
+/// Measure the shrink-to-fit width of block children (e.g. `li` items inside
+/// an `inline-block` `ul`/`ol`).  Returns the widest line across all children.
+pub fn measure_block_content_width(fonts: &mut FontCache, children: &[Node], font_size: u16) -> i32 {
+    let mut max_w = 0i32;
+    for child in children {
+        match child {
+            Node::Text(t) => {
+                let text = t.text.trim();
+                if text.is_empty() { continue; }
+                let (w, _) = measure_text(fonts, text, &t.style);
+                if w > max_w { max_w = w; }
+            }
+            Node::Element(el) => {
+                if el.style.display == Display::Hidden { continue; }
+                let child_fs = el.style.font_size;
+                let pad_h = el.style.padding.left + el.style.padding.right;
+                let child_w = measure_block_content_width(fonts, &el.children, child_fs) + pad_h;
+                if child_w > max_w { max_w = child_w; }
+            }
+        }
+    }
+    max_w
+}
+
 pub fn measure_block_children(
     ls:    &LayoutState,
     fonts: &mut FontCache,

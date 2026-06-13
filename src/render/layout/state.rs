@@ -117,7 +117,64 @@ impl DetailsArea {
     }
 }
 
+/// Hit-testable region for an `<audio>` player rendered on the page.
+#[derive(Debug, Clone)]
+pub struct AudioArea {
+    /// Full player bounding box (page coordinates, before scroll).
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    /// Per-page index — uniquely identifies this player among all audio
+    /// elements on the page (assigned at layout time, like `InputArea::index`).
+    pub index: usize,
+    /// Resolved source URL of the audio.
+    pub src: String,
+    /// Sub-region: the ▶/⏸ play-pause button.
+    pub play_btn: (i32, i32, i32, i32),
+    /// Sub-region: the progress scrubber track (full track, not just filled part).
+    pub scrubber: (i32, i32, i32, i32),
+}
+
+impl AudioArea {
+    pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
+        let ay = self.y - scroll_y;
+        px >= self.x && px < self.x + self.w
+            && py >= ay && py < ay + self.h
+    }
+
+    pub fn play_btn_hit(&self, px: i32, py: i32, scroll_y: i32) -> bool {
+        let (bx, by, bw, bh) = self.play_btn;
+        let ay = by - scroll_y;
+        px >= bx && px < bx + bw && py >= ay && py < ay + bh
+    }
+
+    pub fn scrubber_hit(&self, px: i32, py: i32, scroll_y: i32) -> bool {
+        let (sx, sy, sw, sh) = self.scrubber;
+        let ay = sy - scroll_y;
+        px >= sx && px < sx + sw && py >= ay && py < ay + sh
+    }
+
+    /// Returns the 0.0–1.0 seek ratio from a click at `px` on the scrubber.
+    pub fn scrubber_ratio(&self, px: i32) -> f64 {
+        let (sx, _, sw, _) = self.scrubber;
+        ((px - sx) as f64 / sw as f64).clamp(0.0, 1.0)
+    }
+}
+
 pub const MARGIN_LEFT:  i32 = 0;
+
+/// Snapshot of audio playback state for one `<audio>` element.
+/// Passed into `LayoutState` so the renderer can draw the correct
+/// play/pause icon and scrubber position without coupling to SDL2_mixer.
+#[derive(Debug, Clone, Default)]
+pub struct AudioPlayback {
+    pub playing:       bool,
+    /// 0.0 – 1.0
+    pub progress:      f64,
+    pub position_secs: f64,
+    pub duration_secs: f64,
+}
 pub const MARGIN_RIGHT: i32 = 0;
 pub const MARGIN_TOP:   i32 = 0;
 pub const LINE_SPACING: i32 = 1;
@@ -148,6 +205,12 @@ pub struct LayoutState<'ctx> {
     pub input_areas: Vec<InputArea>,
     pub button_areas: Vec<ButtonArea>,
     pub details_areas: Vec<DetailsArea>,
+    pub audio_areas: Vec<AudioArea>,
+    /// Playback state for audio elements, keyed by per-page audio index.
+    /// Set by the browser before each layout pass via `set_audio_state`.
+    pub audio_playback: std::collections::HashMap<usize, AudioPlayback>,
+    /// Counter for assigning unique indices to audio areas.
+    pub audio_count: usize,
     /// Counter for assigning unique indices to input areas.
     pub input_count: usize,
     /// Live values for each focusable input (indexed by input order on the page).
@@ -178,6 +241,9 @@ impl<'ctx> LayoutState<'ctx> {
             input_areas:   Vec::new(),
             button_areas:  Vec::new(),
             details_areas: Vec::new(),
+            audio_areas:   Vec::new(),
+            audio_playback: std::collections::HashMap::new(),
+            audio_count:   0,
             input_count:   0,
             input_values:  Vec::new(),
             focused_input: None,
@@ -192,6 +258,11 @@ impl<'ctx> LayoutState<'ctx> {
     pub fn set_input_state(&mut self, values: Vec<String>, focused: Option<usize>) {
         self.input_values  = values;
         self.focused_input = focused;
+    }
+
+    /// Seed the layout state with audio playback snapshots before rendering.
+    pub fn set_audio_state(&mut self, playback: std::collections::HashMap<usize, AudioPlayback>) {
+        self.audio_playback = playback;
     }
 
     pub fn into_boxes(self) -> Vec<LayoutBox> { self.boxes }

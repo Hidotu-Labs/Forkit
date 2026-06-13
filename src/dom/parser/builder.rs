@@ -78,10 +78,16 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
                                 let rel  = get_attr(&t2.attrs, "rel").unwrap_or("").to_ascii_lowercase();
                                 let href = get_attr(&t2.attrs, "href").unwrap_or("");
                                 if rel.contains("stylesheet") && !href.is_empty() {
-                                    let url = net::resolve_url(href, base_url);
-                                    match net::fetch_url(&url) {
-                                        Ok((_, css)) => style_texts.push(css),
-                                        Err(e)       => eprintln!("CSS fetch {url}: {e}"),
+                                    let css_url = net::resolve_url(href, base_url);
+                                    match net::fetch_url(&css_url) {
+                                        Ok((final_css_url, css)) => {
+                                            // Rewrite relative url() references in the CSS
+                                            // so they resolve against the CSS file's location,
+                                            // not the page URL.
+                                            let css = rewrite_css_urls(&css, &final_css_url);
+                                            style_texts.push(css);
+                                        }
+                                        Err(e) => eprintln!("CSS fetch {css_url}: {e}"),
                                     }
                                 }
                             }
@@ -181,4 +187,93 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
     };
 
     (root, sheets)
+}
+
+/// Rewrite all relative `url(...)` references inside a CSS string so they are
+/// absolute URLs resolved against `css_base_url` (the URL the CSS was fetched from).
+///
+/// Already-absolute URLs (`http://`, `https://`, `data:`, `//`) are left unchanged.
+fn rewrite_css_urls(css: &str, css_base_url: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let lower   = css.to_ascii_lowercase();
+    let bytes   = css.as_bytes();
+    let len     = css.len();
+    let mut pos = 0;
+
+    while pos < len {
+        // Find next "url("
+        match lower[pos..].find("url(") {
+            None => {
+                out.push_str(&css[pos..]);
+                break;
+            }
+            Some(rel) => {
+                let abs = pos + rel;
+                // Copy everything up to (and including) "url("
+                out.push_str(&css[pos..abs + 4]);
+                let after_open = abs + 4;
+
+                // Find the matching closing paren, tracking nesting and quotes.
+                let mut depth: usize = 1;
+                let mut in_quote: Option<u8> = None;
+                let mut i = after_open;
+                while i < len {
+                    let b = bytes[i];
+                    match in_quote {
+                        Some(q) if b == q => { in_quote = None; }
+                        Some(b'\\')       => { i += 1; } // skip escaped char
+                        Some(_)           => {}
+                        None => match b {
+                            b'"' | b'\'' => { in_quote = Some(b); }
+                            b'('         => { depth += 1; }
+                            b')' => {
+                                depth -= 1;
+                                if depth == 0 { break; }
+                            }
+                            _ => {}
+                        }
+                    }
+                    i += 1;
+                }
+                // `i` now points at the closing ')' (or end-of-string if malformed)
+                let inner = &css[after_open..i];
+
+                // Strip optional quotes from the inner URL
+                let stripped = inner.trim();
+                let url_str = if (stripped.starts_with('"') && stripped.ends_with('"'))
+                    || (stripped.starts_with('\'') && stripped.ends_with('\''))
+                {
+                    &stripped[1..stripped.len() - 1]
+                } else {
+                    stripped
+                };
+
+                // Only rewrite if it's a relative URL
+                let is_absolute = url_str.starts_with("http://")
+                    || url_str.starts_with("https://")
+                    || url_str.starts_with("data:")
+                    || url_str.starts_with("//")
+                    || url_str.starts_with('#')
+                    || url_str.is_empty();
+
+                if is_absolute {
+                    // Leave as-is
+                    out.push_str(inner);
+                } else {
+                    let resolved = net::resolve_url(url_str, css_base_url);
+                    out.push_str(&resolved);
+                }
+
+                // Copy the closing ')' if present
+                if i < len && bytes[i] == b')' {
+                    out.push(')');
+                    pos = i + 1;
+                } else {
+                    pos = i;
+                }
+            }
+        }
+    }
+
+    out
 }

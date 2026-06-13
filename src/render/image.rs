@@ -49,6 +49,21 @@ pub fn sniff_image_type(bytes: &[u8]) -> &'static str {
         if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" { return "AVIF"; }
         if bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01 { return "ICO"; }
     }
+    // SVG: starts with XML declaration, BOM, or the <svg tag directly
+    {
+        // Skip any leading whitespace / BOM
+        let trimmed = bytes.iter().position(|&b| !b.is_ascii_whitespace()).unwrap_or(0);
+        let head = &bytes[trimmed..bytes.len().min(trimmed + 512)];
+        // UTF-8 BOM
+        let head = if head.starts_with(b"\xEF\xBB\xBF") { &head[3..] } else { head };
+        let head_lc = head.iter().map(|&b| b.to_ascii_lowercase()).collect::<Vec<u8>>();
+        if head_lc.starts_with(b"<svg")
+            || head_lc.starts_with(b"<?xml")
+            || head_lc.windows(4).any(|w| w == b"<svg")
+        {
+            return "SVG";
+        }
+    }
     "PNG" // fallback guess
 }
 
@@ -121,4 +136,403 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
         if n >= 4 { out.push((vals[2] << 6) | vals[3]); }
     }
     Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// SVG pre-processing
+// ---------------------------------------------------------------------------
+
+/// Pre-process raw SVG bytes before handing to SDL2/nanosvg.
+///
+/// nanosvg (used by SDL2_image) does not support `<style>` blocks, CDATA
+/// sections, or `rgba()` color values. This function:
+/// 1. Parses CSS rules out of any `<style>` tags in the SVG.
+/// 2. For each shape element, injects matching rules as `fill`/`stroke`
+///    XML attributes (not CSS properties) that nanosvg understands.
+/// 3. Converts `rgba(r,g,b,a)` colors to `#rrggbb` hex so nanosvg
+///    accepts them, and returns the minimum alpha across all fills so
+///    the caller can apply it via `texture.set_alpha_mod()`.
+/// 4. Strips the original `<style>` blocks.
+///
+/// Returns `(modified_svg_bytes, alpha_mod)` where `alpha_mod` is
+/// 0–255 (255 = fully opaque). If no alpha is specified, returns 255.
+pub fn preprocess_svg(bytes: &[u8]) -> (Vec<u8>, u8) {
+    let src = match std::str::from_utf8(bytes) {
+        Ok(s)  => s,
+        Err(_) => return (bytes.to_vec(), 255),
+    };
+
+    let lower = src.to_ascii_lowercase();
+    if !lower.contains("<style") {
+        return (bytes.to_vec(), 255);
+    }
+
+    let css = extract_svg_style_css(src);
+    if css.is_empty() {
+        return (bytes.to_vec(), 255);
+    }
+
+    let rules = parse_svg_css_rules(&css);
+    if rules.is_empty() {
+        return (bytes.to_vec(), 255);
+    }
+
+    // Compute the minimum alpha across all fill/stroke values in all rules.
+    // This becomes the SDL2 alpha_mod for the whole texture.
+    let mut min_alpha: f32 = 1.0;
+    for rule in &rules {
+        let decls = &rule.declarations;
+        if let Some(alpha) = extract_rgba_alpha(decls) {
+            if alpha < min_alpha { min_alpha = alpha; }
+        }
+    }
+    let alpha_mod = (min_alpha * 255.0).round() as u8;
+
+    // Rewrite rules to use opaque hex colors so nanosvg accepts them.
+    let opaque_rules: Vec<SvgCssRule> = rules.into_iter().map(|mut r| {
+        r.declarations = opacify_rgba_in_declarations(&r.declarations);
+        r
+    }).collect();
+
+    let rewritten = rewrite_svg_elements(src, &opaque_rules);
+    (rewritten.into_bytes(), alpha_mod)
+}
+
+/// Extract the alpha component from the first `rgba(...)` value found in a
+/// CSS declaration string. Returns `None` if no rgba() is present.
+fn extract_rgba_alpha(decls: &str) -> Option<f32> {
+    let lower = decls.to_ascii_lowercase();
+    let start = lower.find("rgba(")?;
+    let inner_start = start + 5;
+    let inner_end = lower[inner_start..].find(')')? + inner_start;
+    let inner = &decls[inner_start..inner_end];
+    let parts: Vec<&str> = inner.split(',').collect();
+    if parts.len() >= 4 {
+        parts[3].trim().parse::<f32>().ok()
+    } else {
+        None
+    }
+}
+
+/// Replace `rgba(r,g,b,a)` in a CSS declaration string with the opaque
+/// hex equivalent `#rrggbb` so nanosvg's limited CSS parser accepts it.
+fn opacify_rgba_in_declarations(decls: &str) -> String {
+    let lower = decls.to_ascii_lowercase();
+    let mut out = String::from(decls);
+    if let Some(rel) = lower.find("rgba(") {
+        let inner_start = rel + 5;
+        if let Some(close) = decls[inner_start..].find(')') {
+            let inner_end = inner_start + close;
+            let inner = &decls[inner_start..inner_end];
+            let parts: Vec<&str> = inner.split(',').collect();
+            if parts.len() >= 3 {
+                let r = parts[0].trim().parse::<f32>().unwrap_or(0.0) as u8;
+                let g = parts[1].trim().parse::<f32>().unwrap_or(0.0) as u8;
+                let b = parts[2].trim().parse::<f32>().unwrap_or(0.0) as u8;
+                let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
+                let full_end = inner_end + 1; // include ')'
+                out = format!("{}{}{}", &decls[..rel], hex, &decls[full_end..]);
+            }
+        }
+    }
+    out
+}
+
+/// Extract the raw CSS text from all `<style …>…</style>` sections,
+/// unwrapping CDATA markers if present.
+fn extract_svg_style_css(svg: &str) -> String {
+    let mut css = String::new();
+    let lower   = svg.to_ascii_lowercase();
+    let mut pos = 0;
+
+    while let Some(rel) = lower[pos..].find("<style") {
+        let abs  = pos + rel;
+        let rest = &lower[abs..];
+        // Find the closing '>' of the opening tag
+        let tag_end = match rest.find('>') {
+            Some(i) => abs + i + 1,
+            None    => break,
+        };
+        // Find </style>
+        let close_rel = match lower[tag_end..].find("</style") {
+            Some(i) => i,
+            None    => break,
+        };
+        let inner = &svg[tag_end..tag_end + close_rel];
+        // Unwrap CDATA
+        let inner = strip_cdata(inner);
+        css.push_str(inner);
+        css.push('\n');
+        pos = tag_end + close_rel + 8; // skip past "</style>"
+    }
+    css
+}
+
+fn strip_cdata(s: &str) -> &str {
+    let s = s.trim();
+    let s = if s.starts_with("<![CDATA[") { &s[9..] } else { s };
+    let s = if s.ends_with("]]>") { &s[..s.len()-3] } else { s };
+    s.trim()
+}
+
+/// A parsed CSS rule from inside an SVG `<style>` block.
+struct SvgCssRule {
+    /// Tag names this rule applies to (e.g. `["polygon", "path"]`).
+    /// Empty means wildcard (*).
+    tags: Vec<String>,
+    /// Raw declaration string, e.g. `"fill: rgba(255,255,255,0.035)"`.
+    declarations: String,
+}
+
+fn parse_svg_css_rules(css: &str) -> Vec<SvgCssRule> {
+    let mut rules = Vec::new();
+    let mut pos   = 0;
+    let bytes     = css.as_bytes();
+    let len       = css.len();
+
+    while pos < len {
+        // Skip whitespace and comments
+        skip_css_whitespace_and_comments(css, &mut pos);
+        if pos >= len { break; }
+
+        // Read selector up to '{'
+        let sel_start = pos;
+        while pos < len && bytes[pos] != b'{' { pos += 1; }
+        if pos >= len { break; }
+        let selector = css[sel_start..pos].trim().to_ascii_lowercase();
+        pos += 1; // skip '{'
+
+        // Read declarations up to '}'
+        let decl_start = pos;
+        let mut depth = 1usize;
+        while pos < len {
+            if bytes[pos] == b'{' { depth += 1; }
+            else if bytes[pos] == b'}' { depth -= 1; if depth == 0 { break; } }
+            pos += 1;
+        }
+        let declarations = css[decl_start..pos].trim().to_owned();
+        if pos < len { pos += 1; } // skip '}'
+
+        if declarations.is_empty() { continue; }
+
+        // Parse comma-separated selector list into tag names
+        let mut tags: Vec<String> = Vec::new();
+        for part in selector.split(',') {
+            let part = part.trim();
+            if part == "*" || part.is_empty() {
+                tags.clear();
+                break; // wildcard — apply to all
+            }
+            // Only handle simple tag selectors (letters/hyphens)
+            if part.chars().all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_') {
+                tags.push(part.to_owned());
+            }
+        }
+        rules.push(SvgCssRule { tags, declarations });
+    }
+    rules
+}
+
+fn skip_css_whitespace_and_comments(css: &str, pos: &mut usize) {
+    let bytes = css.as_bytes();
+    let len   = css.len();
+    loop {
+        while *pos < len && bytes[*pos].is_ascii_whitespace() { *pos += 1; }
+        if *pos + 1 < len && bytes[*pos] == b'/' && bytes[*pos + 1] == b'*' {
+            *pos += 2;
+            while *pos + 1 < len {
+                if bytes[*pos] == b'*' && bytes[*pos + 1] == b'/' { *pos += 2; break; }
+                *pos += 1;
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+/// Rewrite SVG source: strip `<style>` blocks and inject `style="…"` attrs
+/// onto shape elements based on the parsed CSS rules.
+fn rewrite_svg_elements(svg: &str, rules: &[SvgCssRule]) -> String {
+    // Shape tags nanosvg renders
+    const SHAPES: &[&str] = &[
+        "polygon", "path", "rect", "circle", "ellipse", "line", "polyline", "use", "g",
+    ];
+
+    let lower = svg.to_ascii_lowercase();
+    let mut out = String::with_capacity(svg.len() + 256);
+    let mut pos = 0usize;
+    let len     = svg.len();
+
+    while pos < len {
+        // Look for '<' 
+        let next_lt = match svg[pos..].find('<') {
+            Some(r) => pos + r,
+            None    => {
+                out.push_str(&svg[pos..]);
+                break;
+            }
+        };
+        out.push_str(&svg[pos..next_lt]);
+        pos = next_lt;
+
+        // Peek at the tag name
+        let tag_start = pos + 1;
+        let is_close = tag_start < len && svg.as_bytes()[tag_start] == b'/';
+        let name_start = if is_close { tag_start + 1 } else { tag_start };
+
+        // Read tag name (letters/hyphens)
+        let mut name_end = name_start;
+        while name_end < len {
+            let b = svg.as_bytes()[name_end];
+            if b.is_ascii_alphabetic() || b == b'-' || b == b'_' { name_end += 1; }
+            else { break; }
+        }
+        let tag_name = lower[name_start..name_end.min(len)].to_owned();
+
+        // Is this a <style …>…</style> block? Strip it entirely.
+        if !is_close && tag_name == "style" {
+            let tag_end = match svg[pos..].find('>') {
+                Some(r) => pos + r + 1,
+                None    => { out.push('<'); pos += 1; continue; }
+            };
+            // Find </style>
+            let close = lower[tag_end..].find("</style")
+                .map(|r| tag_end + r);
+            match close {
+                Some(cs) => {
+                    let after_close = lower[cs..].find('>')
+                        .map(|r| cs + r + 1)
+                        .unwrap_or(cs + 8);
+                    // Skip entirely — don't push anything
+                    pos = after_close;
+                }
+                None => {
+                    // Malformed — just skip the opening tag
+                    pos = tag_end;
+                }
+            }
+            continue;
+        }
+
+        // Is this a shape element we should inject style into?
+        if !is_close && SHAPES.contains(&tag_name.as_str()) {
+            // Collect applicable declarations from rules
+            let mut fill_val:   Option<String> = None;
+            let mut stroke_val: Option<String> = None;
+            let mut stroke_w:   Option<String> = None;
+
+            for rule in rules {
+                let applies = rule.tags.is_empty()
+                    || rule.tags.iter().any(|t| t == &tag_name);
+                if applies {
+                    // Parse declarations into individual properties
+                    for decl in rule.declarations.split(';') {
+                        let decl = decl.trim();
+                        if decl.is_empty() { continue; }
+                        if let Some(colon) = decl.find(':') {
+                            let prop = decl[..colon].trim().to_ascii_lowercase();
+                            let val  = decl[colon+1..].trim().to_owned();
+                            match prop.as_str() {
+                                "fill"         => { fill_val   = Some(val); }
+                                "stroke"       => { stroke_val = Some(val); }
+                                "stroke-width" => { stroke_w   = Some(val); }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            if fill_val.is_none() && stroke_val.is_none() {
+                let tag_end = find_tag_end(svg, pos);
+                out.push_str(&svg[pos..tag_end]);
+                pos = tag_end;
+            } else {
+                let tag_end = find_tag_end(svg, pos);
+                let tag_src = &svg[pos..tag_end];
+
+                // Trim off the closing '>' or '/>'
+                let is_self_close = tag_src.trim_end().ends_with("/>");
+                let trimmed = if is_self_close {
+                    tag_src.trim_end().trim_end_matches('>').trim_end_matches('/').trim_end()
+                } else {
+                    tag_src.trim_end().trim_end_matches('>').trim_end()
+                };
+
+                // Remove any existing fill=, stroke=, stroke-width= attrs to avoid conflicts
+                let cleaned = remove_xml_attr(trimmed, "fill");
+                let cleaned = remove_xml_attr(&cleaned, "stroke");
+                let cleaned = remove_xml_attr(&cleaned, "stroke-width");
+
+                out.push_str(&cleaned);
+                if let Some(f) = &fill_val   { out.push_str(&format!(" fill=\"{}\"", f)); }
+                if let Some(s) = &stroke_val { out.push_str(&format!(" stroke=\"{}\"", s)); }
+                if let Some(w) = &stroke_w   { out.push_str(&format!(" stroke-width=\"{}\"", w)); }
+                if is_self_close { out.push('/'); }
+                out.push('>');
+                pos = tag_end;
+            }
+            continue;
+        }
+
+        // Everything else — copy '<' and advance
+        out.push('<');
+        pos += 1;
+    }
+
+    out
+}
+
+/// Return the index just past the closing `>` of the tag starting at `pos`.
+fn find_tag_end(svg: &str, pos: usize) -> usize {
+    let bytes = svg.as_bytes();
+    let len   = svg.len();
+    let mut i = pos + 1;
+    let mut in_quote: Option<u8> = None;
+    while i < len {
+        let b = bytes[i];
+        match in_quote {
+            Some(q) if b == q => { in_quote = None; }
+            Some(_) => {}
+            None => match b {
+                b'"' | b'\'' => { in_quote = Some(b); }
+                b'>' => { return i + 1; }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    len
+}
+
+/// Remove an XML attribute (e.g. `fill="..."` or `fill='...'`) from a tag string.
+fn remove_xml_attr(tag: &str, attr: &str) -> String {
+    let lower  = tag.to_ascii_lowercase();
+    let needle = format!("{}=", attr);
+    match lower.find(&needle) {
+        None => tag.to_owned(),
+        Some(start) => {
+            let after_eq = start + needle.len();
+            if after_eq >= tag.len() { return tag.to_owned(); }
+            let quote = tag.as_bytes()[after_eq];
+            let end = if quote == b'"' || quote == b'\'' {
+                tag[after_eq + 1..]
+                    .find(quote as char)
+                    .map(|i| after_eq + 1 + i + 1)
+                    .unwrap_or(tag.len())
+            } else {
+                // unquoted — end at next whitespace or '>'
+                tag[after_eq..].find(|c: char| c.is_ascii_whitespace() || c == '>')
+                    .map(|i| after_eq + i)
+                    .unwrap_or(tag.len())
+            };
+            // Also eat any leading whitespace before the attr
+            let trim_start = if start > 0 && tag.as_bytes()[start - 1] == b' ' {
+                start - 1
+            } else {
+                start
+            };
+            format!("{}{}", &tag[..trim_start], &tag[end..])
+        }
+    }
 }

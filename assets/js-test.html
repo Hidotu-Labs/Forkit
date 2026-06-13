@@ -3,7 +3,6 @@
 <head>
   <title>Forkit JavaScript Test</title>
   <style>
-    /* ── Reset / base ── */
     body {
       color: #222222;
       background-color: #f0f0f0;
@@ -39,115 +38,184 @@
 
     .pass { background-color: rgba(30, 160, 80, 0.1); border-left: 3px solid #009944; }
     .na   { background-color: rgba(200, 200, 200, 0.2); border-left: 3px solid #aaaaaa; color: #777777; }
+    .info { background-color: rgba(0, 100, 200, 0.08); border-left: 3px solid #0064c8; }
   </style>
 </head>
 <body>
 
   <h1>Forkit — JavaScript Test</h1>
   <p style="color: #555; font-size: 13px; margin-top: 0;">
-    Section 17: JavaScript variable support. Output goes to the terminal console.
-    Press Q or Esc to quit, R to reload.
+    Output goes to the developer console (F12). Press Esc to quit, R to reload.
   </p>
 
   <!-- ═══════════════════════════════════════════════════════ -->
-  <h2>17. JavaScript — Variable Support</h2>
+  <h2>17a. Variables &amp; Arithmetic</h2>
   <div class="card">
-    <div class="label">var / let / const declarations</div>
-    <div class="row pass">Open the console output to verify JS execution below.</div>
-
-    <div class="label">Arithmetic operators: + - * / %</div>
+    <div class="label">var / let / const  ·  + - * / %  ·  += -= *= /=</div>
     <div class="row pass">let x = 10; x * 3 - 5 = 25</div>
+    <div class="label">Comparison: == != &lt; &gt; &lt;= &gt;=  ·  Logical: &amp;&amp; || !</div>
+    <div class="row pass">10 &gt; 5 → true  ·  true &amp;&amp; false → false</div>
+  </div>
 
-    <div class="label">Comparison operators: == != &lt; &gt; &lt;= &gt;=</div>
-    <div class="row pass">10 &gt; 5 → true, 3 == "3" → true (loose eq)</div>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17b. DOM Read — getElementById</h2>
+  <div class="card">
+    <div class="label">document.getElementById("target-box")</div>
+    <div class="row info" id="target-box">Hello from the DOM — id=target-box</div>
+    <div class="label">document.getElementById("meta-title")</div>
+    <div class="row info" id="meta-title">Page title element</div>
+  </div>
 
-    <div class="label">Logical operators: &amp;&amp; || !</div>
-    <div class="row pass">true &amp;&amp; false → false, !false → true</div>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17c. DOM Read — querySelector</h2>
+  <div class="card">
+    <div class="label">document.querySelector(".highlight")</div>
+    <div class="row pass highlight" id="qs-result">querySelector result node</div>
+    <div class="label">document.querySelector("h2")</div>
+    <div class="row info">First h2 text content logged to console</div>
+  </div>
 
-    <div class="label">Compound assignment: += -= *= /=</div>
-    <div class="row pass">let n = 10; n += 5; n *= 2 → 30</div>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17d. DOM Read — querySelectorAll / getElementsByTagName</h2>
+  <div class="card">
+    <div class="label">document.querySelectorAll(".card") — count</div>
+    <div class="row info">Card count logged to console</div>
+    <div class="label">document.getElementsByTagName("h2") — count</div>
+    <div class="row info">h2 count logged to console</div>
+    <div class="label">document.getElementsByClassName("pass") — count</div>
+    <div class="row info">pass-class element count logged to console</div>
+  </div>
 
-    <div class="label">String concatenation via variables</div>
-    <div class="row pass">let a = "hello"; let b = "world"; a + " " + b → "hello world"</div>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17e. DOM Read — element properties</h2>
+  <div class="card">
+    <div class="label">.id  .className  .tagName  .textContent  .innerHTML</div>
+    <div class="row pass" id="prop-demo" class="demo-class">Property demo element</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17f. DOM Read — getAttribute</h2>
+  <div class="card">
+    <div class="label">element.getAttribute("class") / getAttribute("id")</div>
+    <div class="row info" id="attr-demo">getAttribute demo — id=attr-demo class=row info</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17g. DOM Read — document.title</h2>
+  <div class="card">
+    <div class="label">document.title</div>
+    <div class="row info">Page title logged to console</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>17h. Null-safety — missing element</h2>
+  <div class="card">
+    <div class="label">document.getElementById("does-not-exist") === null</div>
+    <div class="row pass">Should log: missing element is null → true</div>
   </div>
 
   <script>
-    // ── Variable declarations ──────────────────────────────
+    // ════════════════════════════════════════════════════════
+    // 17a — Variables & arithmetic (pre-existing features)
+    // ════════════════════════════════════════════════════════
     var greeting = "Forkit JS engine";
     let version  = 2;
     const pi     = 3.14159;
-
+    console.log("--- 17a: Variables ---");
     console.log(greeting + " v" + version);
     console.log("pi =", pi);
 
-    // ── Arithmetic ─────────────────────────────────────────
     let x = 10;
     let y = 3;
     console.log("x + y =", x + y);
-    console.log("x - y =", x - y);
     console.log("x * y =", x * y);
-    console.log("x / y =", x / y);
     console.log("x % y =", x % y);
 
-    // ── Unary minus ────────────────────────────────────────
-    let neg = -x;
-    console.log("neg x =", neg);
-
-    // ── Compound assignment ────────────────────────────────
     let n = 10;
     n += 5;
-    console.log("after += 5:", n);
     n *= 2;
-    console.log("after *= 2:", n);
-    n -= 8;
-    console.log("after -= 8:", n);
-    n /= 2;
-    console.log("after /= 2:", n);
+    console.log("n after +=5 *=2:", n);
 
-    // ── String variables + concatenation ──────────────────
-    let firstName = "Fork";
-    let lastName  = "it";
-    let full      = firstName + lastName + "!";
-    console.log("full name:", full);
-
-    // ── Comparisons ────────────────────────────────────────
     console.log("10 > 5:", 10 > 5);
-    console.log("3 == 3:", 3 == 3);
     console.log("3 == \"3\":", 3 == "3");
-    console.log("4 != 5:", 4 != 5);
-    console.log("7 <= 7:", 7 <= 7);
-    console.log("6 >= 9:", 6 >= 9);
-
-    // ── Logical operators ──────────────────────────────────
     console.log("true && false:", true && false);
-    console.log("true || false:", true || false);
-    console.log("!true:", !true);
     console.log("!false:", !false);
 
-    // ── Boolean variables ──────────────────────────────────
-    const isReady = true;
-    const isDone  = false;
-    console.log("isReady && !isDone:", isReady && !isDone);
+    // ════════════════════════════════════════════════════════
+    // 17b — getElementById
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17b: getElementById ---");
 
-    // ── Chained arithmetic expressions ────────────────────
-    let result = x * y + 2;
-    console.log("x * y + 2 =", result);
-    let expr = (x + y) * (x - y);
-    console.log("(x+y)*(x-y) =", expr);
+    let box = document.getElementById("target-box");
+    console.log("target-box textContent:", box.textContent);
+    console.log("target-box tagName:", box.tagName);
+    console.log("target-box id:", box.id);
 
-    // ── Hex literal ───────────────────────────────────────
-    const hex = 0xFF;
-    console.log("0xFF =", hex);
+    let titleEl = document.getElementById("meta-title");
+    console.log("meta-title textContent:", titleEl.textContent);
 
-    // ── NaN / Infinity ────────────────────────────────────
-    console.log("Infinity:", Infinity);
+    // ════════════════════════════════════════════════════════
+    // 17c — querySelector
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17c: querySelector ---");
 
-    // ── Reassignment ──────────────────────────────────────
-    let msg = "initial";
-    msg = "reassigned";
-    console.log("msg after reassign:", msg);
+    let qsEl = document.querySelector(".highlight");
+    console.log("querySelector .highlight id:", qsEl.id);
+    console.log("querySelector .highlight text:", qsEl.textContent);
 
-    console.warn("JS variable test complete");
+    let firstH2 = document.querySelector("h2");
+    console.log("first h2 text:", firstH2.textContent);
+
+    // ════════════════════════════════════════════════════════
+    // 17d — querySelectorAll / getElementsByTagName / ByClassName
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17d: multi-element queries ---");
+
+    let cards = document.querySelectorAll(".card");
+    console.log("querySelectorAll .card length:", cards.length);
+
+    let headings = document.getElementsByTagName("h2");
+    console.log("getElementsByTagName h2 length:", headings.length);
+
+    let passEls = document.getElementsByClassName("pass");
+    console.log("getElementsByClassName pass length:", passEls.length);
+
+    // ════════════════════════════════════════════════════════
+    // 17e — element properties
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17e: element properties ---");
+
+    let propEl = document.getElementById("prop-demo");
+    console.log("prop-demo id:", propEl.id);
+    console.log("prop-demo className:", propEl.className);
+    console.log("prop-demo tagName:", propEl.tagName);
+    console.log("prop-demo textContent:", propEl.textContent);
+    console.log("prop-demo innerHTML:", propEl.innerHTML);
+
+    // ════════════════════════════════════════════════════════
+    // 17f — getAttribute
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17f: getAttribute ---");
+
+    let attrEl = document.getElementById("attr-demo");
+    console.log("getAttribute id:", attrEl.getAttribute("id"));
+    console.log("getAttribute class:", attrEl.getAttribute("class"));
+
+    // ════════════════════════════════════════════════════════
+    // 17g — document.title
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17g: document.title ---");
+    console.log("document.title:", document.title);
+
+    // ════════════════════════════════════════════════════════
+    // 17h — null-safety for missing element
+    // ════════════════════════════════════════════════════════
+    console.log("--- 17h: null-safety ---");
+
+    let missing = document.getElementById("does-not-exist");
+    console.log("missing element is null:", missing == null);
+
+    console.warn("DOM read test complete");
   </script>
 
 </body>

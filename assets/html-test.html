@@ -139,6 +139,7 @@
       <tr><td>CSS Transitions / Animations / Transforms</td><td class="todo">Not yet</td></tr>
       <tr><td>table colspan / rowspan</td><td class="todo">Not yet</td></tr>
       <tr><td>Full JavaScript (if/for/functions/DOM API)</td><td class="todo">Not yet</td></tr>
+      <tr><td>Audio playback (&lt;audio&gt; with default player UI)</td><td class="done">Implemented</td></tr>
     </tbody>
   </table>
 </div>
@@ -625,7 +626,7 @@ Second line here</textarea>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>12. Media Placeholders</h2>
+<h2>12. Media</h2>
 <div class="card">
 
   <div class="test na">
@@ -637,11 +638,21 @@ Second line here</textarea>
     </div>
   </div>
 
-  <div class="test na">
-    <div class="test-label">audio — dark rounded placeholder</div>
+  <div class="test ok">
+    <div class="test-label">audio — default player UI (click ▶ to play)</div>
+    <div class="test-result">
+      <audio controls style="width:420px;">
+        <source src="https://www.w3schools.com/html/horse.ogg" type="audio/ogg">
+        <source src="https://www.w3schools.com/html/horse.mp3" type="audio/mpeg">
+      </audio>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">audio — narrow player (300px default width)</div>
     <div class="test-result">
       <audio controls>
-        <source src="audio.mp3" type="audio/mpeg">
+        <source src="https://www.w3schools.com/html/horse.ogg" type="audio/ogg">
       </audio>
     </div>
   </div>

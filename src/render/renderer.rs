@@ -12,6 +12,7 @@ pub struct RenderCtx {
     pub viewport_width:  i32,
     pub viewport_height: i32,
     pub scroll_y:        i32,
+    pub base_url:        String,
 }
 
 /// Clear the canvas and run the layout + paint pass.

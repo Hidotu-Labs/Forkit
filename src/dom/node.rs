@@ -108,6 +108,7 @@ pub enum BgSize {
     #[default] Auto,   // use the image's natural size
     Cover,             // scale to cover the box (may crop)
     Contain,           // scale to fit inside the box (may letterbox)
+    Explicit(i32, i32), // explicit width × height in px
 }
 
 /// CSS `background-repeat`
@@ -127,6 +128,23 @@ pub struct BgPosition {
     pub x: i32,
     /// Vertical offset in px (0 = top edge)
     pub y: i32,
+}
+
+/// A single colour stop inside a `linear-gradient`.
+#[derive(Debug, Clone, Copy)]
+pub struct GradientStop {
+    pub color: [u8; 3],
+    pub alpha: u8,
+    /// Position in the range [0.0, 1.0]. `None` means "evenly distribute".
+    pub pos:   Option<f32>,
+}
+
+/// A parsed CSS `linear-gradient(…)` value.
+#[derive(Debug, Clone)]
+pub struct LinearGradient {
+    /// Angle in degrees: 0 = bottom→top, 90 = left→right (CSS convention).
+    pub angle_deg: f32,
+    pub stops:     Vec<GradientStop>,
 }
 
 /// A simple box-shadow descriptor (offset-x, offset-y, blur, color).
@@ -159,7 +177,8 @@ pub struct Style {
 
     // --- box ---
     pub bg_color:            Option<[u8; 3]>,
-    pub bg_image_url:        Option<String>,   // CSS background-image: url(…)
+    pub bg_image_url:        Option<String>,       // CSS background-image: url(…)
+    pub bg_gradient:         Option<LinearGradient>, // CSS linear-gradient(…)
     pub bg_size:             BgSize,
     pub bg_repeat:           BgRepeat,
     pub bg_position:         BgPosition,
@@ -223,6 +242,7 @@ impl Default for Style {
 
             bg_color:          None,
             bg_image_url:      None,
+            bg_gradient:       None,
             bg_size:           BgSize::Auto,
             bg_repeat:         BgRepeat::Repeat,
             bg_position:       BgPosition::default(),

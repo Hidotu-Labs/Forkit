@@ -10,9 +10,9 @@ pub fn apply_media_defaults(tag: &str, s: &mut Style) {
         }
         "audio" => {
             if s.size.width.is_none()  { s.size.width  = Some(300); }
-            if s.size.height.is_none() { s.size.height = Some(36); }
-            s.bg_color      = Some([50, 50, 50]);
-            s.border_radius = [18, 18, 18, 18];
+            if s.size.height.is_none() { s.size.height = Some(54); }
+            s.bg_color      = Some([40, 40, 40]);
+            s.border_radius = [8, 8, 8, 8];
         }
         _ => {}
     }

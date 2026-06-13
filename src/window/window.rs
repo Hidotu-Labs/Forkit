@@ -42,6 +42,7 @@ impl AppWindow {
             viewport_width:  w,
             viewport_height: h,
             scroll_y,
+            base_url:        String::new(),
         }
     }
 }

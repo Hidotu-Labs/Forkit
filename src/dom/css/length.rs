@@ -56,24 +56,24 @@ pub fn parse_length_ctx(val: &str, ctx: &LengthContext) -> Option<i32> {
     }
     if let Some(n) = v.strip_suffix("rem").or_else(|| v.strip_suffix("em")) {
         return n.trim().parse::<f32>().ok()
-            .map(|n| (n * ctx.base_font_size as f32 * 0.9) as i32); // Slightly smaller as requested
+            .map(|n| (n * ctx.base_font_size as f32).round() as i32);
     }
     if let Some(n) = v.strip_suffix("vw") {
         return n.trim().parse::<f32>().ok()
-            .map(|n| (n / 100.0 * ctx.viewport_width as f32) as i32);
+            .map(|n| (n / 100.0 * ctx.viewport_width as f32).round() as i32);
     }
     if let Some(n) = v.strip_suffix("vh") {
         return n.trim().parse::<f32>().ok()
-            .map(|n| (n / 100.0 * ctx.viewport_height as f32) as i32);
+            .map(|n| (n / 100.0 * ctx.viewport_height as f32).round() as i32);
     }
     // ch ≈ 0.5em, ex ≈ 0.5em (approximation when font metrics unavailable)
     if let Some(n) = v.strip_suffix("ch").or_else(|| v.strip_suffix("ex")) {
         return n.trim().parse::<f32>().ok()
-            .map(|n| (n * ctx.base_font_size as f32 * 0.5) as i32);
+            .map(|n| (n * ctx.base_font_size as f32 * 0.5).round() as i32);
     }
     if let Some(n) = v.strip_suffix('%') {
         return n.trim().parse::<f32>().ok()
-            .map(|n| (n / 100.0 * ctx.percent_base as f32) as i32);
+            .map(|n| (n / 100.0 * ctx.percent_base as f32).round() as i32);
     }
     v.parse::<f32>().ok().map(|n| n as i32)
 }
@@ -167,7 +167,7 @@ fn eval_expr(expr: &str, ctx: &LengthContext) -> Option<i32> {
                 let lhs = intermediate.pop()?.as_value(ctx)?;
                 i += 1;
                 let rhs = tokens[i].as_value(ctx)?;
-                intermediate.push(Token::Value((lhs * rhs) as i32));
+                intermediate.push(Token::Value((lhs * rhs).round() as i32));
             }
             Token::Op('/') => {
                 let lhs = intermediate.pop()?.as_value(ctx)?;
@@ -177,7 +177,7 @@ fn eval_expr(expr: &str, ctx: &LengthContext) -> Option<i32> {
                     eprintln!("calc(): division by zero, treating as 0");
                     intermediate.push(Token::Value(0));
                 } else {
-                    intermediate.push(Token::Value((lhs as f32 / rhs_f) as i32));
+                    intermediate.push(Token::Value((lhs as f32 / rhs_f).round() as i32));
                 }
             }
             t => intermediate.push(t.clone()),
@@ -201,7 +201,7 @@ fn eval_expr(expr: &str, ctx: &LengthContext) -> Option<i32> {
             }
         }
     }
-    Some(result as i32)
+    Some(result.ceil() as i32)
 }
 
 #[derive(Clone, Debug)]

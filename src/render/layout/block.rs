@@ -23,12 +23,10 @@ pub mod images;
 pub mod forms;
 
 pub use utils::{resolve_size, open_block, close_block};
-pub use measure::{measure_block_children, measure_inline_block_children, advance_text_invisible};
-pub use paint::{paint_block_bg, paint_block_bg_image, paint_block_border, paint_scrollbar, paint_bullet};
-pub use images::{paint_image, paint_media_placeholder};
-pub use forms::{paint_form_control, paint_progress};
-
-/// Main dispatch for a single element node.
+pub use measure::{measure_block_children, measure_inline_block_children, measure_block_content_width, advance_text_invisible};
+pub use paint::{paint_block_bg, paint_block_bg_gradient, paint_block_bg_image, paint_block_border, paint_scrollbar, paint_bullet};
+pub use images::{paint_image, paint_media_placeholder, paint_audio_player};
+pub use forms::{paint_form_control, paint_progress};/// Main dispatch for a single element node.
 pub fn layout_element(
     ls:       &mut LayoutState,
     canvas:   &mut Canvas<Window>,
@@ -66,6 +64,9 @@ pub fn layout_element(
     if matches!(tag, "#document" | "html" | "body") {
         if s.bg_color.is_some() {
             paint_block_bg(ls, canvas, s, 0, 0, max_w, ls.ctx.viewport_height);
+        }
+        if s.bg_gradient.is_some() {
+            paint_block_bg_gradient(ls, canvas, s, 0, 0, max_w, ls.ctx.viewport_height);
         }
         if s.bg_image_url.is_some() {
             paint_block_bg_image(ls, canvas, tc, images, base_url, s,
@@ -160,7 +161,40 @@ pub fn layout_element(
 
     if matches!(tag, "video" | "audio" | "canvas" | "iframe") {
         let dw = s.size.width.unwrap_or(if tag == "audio" { 300 } else { 320 });
-        let dh = s.size.height.unwrap_or(if tag == "audio" { 36 } else { 180 });
+        let dh = s.size.height.unwrap_or(if tag == "audio" { 54 } else { 180 });
+
+        if tag == "audio" {
+            // Resolve the audio src — from `src` attribute or first `<source>` child.
+            let src = crate::dom::parser::get_attr(&el.attrs_raw, "src")
+                .map(|s| s.to_owned())
+                .or_else(|| {
+                    el.children.iter().find_map(|c| {
+                        if let crate::dom::node::Node::Element(child) = c {
+                            if child.tag == "source" {
+                                return crate::dom::parser::get_attr(&child.attrs_raw, "src")
+                                    .map(|s| s.to_owned());
+                            }
+                        }
+                        None
+                    })
+                })
+                .unwrap_or_default();
+
+            // Resolve relative src to absolute URL.
+            let resolved_src = if src.is_empty() {
+                src.clone()
+            } else {
+                crate::net::resolve_url(&src, base_url)
+            };
+
+            paint_audio_player(
+                ls, canvas, tc, fonts,
+                &resolved_src,
+                dw, dh, s,
+            );
+            return;
+        }
+
         paint_media_placeholder(ls, canvas, tc, fonts, tag, dw, dh, s, max_w);
         return;
     }
@@ -299,10 +333,14 @@ pub fn layout_element(
     let contain_right = max_w - MARGIN_RIGHT;
     let contain_w     = (contain_right - contain_left).max(0);
 
-    let mut box_w = resolved_width.unwrap_or(
+    let mut box_w = if let Some(rw) = resolved_width {
+        // CSS default is content-box: the resolved width is the content area.
+        // Add padding so the visual box is wide enough and children get rw px.
+        rw + s.padding.left + s.padding.right
+    } else {
         (contain_w - s.margin.left - s.margin.right).max(0)
-    );
-    if let Some(mw) = resolved_max_width { box_w = box_w.min(mw); }
+    };
+    if let Some(mw) = resolved_max_width { box_w = box_w.min(mw + s.padding.left + s.padding.right); }
     
     let remaining = (contain_w - box_w - s.margin.left - s.margin.right).max(0);
     let ml = if s.margin_auto_left || s.margin_auto_right {
@@ -333,9 +371,31 @@ pub fn layout_element(
             return;
         }
 
-        let content_w = resolved_width
-            .unwrap_or_else(|| measure_inline_block_children(fonts, &el.children, font_size));
-        let content_h = font_size as i32;
+        // Measure the content area first so we can paint the background
+        // before rendering children.  For shrink-to-fit (no explicit width),
+        // measure the widest text line across all block/inline children.
+        let content_w = if let Some(rw) = resolved_width {
+            rw
+        } else {
+            // Check if children contain any block-level elements.
+            let has_block_children = el.children.iter().any(|c| {
+                matches!(c, crate::dom::node::Node::Element(e) if e.style.display_block)
+            });
+            if has_block_children {
+                // Shrink-to-fit: widest rendered line among block children.
+                measure_block_content_width(fonts, &el.children, font_size)
+            } else {
+                // Pure inline content: sum of all inline widths.
+                measure_inline_block_children(fonts, &el.children, font_size)
+            }
+        };
+
+        // Measure height by doing a dry-run layout.
+        let content_h = {
+            let raw_h = measure_block_children(ls, fonts, el,
+                ib_x + pad_l + content_w + pad_r, s);
+            raw_h.max(font_size as i32)
+        };
 
         let ib_w = (pad_l + content_w + pad_r).max(0);
         let ib_h = (pad_t + content_h + pad_b).max(font_size as i32);
@@ -348,6 +408,13 @@ pub fn layout_element(
                                ib_x, ib_y, ib_w, ib_h, radii,
                                ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
+        if s.bg_gradient.is_some() {
+            paint_block_bg_gradient(ls, canvas, s, ib_x, ib_y, ib_w, ib_h);
+        }
+        if s.bg_image_url.is_some() {
+            paint_block_bg_image(ls, canvas, tc, images, base_url, s,
+                                 ib_x, ib_y, ib_w, ib_h);
+        }
         let b = &s.borders;
         let has_border = b.top.width > 0 || b.bottom.width > 0
                       || b.left.width > 0 || b.right.width > 0;
@@ -358,16 +425,30 @@ pub fn layout_element(
                                ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
 
-        ls.cursor_x = ib_x + pad_l;
+        // Save layout state, render children into the inline-block's coordinate
+        // space, then restore so subsequent inline content continues on the same line.
+        let saved_margin_left = ls.margin_left;
+        let saved_indent      = ls.indent;
+
+        ls.cursor_x    = ib_x + pad_l;
+        ls.cursor_y    = ib_y + pad_t;
+        ls.margin_left = ib_x + pad_l;
+        ls.indent      = 0;
+
+        let children_max_w = (ib_x + pad_l + content_w).max(ls.cursor_x + 1);
         for child in &el.children {
-            ls.layout_node(canvas, tc, fonts, images, base_url, child, max_w);
+            ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
         }
 
-        ls.cursor_x = ib_x + ib_w;
+        ls.margin_left = saved_margin_left;
+        ls.indent      = saved_indent;
+        ls.cursor_x    = ib_x + ib_w + s.margin.right;
+        ls.cursor_y    = ib_y;   // restore — inline-block sits on the current line
         if ib_h > ls.line_height {
             ls.line_height = ib_h;
         }
 
+        if tag == "ol" { ls.ol_stack.pop(); }
         return;
     }
 
@@ -402,6 +483,13 @@ pub fn layout_element(
             if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
             paint_block_bg(ls, canvas, s, block_x, start_y, block_w, block_h);
         }
+        if s.bg_gradient.is_some() {
+            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
+            if let Some(h)  = resolved_height     { block_h = h; }
+            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
+            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
+            paint_block_bg_gradient(ls, canvas, s, block_x, start_y, block_w, block_h);
+        }
         if s.bg_image_url.is_some() {
             let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
             if let Some(h)  = resolved_height     { block_h = h; }
@@ -429,6 +517,12 @@ pub fn layout_element(
 
     let link_start_y = ls.cursor_y;
     let link_start_x = ls.cursor_x;
+
+    // For `header.major` elements, detect heading children and draw the
+    // decorative flanking lines (normally rendered via CSS ::before/::after
+    // pseudo-elements which Forkit doesn't support).
+    let is_header_major = tag == "header"
+        && el.class_name.split_ascii_whitespace().any(|c| c == "major");
 
     let overflow_clips = matches!(
         s.overflow,
@@ -466,6 +560,42 @@ pub fn layout_element(
     }
 
     for child in &el.children {
+        if is_header_major {
+            if let crate::dom::node::Node::Element(child_el) = child {
+                let ct = child_el.tag.as_str();
+                let is_heading = ct.len() == 2
+                    && ct.starts_with('h')
+                    && ct.as_bytes()[1].is_ascii_digit();
+                if is_heading {
+                    let heading_y    = ls.cursor_y;
+                    let heading_font = child_el.style.font_size;
+                    let viewport_w   = ls.ctx.viewport_width;
+                    let heading_color = child_el.style.color;
+
+                    // Measure heading text width for symmetric wing placement.
+                    // Use the same measurement for both sides so spacing is equal.
+                    let text_w = measure_heading_text_width(
+                        fonts, &child_el.children, heading_font,
+                    );
+                    // Half-width rounded to nearest even pixel so both sides
+                    // get exactly the same gap.
+                    let text_half_w = (text_w + 1) / 2;
+
+                    ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
+                    paint_header_major_decoration(
+                        canvas,
+                        viewport_w,
+                        heading_y,
+                        heading_font,
+                        text_half_w,
+                        heading_color,
+                        ls.ctx.scroll_y,
+                        ls.ctx.viewport_height,
+                    );
+                    continue;
+                }
+            }
+        }
         ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
     }
 
@@ -614,6 +744,107 @@ pub fn layout_node_invisible(
         }
         Node::Element(el) => {
             layout_element_invisible(ls, fonts, el, max_w);
+        }
+    }
+}
+
+/// Measure the total pixel width of all text nodes inside a heading element.
+fn measure_heading_text_width(
+    fonts:     &mut FontCache,
+    children:  &[crate::dom::node::Node],
+    font_size: u16,
+) -> i32 {
+    use crate::dom::node::Node;
+    use crate::render::layout::paint::measure_text;
+    let mut total = 0i32;
+    for child in children {
+        match child {
+            Node::Text(t) => {
+                let text = t.text.trim();
+                if !text.is_empty() {
+                    let (w, _) = measure_text(fonts, text, &t.style);
+                    total += w;
+                }
+            }
+            Node::Element(e) => {
+                let fs = if e.style.font_size > 0 { e.style.font_size } else { font_size };
+                total += measure_heading_text_width(fonts, &e.children, fs);
+            }
+        }
+    }
+    total
+}
+
+/// Draw the decorative flanking lines for `header.major > h*` elements.
+///
+/// The lines are derived from `header-major-on-light.svg` (three staggered
+/// horizontal lines). On dark backgrounds the site uses `header-major-on-dark.svg`
+/// which has lighter lines — we approximate this by using the heading's own
+/// color with 20% opacity, which automatically adapts to light/dark contexts.
+///
+/// Both wings use exactly `text_half_w + em_gap` from the viewport centre so
+/// the spacing is perfectly symmetric regardless of font metric rounding.
+fn paint_header_major_decoration(
+    canvas:      &mut Canvas<Window>,
+    viewport_w:  i32,
+    heading_y:   i32,
+    font_size:   u16,
+    text_half_w: i32,
+    heading_color: [u8; 3],
+    scroll_y:    i32,
+    viewport_h:  i32,
+) {
+    // Derive line colour from the heading's own text colour at 20% opacity.
+    // On light backgrounds (dark text) this gives a subtle dark line.
+    // On dark backgrounds (light/white text) this gives a subtle light line.
+    let [r, g, b] = heading_color;
+    let line_color = sdl2::pixels::Color::RGBA(r, g, b, 51); // 51 ≈ 0.2 * 255
+
+    let deco_w = 150i32;
+    // Gap = 1em from the text edge, minimum 16px
+    let em_gap = (font_size as i32).max(16);
+    let deco_h = 20i32;
+
+    // Vertical centre: mid-cap-height of the heading
+    let cy = heading_y + (font_size as i32 / 2);
+
+    // Symmetric anchor: both wings are the same distance from viewport centre
+    let center_x   = viewport_w / 2;
+    let half_offset = text_half_w + em_gap; // same value used for both sides
+
+    // Three staggered lines (x_start, x_end, y_offset_from_deco_top):
+    let line_defs: &[(i32, i32, i32)] = &[
+        (0,  150,  1),
+        (20, 150, 10),
+        (40, 150, 19),
+    ];
+
+    // ── Left wing: right-aligned, right edge at center_x - half_offset ──
+    let left_right = center_x - half_offset;
+    let left_left  = left_right - deco_w;
+    for &(x0, x1, dy) in line_defs {
+        let ax = left_left + x0;
+        let bx = left_left + x1;
+        let ay = cy - deco_h / 2 + dy;
+        let ry = ay - scroll_y;
+        if ry >= 0 && ry < viewport_h && ax < bx {
+            canvas.set_draw_color(line_color);
+            let _ = canvas.draw_line((ax, ry), (bx, ry));
+        }
+    }
+
+    // ── Right wing: left-aligned, left edge at center_x + half_offset,
+    //    mirrored so the widest line is outermost (away from text) ────────
+    let right_left = center_x + half_offset;
+    for &(x0, x1, dy) in line_defs {
+        // Mirror: near edge = deco_w - x1, far edge = deco_w - x0
+        let ax = right_left + (deco_w - x1);
+        let bx = right_left + (deco_w - x0);
+        let ay = cy - deco_h / 2 + dy;
+        let ry = ay - scroll_y;
+        if ry >= 0 && ry < viewport_h && ax < bx {
+            canvas.set_draw_color(line_color);
+            let _ = canvas.draw_line((ax, ry), (bx, ry));
         }
     }
 }

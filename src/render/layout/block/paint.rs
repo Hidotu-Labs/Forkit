@@ -11,9 +11,7 @@ use crate::render::layout::paint::{
     draw_rounded_rect, rgba_color,
 };
 use crate::render::layout::state::{LayoutState, LINE_SPACING, BLOCK_MARGIN};
-use crate::render::layout::block::measure::measure_block_children;
-
-pub fn paint_scrollbar(
+use crate::render::layout::block::measure::measure_block_children;pub fn paint_scrollbar(
     ls:      &mut LayoutState,
     canvas:  &mut Canvas<Window>,
     fonts:   &mut FontCache,
@@ -81,45 +79,44 @@ pub fn paint_bullet(
     s:      &Style,
 ) {
     let bstyle = Style { font_size: s.font_size, color: s.color, ..Default::default() };
+    let line_h = (s.font_size as f32 * s.line_height_mul) as i32;
     
     if let Some(count) = ls.ol_stack.last_mut() {
         *count += 1;
-        let bullet = format!("{}. ", count);
-        let (bw, _) = measure_text(fonts, &bullet, &bstyle);
-        let bx = (ls.cursor_x - bw).max(ls.margin_left);
-        paint_text(canvas, tc, fonts, &bullet, &bstyle, bx, ls.cursor_y,
+        let bullet = format!("{}.", count);
+        let (bw, bh) = measure_text(fonts, &bullet, &bstyle);
+        let gap = 3; // tight gap between number and text, like a browser
+        let bx = ls.cursor_x - bw - gap;
+        // Vertically center the number on the line
+        let by = ls.cursor_y + (line_h - bh) / 2;
+        paint_text(canvas, tc, fonts, &bullet, &bstyle, bx, by,
                    ls.rounding_clip.as_ref(),
                    ls.ctx.scroll_y, ls.ctx.viewport_height);
         return;
     }
 
+    let size = (s.font_size as i32 / 4).max(4);
+    // Gap between bullet and text: ~0.4em
+    let gap = (s.font_size as i32 * 2 / 5).max(5);
+    let bx = ls.cursor_x - size - gap;
+    // Vertically center bullet on the text line
+    let by = ls.cursor_y + (line_h / 2) - (size / 2);
+
     match s.list_style_type {
         ListStyleType::None => {}
         ListStyleType::Square => {
-            let size = (s.font_size as i32 / 4).max(4);
-            let bw = size + 8; // space for bullet + gap
-            let bx = (ls.cursor_x - bw + 4).max(ls.margin_left);
-            let by = ls.cursor_y + (s.font_size as i32 / 2) - (size / 2);
             fill_rect_alpha(canvas, rgba_color(s.color, 255), 255,
                             bx, by, size, size,
                             ls.rounding_clip.as_ref(),
                             ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
         ListStyleType::Circle => {
-            let size = (s.font_size as i32 / 4).max(4);
-            let bw = size + 8;
-            let bx = (ls.cursor_x - bw + 4).max(ls.margin_left);
-            let by = ls.cursor_y + (s.font_size as i32 / 2) - (size / 2);
             draw_rounded_rect(canvas, rgba_color(s.color, 255), 255,
                               bx, by, size, size, [size as u16 / 2; 4],
                               ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
         _ => {
-            // Disc
-            let size = (s.font_size as i32 / 4).max(4);
-            let bw = size + 8;
-            let bx = (ls.cursor_x - bw + 4).max(ls.margin_left);
-            let by = ls.cursor_y + (s.font_size as i32 / 2) - (size / 2);
+            // Disc (default)
             fill_rounded_rect(canvas, rgba_color(s.color, 255), 255,
                               bx, by, size, size, [size as u16 / 2; 4],
                               ls.ctx.scroll_y, ls.ctx.viewport_height);
@@ -148,6 +145,22 @@ pub fn paint_block_bg_image(
     };
 
     let fmt = crate::render::image::sniff_image_type(bytes);
+
+    // For SVG files: pre-process to promote <style> CSS rules into inline
+    // style= attributes, because nanosvg (used by SDL2_image) ignores
+    // <style> blocks and renders everything with default black fill.
+    let preprocessed: Vec<u8>;
+    let svg_alpha: u8;
+    let bytes = if fmt == "SVG" {
+        let (p, a) = crate::render::image::preprocess_svg(bytes);
+        preprocessed = p;
+        svg_alpha = a;
+        &preprocessed[..]
+    } else {
+        svg_alpha = 255;
+        bytes
+    };
+
     let rwops = match sdl2::rwops::RWops::from_bytes(bytes) {
         Ok(r)  => r,
         Err(_) => return,
@@ -166,6 +179,13 @@ pub fn paint_block_bg_image(
         Err(_) => return,
     };
 
+    // Enable alpha blending so SVG transparency (and any other RGBA image)
+    // composites correctly against the already-painted background instead of
+    // blending against black (SDL2's default BlendMode::None behaviour).
+    let mut tex = tex;
+    let _ = tex.set_blend_mode(sdl2::render::BlendMode::Blend);
+    let _ = tex.set_alpha_mod(svg_alpha);
+
     let (tile_w, tile_h) = match style.bg_size {
         BgSize::Cover => {
             let scale_x = w as f32 / nat_w as f32;
@@ -179,6 +199,7 @@ pub fn paint_block_bg_image(
             let scale   = scale_x.min(scale_y);
             ((nat_w as f32 * scale) as i32, (nat_h as f32 * scale) as i32)
         }
+        BgSize::Explicit(ew, eh) => (ew.max(1), eh.max(1)),
         BgSize::Auto => (nat_w, nat_h),
     };
     if tile_w <= 0 || tile_h <= 0 { return; }
@@ -187,7 +208,20 @@ pub fn paint_block_bg_image(
         match sentinel {
             5000  => (box_dim - tile_dim) / 2,
             10000 => (box_dim - tile_dim).max(0),
-            n     => n,
+            // Percentage sentinels: values 0–10000 represent 0%–100%.
+            // Detect them: any value in 0..=10000 that is a multiple of 100
+            // (or the well-known 5000/10000 above) is a percentage sentinel.
+            // Actually simpler: values ≥ 100 that would be unreasonable as raw
+            // pixel offsets for positions. We use: if value was set via %, the
+            // sentinel is (pct * 100) as i32 which is in 0..=10000.
+            // Raw px values can also be in that range so we can't distinguish.
+            // Instead, store a flag. For now use a practical heuristic:
+            // if the sentinel is in 1..9999 and is a multiple of 100, treat as %.
+            n if n > 0 && n < 10000 && n % 100 == 0 => {
+                let pct = n as f32 / 10000.0;
+                ((box_dim as f32 - tile_dim as f32) * pct) as i32
+            }
+            n => n,
         }
     };
     let off_x = resolve_pos(style.bg_position.x, w, tile_w);
@@ -265,6 +299,95 @@ pub fn paint_block_bg(
             fill_rect_alpha(canvas, color, alpha,
                             x, y, w, h, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
+    }
+}
+
+/// Paint a CSS `linear-gradient(…)` onto the box (x, y, w, h).
+pub fn paint_block_bg_gradient(
+    ls:     &LayoutState,
+    canvas: &mut Canvas<Window>,
+    style:  &Style,
+    x: i32, y: i32, w: i32, h: i32,
+) {
+
+    let grad = match &style.bg_gradient {
+        Some(g) => g,
+        None    => return,
+    };
+    if w <= 0 || h <= 0 { return; }
+    if grad.stops.len() < 2 { return; }
+
+    let scroll_y   = ls.ctx.scroll_y;
+    let viewport_h = ls.ctx.viewport_height;
+
+    // Convert CSS angle to a direction vector.
+    // CSS: 0° = to top, 90° = to right, 180° = to bottom, 270° = to left.
+    let rad = (grad.angle_deg - 90.0).to_radians();
+    let dx = rad.cos();  // positive → right
+    let dy = rad.sin();  // positive → down
+
+    // For each row (or column), project the centre-point onto the gradient axis
+    // and interpolate the colour.  We scan scanline-by-scanline for simplicity.
+    //
+    // The gradient axis runs from (cx - dx*L/2, cy - dy*L/2) to
+    // (cx + dx*L/2, cy + dy*L/2) where L = w*|dx| + h*|dy| (the "gradient length").
+
+    let cx = x as f32 + w as f32 / 2.0;
+    let cy = y as f32 + h as f32 / 2.0;
+    let gradient_len = w as f32 * dx.abs() + h as f32 * dy.abs();
+    if gradient_len == 0.0 { return; }
+
+    // Interpolate a colour at position t ∈ [0, 1] along the gradient.
+    let interpolate = |t: f32| -> ([u8; 3], u8) {
+        let t = t.clamp(0.0, 1.0);
+        let stops = &grad.stops;
+        // Find surrounding stops
+        let mut lo = 0;
+        let mut hi = stops.len() - 1;
+        for (i, s) in stops.iter().enumerate() {
+            if s.pos.unwrap_or(i as f32 / (stops.len() - 1) as f32) <= t {
+                lo = i;
+            }
+        }
+        for (i, s) in stops.iter().enumerate().rev() {
+            if s.pos.unwrap_or(i as f32 / (stops.len() - 1) as f32) >= t {
+                hi = i;
+            }
+        }
+        if lo == hi {
+            return (stops[lo].color, stops[lo].alpha);
+        }
+        let p0 = stops[lo].pos.unwrap_or(lo as f32 / (stops.len() - 1) as f32);
+        let p1 = stops[hi].pos.unwrap_or(hi as f32 / (stops.len() - 1) as f32);
+        let span = p1 - p0;
+        let frac = if span <= 0.0 { 0.0 } else { ((t - p0) / span).clamp(0.0, 1.0) };
+        let lerp = |a: u8, b: u8| -> u8 {
+            (a as f32 + (b as f32 - a as f32) * frac) as u8
+        };
+        let c0 = stops[lo].color;
+        let c1 = stops[hi].color;
+        let a0 = stops[lo].alpha;
+        let a1 = stops[hi].alpha;
+        ([lerp(c0[0], c1[0]), lerp(c0[1], c1[1]), lerp(c0[2], c1[2])],
+         lerp(a0, a1))
+    };
+
+    // Paint scanline by scanline.
+    for row in 0..h {
+        let py = y + row;
+        let ry = py - scroll_y;
+        if ry < 0 || ry >= viewport_h { continue; }
+
+        // Project the row's midpoint onto the gradient axis.
+        let px_f = cx;
+        let py_f = py as f32 + 0.5;
+        let proj = (px_f - cx) * dx + (py_f - cy) * dy;
+        let t    = 0.5 + proj / gradient_len;
+
+        let (color, alpha) = interpolate(t);
+        let sdl_color = sdl2::pixels::Color::RGBA(color[0], color[1], color[2], alpha);
+        canvas.set_draw_color(sdl_color);
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, ry, w as u32, 1));
     }
 }
 

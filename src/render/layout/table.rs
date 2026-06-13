@@ -106,6 +106,7 @@ pub fn layout_table(
                 ls.link_areas.extend(sub.link_areas);
                 ls.button_areas.extend(sub.button_areas);
                 ls.details_areas.extend(sub.details_areas);
+                ls.audio_areas.extend(sub.audio_areas);
                 // Merge input areas back, fixing up indices relative to parent's count
                 let base_idx = ls.input_count;
                 for mut ia in sub.input_areas {
@@ -186,6 +187,9 @@ fn sub_state<'ctx>(
         input_areas:   Vec::new(),
         button_areas:  Vec::new(),
         details_areas: Vec::new(),
+        audio_areas:   Vec::new(),
+        audio_playback: std::collections::HashMap::new(),
+        audio_count:   0,
         input_count:   0,
         input_values:  parent.input_values.clone(),
         focused_input: parent.focused_input,

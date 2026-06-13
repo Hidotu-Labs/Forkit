@@ -38,6 +38,12 @@ fn main() {
     let sdl     = sdl2::init().expect("SDL2 init failed");
     let ttf_ctx = sdl2::ttf::init().expect("TTF init failed");
 
+    // Initialise SDL2_mixer for <audio> playback.  Non-fatal: if the library
+    // is missing the browser still works, audio elements just won't play.
+    if let Err(e) = render::audio::init_mixer() {
+        eprintln!("[audio] SDL2_mixer init failed (audio playback disabled): {e}");
+    }
+
     let mut browser = Browser::new(&sdl, &ttf_ctx, initial)
         .expect("Failed to create browser");
 
@@ -71,8 +77,10 @@ fn main() {
             browser.draw();
         } else {
             let any_loading = browser.tabs.iter().any(|t| t.is_loading());
-            if any_loading {
-                // Keep redrawing to animate the spinner
+            let any_audio   = browser.tabs.iter().any(|t| t.audio_engines.iter().any(|e| e.playing));
+            if any_loading || any_audio {
+                // Keep redrawing to animate the spinner / audio scrubber
+                browser.need_draw = true;
                 browser.draw();
             } else {
                 std::thread::sleep(std::time::Duration::from_millis(16));

@@ -7,28 +7,29 @@ use crate::dom::css::StyleSheet;
 use crate::js;
 use crate::net;
 
+pub use crate::js::{ConsoleEntry, ConsoleLevel};
+
 #[derive(Debug)]
 pub struct PageMeta {
     pub title:       String,
     pub favicon_url: Option<String>,
 }
 
-pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>)> {
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<ConsoleEntry>)> {
     let (final_url, html) = fetch_html(source)?;
     let (title, favicon_url) = extract_page_meta(&html, &final_url);
     let (dom, sheets) = parse_with_sheets(&html, &final_url);
     let meta = PageMeta { title, favicon_url };
 
-    for (label, src) in extract_scripts(&html, &final_url) {
-        for entry in js::execute(&src) {
-            match entry.level {
-                js::ConsoleLevel::Log  => println!("[console.log]  ({label}) {}", entry.message),
-                js::ConsoleLevel::Warn => eprintln!("[console.warn] ({label}) {}", entry.message),
-            }
+    let mut console_entries: Vec<ConsoleEntry> = Vec::new();
+    let js_dom = js::JsDom::with_title(&dom, meta.title.clone());
+    for (_label, src) in extract_scripts(&html, &final_url) {
+        for entry in js::execute_with_dom(&src, &js_dom) {
+            console_entries.push(entry);
         }
     }
 
-    Some((final_url, dom, meta, sheets))
+    Some((final_url, dom, meta, sheets, console_entries))
 }
 
 fn fetch_html(source: &str) -> Option<(String, String)> {

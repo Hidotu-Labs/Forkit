@@ -8,5 +8,5 @@ name = "forkit"
 path = "src/main.rs"
 
 [dependencies]
-sdl2  = { version = "0.37", features = ["ttf", "image"] }
+sdl2  = { version = "0.37", features = ["ttf", "image", "mixer"] }
 ureq  = { version = "2.10", features = [] }

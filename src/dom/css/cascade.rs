@@ -586,6 +586,10 @@ fn inherit_from(child: &mut Style, parent: &Style) {
     if child.strikethrough == def.strikethrough {
         child.strikethrough = parent.strikethrough;
     }
+    // list-style-type is inherited — li gets its bullet style from the parent ul/ol
+    if child.list_style_type == def.list_style_type {
+        child.list_style_type = parent.list_style_type;
+    }
 }
 
 fn apply_inherit_keyword(prop: &str, child: &mut Style, parent: &Style) {
@@ -623,7 +627,7 @@ fn apply_initial_keyword(prop: &str, style: &mut Style) {
         "text-transform"      => { style.text_transform = def.text_transform; }
         "font-variant-caps"   => { style.font_variant_caps = def.font_variant_caps; }
         "background-color"    => { style.bg_color = def.bg_color; style.bg_alpha = def.bg_alpha; }
-        "background-image"    => { style.bg_image_url = None; }
+        "background-image"    => { style.bg_image_url = None; style.bg_gradient = None; }
         "background-size"     => { style.bg_size = def.bg_size; }
         "background-repeat"   => { style.bg_repeat = def.bg_repeat; }
         "background-position" => { style.bg_position = def.bg_position; }

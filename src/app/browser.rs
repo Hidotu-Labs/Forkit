@@ -9,13 +9,15 @@ use crate::net::resolve_url;
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::layout::LayoutState;
-use crate::render::layout::state::{LinkArea, InputArea, ButtonArea, ButtonAction, InputKind, DetailsArea};
+use crate::render::layout::state::{LinkArea, InputArea, ButtonArea, ButtonAction, InputKind, DetailsArea, AudioArea, AudioPlayback};
 use crate::render::renderer::RenderCtx;
+use crate::render::audio::AudioEngine;
 use crate::ui::searchbar::{SearchBar, BAR_HEIGHT};
 use crate::ui::tabbar::{TabBar, TAB_BAR_HEIGHT};
+use crate::ui::console;
 use crate::window::window::{AppWindow, DEFAULT_H};
 
-use super::loader::{load_dom, PageMeta};
+use super::loader::{load_dom, PageMeta, ConsoleEntry};
 
 // Scrollbar appearance constants
 pub const SCROLLBAR_W:         i32 = 12;
@@ -74,6 +76,8 @@ pub struct LoadResult {
     pub push_history: bool,
     /// Parsed stylesheets, stored for re-applying the cascade each frame.
     pub style_sheets: Vec<crate::dom::css::StyleSheet>,
+    /// Console entries produced by JS execution on this page.
+    pub console_entries: Vec<ConsoleEntry>,
 }
 
 /// Lifecycle state of a single tab's background loader.
@@ -103,6 +107,12 @@ pub struct Tab {
     pub button_areas: Vec<ButtonArea>,
     /// Details/summary areas from the last rendered frame.
     pub details_areas: Vec<DetailsArea>,
+    /// Audio player areas from the last rendered frame.
+    pub audio_areas: Vec<AudioArea>,
+    /// Per-tab audio playback engines, one per `<audio>` element index.
+    /// Grows as new players are encountered; never shrinks (to preserve state
+    /// across redraws).
+    pub audio_engines: Vec<AudioEngine>,
     /// Live text content for each input, indexed by the order they appear on the page.
     pub input_values: Vec<String>,
     /// Which input index is currently focused (if any).
@@ -122,13 +132,19 @@ pub struct Tab {
     /// Parsed stylesheets for this tab, stored so the cascade can be re-applied
     /// each frame with the current PseudoState.
     pub style_sheets: Vec<crate::dom::css::StyleSheet>,
+    /// Console output produced by JS execution on this page.
+    pub console_entries: Vec<ConsoleEntry>,
+    /// Whether the console panel is open.
+    pub console_open: bool,
+    /// Scroll offset within the console panel.
+    pub console_scroll: i32,
 }
 
 impl Tab {
     /// Synchronously load the initial tab (only used for startup — after that
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
-        let (resolved, dom, meta, sheets) = load_dom(url)?;
+        let (resolved, dom, meta, sheets, console_entries) = load_dom(url)?;
         Some(Tab {
             dom,
             scroll_y:       0,
@@ -138,6 +154,8 @@ impl Tab {
             input_areas:    Vec::new(),
             button_areas:   Vec::new(),
             details_areas:  Vec::new(),
+            audio_areas:    Vec::new(),
+            audio_engines:  Vec::new(),
             input_values:   Vec::new(),
             focused_input:  None,
             content_height: 0,
@@ -147,6 +165,9 @@ impl Tab {
             hovered_ptr:    None,
             focused_ptr:    None,
             style_sheets:   sheets,
+            console_entries,
+            console_open:   false,
+            console_scroll: 0,
         })
     }
 
@@ -235,13 +256,14 @@ impl Tab {
             let send_val = match result {
                 Err(msg) => Err(msg),
                 Ok(None) => Err(format!("Failed to load: {url}")),
-                Ok(Some((final_url, dom, meta, sheets))) => Ok(LoadResult {
+                Ok(Some((final_url, dom, meta, sheets, console_entries))) => Ok(LoadResult {
                     final_url,
                     dom,
                     meta,
                     images: ImageCache::new(),
                     push_history,
                     style_sheets: sheets,
+                    console_entries,
                 }),
             };
 
@@ -268,11 +290,14 @@ impl Tab {
                         self.focused_input = None;
                         self.button_areas  = Vec::new();
                         self.details_areas = Vec::new();
+                        self.audio_areas   = Vec::new();
                         self.page_title    = result.meta.title;
                         self.favicon_url   = result.meta.favicon_url;
                         self.hovered_ptr   = None;
                         self.focused_ptr   = None;
                         self.style_sheets  = result.style_sheets;
+                        self.console_entries = result.console_entries;
+                        self.console_scroll  = 0;
                         if result.push_history {
                             self.history.push(result.final_url);
                         }
@@ -298,9 +323,12 @@ impl Tab {
                         self.focused_input = None;
                         self.button_areas = Vec::new();
                         self.details_areas = Vec::new();
+                        self.audio_areas   = Vec::new();
                         self.hovered_ptr  = None;
                         self.focused_ptr  = None;
                         self.style_sheets = Vec::new();
+                        self.console_entries = Vec::new();
+                        self.console_scroll  = 0;
                         self.load_state   = LoadState::Crashed(msg);
                         true
                     }
@@ -428,6 +456,12 @@ impl Tab {
             .map(|d| d.element_ptr)
     }
 
+    /// Returns a clone of the audio area at `(x, y)`, if any.
+    pub fn audio_at(&self, x: i32, y: i32) -> Option<AudioArea> {
+        self.audio_areas.iter().rev()
+            .find(|a| a.contains(x, y, self.scroll_y))
+            .cloned()
+    }
     pub fn toggle_details(&mut self, ptr: usize) {
         if let Some(el) = find_element_mut_by_ptr(&mut self.dom, ptr) {
             let is_open = crate::dom::parser::get_attr(&el.attrs_raw, "open").is_some();
@@ -493,6 +527,19 @@ pub struct Browser<'ttf> {
     pub mouse_x: i32,
     /// Current mouse Y position in content-area coordinates (for :hover matching).
     pub mouse_y: i32,
+    /// Whether the developer console panel is shown.
+    pub console_open: bool,
+    /// Current width of the right-side console panel.
+    pub console_w: i32,
+    /// If the user is dragging the resize handle, stores the initial mouse X
+    /// and the panel width at drag-start.
+    pub console_resize_drag: Option<(i32, i32)>,
+    /// Whether the cursor is hovering the resize handle (for highlight).
+    pub console_resize_hot: bool,
+    /// Screen rect of the console × close button (updated each frame while open).
+    pub console_close_btn: Option<sdl2::rect::Rect>,
+    /// Screen rect of the resize handle (updated each frame while open).
+    pub console_resize_rect: Option<sdl2::rect::Rect>,
 }
 
 impl<'ttf> Browser<'ttf> {
@@ -519,6 +566,12 @@ impl<'ttf> Browser<'ttf> {
             scrollbar_drag: None,
             mouse_x:        0,
             mouse_y:        0,
+            console_open:   false,
+            console_w:      console::CONSOLE_DEFAULT_W,
+            console_resize_drag: None,
+            console_resize_hot:  false,
+            console_close_btn:   None,
+            console_resize_rect: None,
         })
     }
 
@@ -688,6 +741,26 @@ impl<'ttf> Browser<'ttf> {
             return;
         }
 
+        // Check for audio player click (play/pause button or scrubber)
+        if let Some(area) = self.tab().audio_at(x, content_y) {
+            let base_url = self.tab().current_url().to_owned();
+            let src      = area.src.clone();
+            let idx      = area.index;
+            // Grow the engines vec if needed (first time this player is clicked)
+            while self.tab().audio_engines.len() <= idx {
+                self.tab_mut().audio_engines.push(AudioEngine::new());
+            }
+            if area.play_btn_hit(x, content_y, self.tab().scroll_y) {
+                self.tab_mut().audio_engines[idx].toggle(&src, &base_url);
+                self.need_draw = true;
+            } else if area.scrubber_hit(x, content_y, self.tab().scroll_y) {
+                let ratio = area.scrubber_ratio(x);
+                self.tab_mut().audio_engines[idx].seek(ratio, &base_url);
+                self.need_draw = true;
+            }
+            return;
+        }
+
         // Check button areas first (submit/reset)
         if let Some(action) = self.tab().button_at(x, content_y).cloned() {
             match action {
@@ -786,9 +859,10 @@ impl<'ttf> Browser<'ttf> {
 
     /// Clamp scroll_y so it never goes past the bottom of the document.
     pub fn clamp_scroll(&mut self) {
-        let (_, win_h) = self.window.canvas.output_size()
+        let (win_w, win_h) = self.window.canvas.output_size()
             .map(|(w, h)| (w as i32, h as i32))
             .unwrap_or((1024, 768));
+        let _ = win_w;
         let content_h  = (win_h - chrome_height()).max(0);
         let doc_h      = self.tabs[self.active].content_height;
         let max_scroll = (doc_h - content_h).max(0);
@@ -833,12 +907,19 @@ impl<'ttf> Browser<'ttf> {
     pub fn draw(&mut self) {
         if !self.need_draw { return; }
 
+        // Advance audio playback timers for the active tab
+        for engine in &mut self.tabs[self.active].audio_engines {
+            engine.tick();
+        }
+
         let (win_w, win_h) = self.window.canvas.output_size()
             .map(|(w, h)| (w as i32, h as i32))
             .unwrap_or((1024, 768));
 
-        let chrome_h  = chrome_height();
-        let content_h = (win_h - chrome_h).max(0);
+        let chrome_h   = chrome_height();
+        let console_w  = if self.console_open { self.console_w } else { 0 };
+        let content_w  = (win_w - console_w).max(0);
+        let content_h  = (win_h - chrome_h).max(0);
 
         let tc = self.window.canvas.texture_creator();
 
@@ -848,29 +929,41 @@ impl<'ttf> Browser<'ttf> {
 
         // ---- content ----
         let _ = self.window.canvas.set_viewport(Some(Rect::new(
-            0, chrome_h, win_w as u32, content_h as u32,
+            0, chrome_h, content_w as u32, content_h as u32,
         )));
 
         {
             let ps   = self.pseudo_state();
             let tab  = &mut self.tabs[self.active];
 
-            // Re-apply cascade with current pseudo state so dynamic pseudo-classes
-            // like :hover and :focus are reflected in this frame's styles.
             if !tab.style_sheets.is_empty() {
                 let sheets = tab.style_sheets.clone();
                 crate::dom::css::apply_cascade_with_state(&mut tab.dom, &sheets, &ps);
             }
 
+            let base_url = tab.current_url().to_owned();
             let ctx  = RenderCtx {
-                viewport_width:  win_w,
+                viewport_width:  content_w,
                 viewport_height: content_h,
                 scroll_y:        tab.scroll_y,
-            };
-            let base_url = tab.current_url().to_owned();
-            let mut state = LayoutState::new(&ctx);
-            // Seed live input state so form controls render correctly
+                base_url:        base_url.clone(),
+            };            let mut state = LayoutState::new(&ctx);
             state.set_input_state(tab.input_values.clone(), tab.focused_input);
+
+            // Build audio playback snapshot keyed by per-page player index
+            {
+                let mut playback_map = std::collections::HashMap::new();
+                for (idx, engine) in tab.audio_engines.iter().enumerate() {
+                    playback_map.insert(idx, AudioPlayback {
+                        playing:       engine.playing,
+                        progress:      engine.progress(),
+                        position_secs: engine.position_secs,
+                        duration_secs: engine.duration_secs,
+                    });
+                }
+                state.set_audio_state(playback_map);
+            }
+
             state.layout_node(
                 &mut self.window.canvas,
                 &tc,
@@ -878,14 +971,27 @@ impl<'ttf> Browser<'ttf> {
                 &mut tab.images,
                 &base_url,
                 &tab.dom,
-                // Reserve SCROLLBAR_W on the right for the scrollbar
-                win_w - SCROLLBAR_W - 4,
+                content_w - SCROLLBAR_W - 4,
             );
             tab.link_areas     = state.link_areas;
             tab.input_areas    = state.input_areas;
             tab.button_areas   = state.button_areas;
             tab.details_areas  = state.details_areas;
+            tab.audio_areas    = state.audio_areas;
             tab.content_height = state.content_height;
+
+            // Ensure one engine exists per discovered audio player and pre-fetch
+            // duration so the time display is correct before the first click.
+            let base_url_clone = base_url.clone();
+            let areas: Vec<(usize, String)> = tab.audio_areas.iter()
+                .map(|a| (a.index, a.src.clone()))
+                .collect();
+            for (idx, src) in areas {
+                while tab.audio_engines.len() <= idx {
+                    tab.audio_engines.push(crate::render::audio::AudioEngine::new());
+                }
+                tab.audio_engines[idx].prefetch_duration(&src, &base_url_clone);
+            }
         }
 
         // Reset viewport before drawing the scrollbar so coordinates are
@@ -896,16 +1002,14 @@ impl<'ttf> Browser<'ttf> {
         if let Some((track_y, track_h, thumb_y, thumb_h)) =
             self.scrollbar_geometry(content_h)
         {
-            let sx = win_w - SCROLLBAR_W;
+            let sx = content_w - SCROLLBAR_W;
 
-            // Track
             let (tr, tg, tb) = SCROLLBAR_TRACK_COLOR;
             self.window.canvas.set_draw_color(Color::RGB(tr, tg, tb));
             let _ = self.window.canvas.fill_rect(Rect::new(
                 sx, chrome_h + track_y, SCROLLBAR_W as u32, track_h as u32,
             ));
 
-            // Thumb
             let dragging = self.scrollbar_drag.is_some();
             let (cr, cg, cb) = if dragging { SCROLLBAR_THUMB_HOVER } else { SCROLLBAR_THUMB_COLOR };
             self.window.canvas.set_draw_color(Color::RGB(cr, cg, cb));
@@ -915,6 +1019,30 @@ impl<'ttf> Browser<'ttf> {
                 (SCROLLBAR_W - 4) as u32,
                 thumb_h as u32,
             ));
+        }
+
+        // ---- console panel ----
+        if self.console_open {
+            let panel_x = win_w - self.console_w;
+            let entries = self.tabs[self.active].console_entries.clone();
+            let scroll  = self.tabs[self.active].console_scroll;
+            let result  = console::draw(
+                &mut self.window.canvas,
+                &tc,
+                &mut self.fonts,
+                panel_x,
+                chrome_h,
+                win_h,
+                self.console_w,
+                &entries,
+                scroll,
+                self.console_resize_hot,
+            );
+            self.console_close_btn   = Some(result.close_btn);
+            self.console_resize_rect = Some(result.resize_handle);
+        } else {
+            self.console_close_btn   = None;
+            self.console_resize_rect = None;
         }
 
         // ---- chrome (tab bar + address bar) ----
