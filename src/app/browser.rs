@@ -9,7 +9,7 @@ use crate::net::resolve_url;
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::layout::LayoutState;
-use crate::render::layout::state::{LinkArea, InputArea, ButtonArea, ButtonAction};
+use crate::render::layout::state::{LinkArea, InputArea, ButtonArea, ButtonAction, InputKind, DetailsArea};
 use crate::render::renderer::RenderCtx;
 use crate::ui::searchbar::{SearchBar, BAR_HEIGHT};
 use crate::ui::tabbar::{TabBar, TAB_BAR_HEIGHT};
@@ -101,6 +101,8 @@ pub struct Tab {
     pub input_areas: Vec<InputArea>,
     /// Button/submit/reset areas from the last rendered frame.
     pub button_areas: Vec<ButtonArea>,
+    /// Details/summary areas from the last rendered frame.
+    pub details_areas: Vec<DetailsArea>,
     /// Live text content for each input, indexed by the order they appear on the page.
     pub input_values: Vec<String>,
     /// Which input index is currently focused (if any).
@@ -135,6 +137,7 @@ impl Tab {
             link_areas:     Vec::new(),
             input_areas:    Vec::new(),
             button_areas:   Vec::new(),
+            details_areas:  Vec::new(),
             input_values:   Vec::new(),
             focused_input:  None,
             content_height: 0,
@@ -264,6 +267,7 @@ impl Tab {
                         self.input_values  = Vec::new();
                         self.focused_input = None;
                         self.button_areas  = Vec::new();
+                        self.details_areas = Vec::new();
                         self.page_title    = result.meta.title;
                         self.favicon_url   = result.meta.favicon_url;
                         self.hovered_ptr   = None;
@@ -285,7 +289,7 @@ impl Tab {
                              </body></html>"
                         );
                         // Parse the error page directly.
-                        let error_node = crate::dom::parser::parse(&error_html, "about:blank");
+                        let (error_node, _) = crate::dom::parser::parse_with_sheets(&error_html, "about:blank");
                         self.dom          = error_node;
                         self.page_title   = "Error".to_owned();
                         self.favicon_url  = None;
@@ -293,6 +297,7 @@ impl Tab {
                         self.input_values = Vec::new();
                         self.focused_input = None;
                         self.button_areas = Vec::new();
+                        self.details_areas = Vec::new();
                         self.hovered_ptr  = None;
                         self.focused_ptr  = None;
                         self.style_sheets = Vec::new();
@@ -415,6 +420,27 @@ impl Tab {
         self.focused_input = None;
     }
 
+    // ---- details hit test ----
+
+    pub fn details_at(&self, x: i32, y: i32) -> Option<usize> {
+        self.details_areas.iter().rev()
+            .find(|d: &&DetailsArea| d.contains(x, y, self.scroll_y))
+            .map(|d| d.element_ptr)
+    }
+
+    pub fn toggle_details(&mut self, ptr: usize) {
+        if let Some(el) = find_element_mut_by_ptr(&mut self.dom, ptr) {
+            let is_open = crate::dom::parser::get_attr(&el.attrs_raw, "open").is_some();
+            if is_open {
+                // Remove "open"
+                el.attrs_raw = el.attrs_raw.replace(" open", "").replace("open ", "").replace("open", "");
+            } else {
+                // Add "open"
+                el.attrs_raw.push_str(" open");
+            }
+        }
+    }
+
     /// Find the DOM element at content coordinates `(x, y)` and return its
     /// raw pointer (as `usize`) for use with `:hover` pseudo-class matching.
     ///
@@ -426,6 +452,23 @@ impl Tab {
         // A complete implementation would walk LayoutBox entries that carry
         // element raw pointers and return the topmost hit.
         None
+    }
+}
+
+fn find_element_mut_by_ptr(node: &mut Node, ptr: usize) -> Option<&mut crate::dom::node::Element> {
+    match node {
+        Node::Element(el) => {
+            if (el as *mut crate::dom::node::Element as usize) == ptr {
+                return Some(el);
+            }
+            for child in &mut el.children {
+                if let Some(found) = find_element_mut_by_ptr(child, ptr) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        Node::Text(_) => None,
     }
 }
 
@@ -638,6 +681,13 @@ impl<'ttf> Browser<'ttf> {
         // Content area
         let content_y = y - chrome_height();
 
+        // Check for <details> summary click
+        if let Some(ptr) = self.tab().details_at(x, content_y) {
+            self.tab_mut().toggle_details(ptr);
+            self.need_draw = true;
+            return;
+        }
+
         // Check button areas first (submit/reset)
         if let Some(action) = self.tab().button_at(x, content_y).cloned() {
             match action {
@@ -665,10 +715,52 @@ impl<'ttf> Browser<'ttf> {
 
         // Check for a focused input
         if let Some(idx) = self.tab().input_at(x, content_y) {
-            self.tab_mut().focused_input = Some(idx);
-            // Defocus the address bar when clicking a page input
-            self.bar.focused = false;
-            self.need_draw = true;
+            let kind = self.tab().input_areas.iter().find(|a| a.index == idx).map(|a| a.kind.clone());
+            match kind {
+                Some(InputKind::Checkbox) => {
+                    self.tab_mut().ensure_input_slot(idx);
+                    // Three-state: "true" = checked, "false" = unchecked, "" = not yet interacted
+                    let is_true = self.tab().input_values[idx] == "true";
+                    self.tab_mut().input_values[idx] = if is_true { "false".to_owned() } else { "true".to_owned() };
+                    self.need_draw = true;
+                }
+                Some(InputKind::Radio) => {
+                    // Collect all radio inputs with the same `name` to enforce mutual exclusion
+                    let my_name = self.tab().input_areas.iter()
+                        .find(|a| a.index == idx)
+                        .map(|a| a.name.clone())
+                        .unwrap_or_default();
+                    let same_group: Vec<usize> = self.tab().input_areas.iter()
+                        .filter(|a| matches!(a.kind, InputKind::Radio) && a.name == my_name)
+                        .map(|a| a.index)
+                        .collect();
+                    // Deselect all radios in the group
+                    let max_idx = same_group.iter().copied().max().unwrap_or(idx);
+                    self.tab_mut().ensure_input_slot(max_idx);
+                    for ridx in same_group {
+                        self.tab_mut().input_values[ridx] = "false".to_owned();
+                    }
+                    // Select the clicked one
+                    self.tab_mut().input_values[idx] = "true".to_owned();
+                    self.need_draw = true;
+                }
+                Some(InputKind::Range) => {
+                    // Clone the area immediately to avoid borrow conflict with tab_mut
+                    let area_opt = self.tab().input_areas.iter().find(|a| a.index == idx).cloned();
+                    if let Some(area) = area_opt {
+                        let ratio = ((x - area.x) as f64 / area.w as f64).clamp(0.0, 1.0);
+                        let val = (ratio * 100.0) as i32;
+                        self.tab_mut().ensure_input_slot(idx);
+                        self.tab_mut().input_values[idx] = val.to_string();
+                        self.need_draw = true;
+                    }
+                }
+                _ => {
+                    self.tab_mut().focused_input = Some(idx);
+                    self.bar.focused = false;
+                    self.need_draw = true;
+                }
+            }
             return;
         }
         // Clicking non-input content clears page focus
@@ -792,6 +884,7 @@ impl<'ttf> Browser<'ttf> {
             tab.link_areas     = state.link_areas;
             tab.input_areas    = state.input_areas;
             tab.button_areas   = state.button_areas;
+            tab.details_areas  = state.details_areas;
             tab.content_height = state.content_height;
         }
 

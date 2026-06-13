@@ -29,7 +29,13 @@ pub(super) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             }
         }
         "background-color" | "background" => {
-            let lower_val = val.to_ascii_lowercase();
+            let lower_val = val.trim().to_ascii_lowercase();
+            if lower_val == "none" || lower_val == "transparent" {
+                s.bg_color = None;
+                s.bg_alpha = 0;
+                if prop == "background" { s.bg_image_url = None; }
+                return;
+            }
 
             // If this is purely background-color (the property name), don't look for url()
             let is_color_only_prop = prop == "background-color";

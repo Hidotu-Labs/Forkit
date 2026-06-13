@@ -56,7 +56,7 @@ pub fn parse_length_ctx(val: &str, ctx: &LengthContext) -> Option<i32> {
     }
     if let Some(n) = v.strip_suffix("rem").or_else(|| v.strip_suffix("em")) {
         return n.trim().parse::<f32>().ok()
-            .map(|n| (n * ctx.base_font_size as f32) as i32);
+            .map(|n| (n * ctx.base_font_size as f32 * 0.9) as i32); // Slightly smaller as requested
     }
     if let Some(n) = v.strip_suffix("vw") {
         return n.trim().parse::<f32>().ok()

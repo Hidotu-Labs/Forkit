@@ -29,10 +29,6 @@ impl SearchBar {
         SearchBar { url: initial_url.to_owned(), focused: false, pending: None }
     }
 
-    // -----------------------------------------------------------------------
-    // Input handlers
-    // -----------------------------------------------------------------------
-
     /// Classify a click and update focus state.
     /// Returns which region was clicked.
     pub fn on_click(&mut self, mx: i32, my: i32, win_w: i32) -> BarRegion {
@@ -63,10 +59,6 @@ impl SearchBar {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Rendering
-    // -----------------------------------------------------------------------
-
     pub fn draw(
         &self,
         canvas:      &mut Canvas<Window>,
@@ -76,23 +68,18 @@ impl SearchBar {
         can_back:    bool,
         can_forward: bool,
     ) {
-        // Chrome background
         canvas.set_draw_color(Color::RGB(235, 235, 235));
         let _ = canvas.fill_rect(Rect::new(0, 0, win_w as u32, BAR_HEIGHT as u32));
 
-        // Bottom separator
         canvas.set_draw_color(Color::RGB(190, 190, 190));
         let _ = canvas.fill_rect(Rect::new(0, BAR_HEIGHT - 1, win_w as u32, 1));
 
-        // ---- Back button ----
         let back_x = BAR_PAD;
         draw_nav_button(canvas, fonts, tc, true, back_x, BAR_PAD, BTN_W, BTN_H, can_back);
 
-        // ---- Forward button ----
         let fwd_x = BAR_PAD * 2 + BTN_W;
         draw_nav_button(canvas, fonts, tc, false, fwd_x, BAR_PAD, BTN_W, BTN_H, can_forward);
 
-        // ---- URL input box ----
         let input_x = BAR_PAD * 3 + BTN_W * 2;
         let input_w = (win_w - input_x - BAR_PAD) as u32;
         let input_h = BTN_H as u32;
@@ -105,7 +92,6 @@ impl SearchBar {
         canvas.set_draw_color(border_col);
         let _ = canvas.draw_rect(Rect::new(input_x, BAR_PAD, input_w, input_h));
 
-        // URL text
         let display = if self.url.is_empty() { "Enter URL or search…" } else { &self.url };
         let style = crate::dom::node::Style {
             font_size: FONT_SIZE,
@@ -129,7 +115,6 @@ impl SearchBar {
                 }
             }
 
-            // Cursor
             if self.focused {
                 if let Ok((tw, _)) = font.size_of(display) {
                     let cx = (input_x + 6 + tw as i32 + 1).min(input_x + input_w as i32 - 4);
@@ -139,10 +124,6 @@ impl SearchBar {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Hit-testing
-    // -----------------------------------------------------------------------
 
     pub fn region_at(&self, mx: i32, win_w: i32) -> BarRegion {
         let back_x  = BAR_PAD;
@@ -156,10 +137,6 @@ impl SearchBar {
         else                                                  { BarRegion::None    }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn normalise_url(raw: &str) -> String {
     if raw.starts_with("http://")
@@ -181,16 +158,13 @@ fn draw_nav_button(
     x: i32, y: i32, w: i32, h: i32,
     enabled: bool,
 ) {
-    // Background
     let bg = if enabled { Color::RGB(220, 220, 220) } else { Color::RGB(235, 235, 235) };
     canvas.set_draw_color(bg);
     let _ = canvas.fill_rect(Rect::new(x, y, w as u32, h as u32));
 
-    // Border
     canvas.set_draw_color(Color::RGB(190, 190, 190));
     let _ = canvas.draw_rect(Rect::new(x, y, w as u32, h as u32));
 
-    // Draw arrow icon using SDL2 primitives
     let arrow_col = if enabled { Color::RGB(40, 40, 40) } else { Color::RGB(185, 185, 185) };
     draw_arrow(canvas, is_back, x, y, w, h, arrow_col);
 }
@@ -208,9 +182,9 @@ fn draw_arrow(
     let cy = by + bh / 2;
 
     // Arrow proportions
-    let tri_half_h: i32 = bh / 4;      // half-height of the arrowhead
-    let tri_depth:  i32 = bw / 4;      // horizontal width of the arrowhead
-    let stem_len:   i32 = bw / 5;      // length of the shaft
+    let tri_half_h: i32 = bh / 4;
+    let tri_depth:  i32 = bw / 4;
+    let stem_len:   i32 = bw / 5;
     let stem_h:     i32 = 2.max(bh / 8);
     let total_w:    i32 = tri_depth + stem_len;
 
@@ -222,8 +196,7 @@ fn draw_arrow(
     canvas.set_draw_color(color);
 
     if is_back {
-        // ← : tip at left-center, two base corners at right top/bottom
-        //     tip  = (arrow_left, cy)
+        // ← : t
         //     base = (arrow_left + tri_depth, cy ± tri_half_h)
         let tip_x  = arrow_left;
         let base_x = arrow_left + tri_depth;
@@ -237,7 +210,6 @@ fn draw_arrow(
             let w = (base_x - row_left + 1).max(1) as u32;
             let _ = canvas.fill_rect(Rect::new(row_left, cy + dy, w, 1));
         }
-        // Shaft to the right of the triangle base
         let _ = canvas.fill_rect(Rect::new(base_x, cy - stem_h / 2, stem_len as u32, stem_h as u32));
     } else {
         // → : tip at right-center, two base corners at left top/bottom
@@ -252,7 +224,6 @@ fn draw_arrow(
             let w = (row_right - base_x + 1).max(1) as u32;
             let _ = canvas.fill_rect(Rect::new(base_x, cy + dy, w, 1));
         }
-        // Shaft to the left of the triangle base
         let _ = canvas.fill_rect(Rect::new(arrow_left, cy - stem_h / 2, stem_len as u32, stem_h as u32));
     }
 }

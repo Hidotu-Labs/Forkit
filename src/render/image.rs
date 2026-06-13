@@ -39,21 +39,14 @@ impl ImageCache {
 /// Detect image format from magic bytes. Returns a SDL2_image type string.
 pub fn sniff_image_type(bytes: &[u8]) -> &'static str {
     if bytes.len() >= 4 {
-        // PNG: 89 50 4E 47
         if bytes.starts_with(b"\x89PNG") { return "PNG"; }
-        // JPEG: FF D8
         if bytes[0] == 0xFF && bytes[1] == 0xD8 { return "JPG"; }
-        // GIF: GIF8
         if bytes.starts_with(b"GIF8") { return "GIF"; }
-        // BMP: BM
         if bytes.starts_with(b"BM") { return "BMP"; }
-        // WebP: RIFF....WEBP
         if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
             return "WEBP";
         }
-        // AVIF / generic ISO BMFF — ftyp box
         if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" { return "AVIF"; }
-        // ICO
         if bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x01 { return "ICO"; }
     }
     "PNG" // fallback guess
@@ -63,7 +56,6 @@ pub fn sniff_image_type(bytes: &[u8]) -> &'static str {
 fn fetch_image(url: &str, base_url: &str) -> Option<Vec<u8>> {
     use crate::net;
 
-    // data: URI — decode inline
     if let Some(rest) = url.strip_prefix("data:") {
         if let Some(b64) = rest.split(',').nth(1) {
             return decode_base64(b64);
@@ -90,10 +82,8 @@ fn fetch_image(url: &str, base_url: &str) -> Option<Vec<u8>> {
             }
         }
     } else {
-        // Local file path
-        let path = resolved.strip_prefix("file://").unwrap_or(&resolved);
-        std::fs::read(path)
-            .map_err(|e| eprintln!("Image read {path}: {e}"))
+        std::fs::read(&resolved)
+            .map_err(|e| eprintln!("Image read {resolved}: {e}"))
             .ok()
     }
 }

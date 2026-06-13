@@ -1,9 +1,5 @@
 use super::entities::decode_entities;
 
-// ---------------------------------------------------------------------------
-// Token types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokKind { Eof, Text, Open, Close, SelfClose }
 
@@ -13,10 +9,6 @@ pub struct Token {
     /// Raw attribute string for element tokens; decoded text for text tokens.
     pub attrs: String,
 }
-
-// ---------------------------------------------------------------------------
-// Lexer
-// ---------------------------------------------------------------------------
 
 pub struct Lexer<'a> {
     src: &'a [u8],
@@ -49,7 +41,6 @@ impl<'a> Lexer<'a> {
             return Token { kind: TokKind::Eof, tag: String::new(), attrs: String::new() };
         }
 
-        // ---- text node ----
         if self.src[self.pos] != b'<' {
             let start = self.pos;
             while self.pos < self.src.len() && self.src[self.pos] != b'<' {
@@ -61,7 +52,6 @@ impl<'a> Lexer<'a> {
 
         self.pos += 1; // consume '<'
 
-        // ---- HTML comment ----
         if self.src.get(self.pos..self.pos+3) == Some(b"!--") {
             self.pos += 3;
             while self.pos + 2 < self.src.len() {
@@ -71,14 +61,12 @@ impl<'a> Lexer<'a> {
             return self.next_token();
         }
 
-        // ---- DOCTYPE / other <!…> ----
         if self.peek() == Some(b'!') {
             while self.pos < self.src.len() && self.src[self.pos] != b'>' { self.pos += 1; }
             if self.pos < self.src.len() { self.pos += 1; }
             return self.next_token();
         }
 
-        // ---- closing tag ----
         if self.peek() == Some(b'/') {
             self.pos += 1;
             self.skip_ws();
@@ -89,7 +77,6 @@ impl<'a> Lexer<'a> {
             return Token { kind: TokKind::Close, tag, attrs: String::new() };
         }
 
-        // ---- opening tag ----
         self.skip_ws();
         let tag = self.read_while(|c| c != b'>' && c != b'/' && !c.is_ascii_whitespace())
                       .to_ascii_lowercase();

@@ -4,7 +4,6 @@
 pub fn parse_color(val: &str) -> Option<[u8; 3]> {
     let v = val.trim();
 
-    // ---- named colors ----
     const NAMED: &[(&str, [u8; 3])] = &[
         ("transparent",      [255,255,255]),
         ("black",            [  0,  0,  0]), ("white",         [255,255,255]),
@@ -94,7 +93,6 @@ pub fn parse_color(val: &str) -> Option<[u8; 3]> {
 
     let lower = v.to_ascii_lowercase();
 
-    // ---- rgb / rgba ----
     if let Some(inner) = lower.strip_prefix("rgba(").or_else(|| lower.strip_prefix("rgb(")) {
         let inner = inner.trim_end_matches(')');
         let parts: Vec<&str> = inner.split(',').collect();
@@ -106,7 +104,6 @@ pub fn parse_color(val: &str) -> Option<[u8; 3]> {
         }
     }
 
-    // ---- hsl ----
     if let Some(inner) = lower.strip_prefix("hsl(") {
         let inner = inner.trim_end_matches(')');
         let parts: Vec<&str> = inner.split(',').collect();

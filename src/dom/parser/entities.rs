@@ -10,8 +10,6 @@ pub fn decode_entities(s: &str) -> String {
 
     while i < bytes.len() {
         if bytes[i] != b'&' {
-            // Advance by the full UTF-8 char starting at `i`, not just one byte.
-            // `s` is always valid UTF-8 so this is safe.
             let ch = s[i..].chars().next().unwrap_or('\u{FFFD}');
             out.push(ch);
             i += ch.len_utf8();
@@ -19,14 +17,12 @@ pub fn decode_entities(s: &str) -> String {
         }
 
         let start = i;
-        // Find the semicolon within a reasonable lookahead
         let end = bytes[i+1..].iter().take(32).position(|&b| b == b';')
             .map(|p| i + 1 + p + 1);
 
         if let Some(end) = end {
             let entity = &s[start..end];
 
-            // Numeric character references  &#NNN;  &#xHH;
             if let Some(inner) = entity.strip_prefix("&#") {
                 let inner = inner.trim_end_matches(';');
                 let code: Option<u32> = if inner.starts_with('x') || inner.starts_with('X') {
@@ -41,7 +37,6 @@ pub fn decode_entities(s: &str) -> String {
                 }
             }
 
-            // Named entities
             let name = entity.trim_start_matches('&').trim_end_matches(';');
             if let Some(ch) = named_entity(name) {
                 out.push(ch);
@@ -50,7 +45,6 @@ pub fn decode_entities(s: &str) -> String {
             }
         }
 
-        // Unrecognised — emit '&' literally
         out.push('&');
         i += 1;
     }

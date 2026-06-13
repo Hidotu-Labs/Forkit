@@ -4,10 +4,6 @@
 
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Value
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub enum JsValue {
     Undefined,
@@ -61,10 +57,6 @@ impl JsValue {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scope — flat variable store for the current script
-// ---------------------------------------------------------------------------
-
 struct Scope {
     vars: HashMap<String, JsValue>,
 }
@@ -83,58 +75,48 @@ impl Scope {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tokeniser
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
     Ident(String),
     Str(String),
     Number(f64),
-    // Punctuation
     Dot,
     LParen,
     RParen,
     Comma,
     Semi,
-    // Assignment
-    Eq,        // =
-    // Arithmetic
-    Plus,      // +
-    Minus,     // -
-    Star,      // *
-    Slash,     // /
-    Percent,   // %
-    // Comparison  (two-char must be checked before single-char)
-    EqEq,      // ==  (also ===)
-    BangEq,    // !=  (also !==)
-    LtEq,      // <=
-    GtEq,      // >=
-    Lt,        // <
-    Gt,        // >
-    // Logical
-    AmpAmp,    // &&
-    PipePipe,  // ||
-    Bang,      // !
-    // Compound assignment
-    PlusEq,    // +=
-    MinusEq,   // -=
-    StarEq,    // *=
-    SlashEq,   // /=
-    // Special
+    Eq,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    EqEq,
+    BangEq,
+    LtEq,
+    GtEq,
+    Lt,
+    Gt,
+    AmpAmp,
+    PipePipe,
+    Bang,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
     Eof,
     Unknown(char),
 }
 
 struct Lexer {
-    chars: Vec<char>,
-    pos:   usize,
+    chars:  Vec<char>,
+    pos:    usize,
+    peeked: Option<Token>,
 }
 
 impl Lexer {
     fn new(src: &str) -> Self {
-        Lexer { chars: src.chars().collect(), pos: 0 }
+        Lexer { chars: src.chars().collect(), pos: 0, peeked: None }
     }
 
     fn peek(&self) -> Option<char> { self.chars.get(self.pos).copied() }
@@ -148,20 +130,17 @@ impl Lexer {
 
     fn skip_whitespace_and_comments(&mut self) {
         loop {
-            // Whitespace
             while self.peek().map(|c| c.is_ascii_whitespace()).unwrap_or(false) {
                 self.bump();
             }
-            // Line comment //
             if self.peek() == Some('/') && self.peek2() == Some('/') {
                 while self.peek().map(|c| c != '\n').unwrap_or(false) {
                     self.bump();
                 }
                 continue;
             }
-            // Block comment /* ... */
             if self.peek() == Some('/') && self.peek2() == Some('*') {
-                self.bump(); self.bump(); // consume /*
+                self.bump(); self.bump();
                 loop {
                     match self.bump() {
                         None => break,
@@ -176,13 +155,26 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Token {
+        if let Some(t) = self.peeked.take() {
+            return t;
+        }
+        self.lex_next()
+    }
+
+    fn peek_token(&mut self) -> Token {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.lex_next());
+        }
+        self.peeked.clone().unwrap()
+    }
+
+    fn lex_next(&mut self) -> Token {
         self.skip_whitespace_and_comments();
         let c = match self.peek() {
             None    => return Token::Eof,
             Some(c) => c,
         };
 
-        // String literals: single or double quote
         if c == '"' || c == '\'' {
             self.bump();
             let mut s = String::new();
@@ -208,7 +200,6 @@ impl Lexer {
             return Token::Str(s);
         }
 
-        // Template literals — no interpolation yet, treated as plain strings
         if c == '`' {
             self.bump();
             let mut s = String::new();
@@ -229,11 +220,8 @@ impl Lexer {
             return Token::Str(s);
         }
 
-        // Number literals (integer or float, optional leading minus handled in
-        // eval_primary as unary negation instead, so we only do positive here)
         if c.is_ascii_digit() {
             let mut num_str = String::new();
-            // hex: 0x…
             if c == '0' && self.peek2().map(|d| d == 'x' || d == 'X').unwrap_or(false) {
                 self.bump(); self.bump(); // consume 0x
                 let mut hex = String::new();
@@ -249,7 +237,6 @@ impl Lexer {
             return Token::Number(num_str.parse::<f64>().unwrap_or(0.0));
         }
 
-        // Identifiers / keywords
         if c.is_alphabetic() || c == '_' || c == '$' {
             let mut ident = String::new();
             while self.peek().map(|d| d.is_alphanumeric() || d == '_' || d == '$').unwrap_or(false) {
@@ -258,14 +245,11 @@ impl Lexer {
             return Token::Ident(ident);
         }
 
-        // Two-char and one-char operators
-        self.bump(); // consume first char
+        self.bump();
         match c {
             '=' => {
                 if self.peek() == Some('=') {
-                    self.bump(); // consume second =
-                    // also swallow a third = for ===
-                    if self.peek() == Some('=') { self.bump(); }
+                    self.bump();
                     Token::EqEq
                 } else {
                     Token::Eq
@@ -274,7 +258,7 @@ impl Lexer {
             '!' => {
                 if self.peek() == Some('=') {
                     self.bump();
-                    if self.peek() == Some('=') { self.bump(); } // !==
+                    if self.peek() == Some('=') { self.bump(); }
                     Token::BangEq
                 } else {
                     Token::Bang
@@ -298,7 +282,6 @@ impl Lexer {
             }
             '+' => {
                 if self.peek() == Some('=') { self.bump(); Token::PlusEq }
-                // ++ — treat as a no-op token by returning Plus twice; simplest safe approach
                 else if self.peek() == Some('+') { self.bump(); Token::Plus }
                 else { Token::Plus }
             }
@@ -309,7 +292,6 @@ impl Lexer {
             }
             '*' => {
                 if self.peek() == Some('=') { self.bump(); Token::StarEq }
-                // ** (exponentiation) — treat as * for now
                 else if self.peek() == Some('*') { self.bump(); Token::Star }
                 else { Token::Star }
             }
@@ -326,29 +308,7 @@ impl Lexer {
             _   => Token::Unknown(c),
         }
     }
-
-    /// Peek at the next token without consuming.
-    fn peek_token(&mut self) -> Token {
-        let saved = self.pos;
-        let tok = self.next_token();
-        self.pos = saved;
-        tok
-    }
 }
-
-// ---------------------------------------------------------------------------
-// Expression evaluation
-//
-// Precedence (low → high):
-//   logical OR  (||)
-//   logical AND (&&)
-//   equality    (== != === !==)
-//   relational  (< > <= >=)
-//   additive    (+ -)
-//   multiplicative (* / %)
-//   unary       (! -)
-//   primary
-// ---------------------------------------------------------------------------
 
 fn eval_expr(lexer: &mut Lexer, scope: &Scope) -> JsValue {
     eval_or(lexer, scope)
@@ -359,7 +319,6 @@ fn eval_or(lexer: &mut Lexer, scope: &Scope) -> JsValue {
     while lexer.peek_token() == Token::PipePipe {
         lexer.next_token();
         if val.to_bool() {
-            // short-circuit: skip RHS but still consume it
             skip_and_expr(lexer);
         } else {
             val = eval_and(lexer, scope);
@@ -517,7 +476,6 @@ fn eval_primary(lexer: &mut Lexer, scope: &Scope) -> JsValue {
                 scope.get(name)
             }
         },
-        // Grouped expression: (expr)
         Token::LParen => {
             let inner = eval_expr(lexer, scope);
             if lexer.peek_token() == Token::RParen {
@@ -529,10 +487,6 @@ fn eval_primary(lexer: &mut Lexer, scope: &Scope) -> JsValue {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Loose equality (==) — simplified JS semantics
-// ---------------------------------------------------------------------------
-
 fn js_loose_eq(a: &JsValue, b: &JsValue) -> bool {
     match (a, b) {
         (JsValue::Null,      JsValue::Null)      => true,
@@ -542,16 +496,10 @@ fn js_loose_eq(a: &JsValue, b: &JsValue) -> bool {
         (JsValue::Bool(x),   JsValue::Bool(y))   => x == y,
         (JsValue::Number(x), JsValue::Number(y)) => x == y,
         (JsValue::Str(x),    JsValue::Str(y))    => x == y,
-        // coerce to number for mixed types
         _ => a.to_number() == b.to_number(),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Skip helpers — consume tokens for short-circuit paths without evaluating
-// ---------------------------------------------------------------------------
-
-/// Skip one "and-level" expression (used by short-circuit OR).
 fn skip_and_expr(lexer: &mut Lexer) {
     skip_expr_at_precedence(lexer, Prec::And);
 }
@@ -564,9 +512,6 @@ fn skip_equality_expr(lexer: &mut Lexer) {
 enum Prec { And, Equality }
 
 fn skip_expr_at_precedence(lexer: &mut Lexer, _prec: Prec) {
-    // Simplification: skip tokens until we hit a token that can't be part of
-    // a sub-expression at this level (comma, semicolon, closing paren, EOF,
-    // or a logical operator at the same/lower precedence).
     let mut depth = 0i32;
     loop {
         match lexer.peek_token() {
@@ -580,16 +525,13 @@ fn skip_expr_at_precedence(lexer: &mut Lexer, _prec: Prec) {
     }
 }
 
-/// Skip `foo.bar(...)` dot-call chains after the leading ident is already consumed.
 fn skip_dot_call_chain(lexer: &mut Lexer) {
     loop {
         if lexer.peek_token() != Token::Dot { break; }
-        lexer.next_token(); // consume .
-        // method name
+        lexer.next_token();
         if let Token::Ident(_) = lexer.peek_token() { lexer.next_token(); }
-        // optional argument list
         if lexer.peek_token() == Token::LParen {
-            lexer.next_token(); // consume (
+            lexer.next_token();
             let mut depth = 1;
             loop {
                 match lexer.next_token() {
@@ -603,23 +545,16 @@ fn skip_dot_call_chain(lexer: &mut Lexer) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Statement runner
-// ---------------------------------------------------------------------------
-
 fn run_statement(lexer: &mut Lexer, scope: &mut Scope, entries: &mut Vec<ConsoleEntry>) {
     match lexer.peek_token() {
-        // ---- Variable declaration: let / const / var ----
         Token::Ident(ref id) if matches!(id.as_str(), "var" | "let" | "const") => {
-            lexer.next_token(); // consume keyword
+            lexer.next_token();
 
-            // Variable name
             let name = match lexer.next_token() {
                 Token::Ident(n) => n,
                 _ => { skip_to_semi(lexer); return; }
             };
 
-            // Optional `= <expr>`
             let val = if lexer.peek_token() == Token::Eq {
                 lexer.next_token(); // consume `=`
                 eval_expr(lexer, scope)
@@ -629,15 +564,11 @@ fn run_statement(lexer: &mut Lexer, scope: &mut Scope, entries: &mut Vec<Console
 
             scope.set(&name, val);
 
-            // Optional `;`
             if lexer.peek_token() == Token::Semi { lexer.next_token(); }
             return;
         }
 
-        // ---- Assignment or expression statement starting with an identifier ----
         Token::Ident(_) => {
-            // We need to look ahead: is this `name = expr`, `name op= expr`,
-            // or a plain expression/call?
             let saved = lexer.pos;
             let name = match lexer.next_token() {
                 Token::Ident(n) => n,
@@ -645,15 +576,13 @@ fn run_statement(lexer: &mut Lexer, scope: &mut Scope, entries: &mut Vec<Console
             };
 
             match lexer.peek_token() {
-                // Simple assignment: name = expr
                 Token::Eq => {
-                    lexer.next_token(); // consume `=`
+                    lexer.next_token();
                     let val = eval_expr(lexer, scope);
                     scope.set(&name, val);
                     if lexer.peek_token() == Token::Semi { lexer.next_token(); }
                     return;
                 }
-                // Compound assignment: name += / -= / *= / /= expr
                 Token::PlusEq | Token::MinusEq | Token::StarEq | Token::SlashEq => {
                     let op = lexer.next_token();
                     let rhs = eval_expr(lexer, scope);
@@ -672,12 +601,9 @@ fn run_statement(lexer: &mut Lexer, scope: &mut Scope, entries: &mut Vec<Console
                     if lexer.peek_token() == Token::Semi { lexer.next_token(); }
                     return;
                 }
-                // `console.log(...)` style call — restore and fall through to call handler
                 Token::Dot => {
-                    // Put the identifier back by resetting position
                     lexer.pos = saved;
                 }
-                // Anything else — restore and skip the statement
                 _ => {
                     lexer.pos = saved;
                     skip_to_semi(lexer);
@@ -689,7 +615,6 @@ fn run_statement(lexer: &mut Lexer, scope: &mut Scope, entries: &mut Vec<Console
         _ => {}
     }
 
-    // ---- console.log / console.warn ----
     if lexer.peek_token() != Token::Ident("console".to_owned()) {
         skip_to_semi(lexer);
         return;
@@ -741,12 +666,7 @@ fn skip_to_semi(lexer: &mut Lexer) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/// Log level emitted by a `console.*` call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum ConsoleLevel {
     Log,
     Warn,
@@ -759,12 +679,6 @@ pub struct ConsoleEntry {
     pub message: String,
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
-/// Execute a snippet of JavaScript source text.
-/// Returns all `console.log` / `console.warn` calls in order.
 pub fn execute(src: &str) -> Vec<ConsoleEntry> {
     let mut entries = Vec::new();
     let mut lexer   = Lexer::new(src);

@@ -6,18 +6,12 @@ use sdl2::video::{Window, WindowContext};
 use crate::dom::node::{Style, FontFamilyHint};
 use crate::render::font::{FontCache, FontFamily};
 
-// ---------------------------------------------------------------------------
-// Color helper
-// ---------------------------------------------------------------------------
+use crate::render::layout::state::{RoundedClip};
 
 /// Build an `RGBA` colour from separate RGB and alpha components.
 pub fn rgba_color(rgb: [u8; 3], alpha: u8) -> Color {
     Color::RGBA(rgb[0], rgb[1], rgb[2], alpha)
 }
-
-// ---------------------------------------------------------------------------
-// Text
-// ---------------------------------------------------------------------------
 
 fn hint_to_family(hint: FontFamilyHint) -> FontFamily {
     match hint {
@@ -36,6 +30,7 @@ pub fn paint_text(
     text:       &str,
     style:      &Style,
     x: i32, y: i32,
+    clip:       Option<&RoundedClip>,
     scroll_y:   i32,
     viewport_h: i32,
 ) -> (i32, i32) {
@@ -45,29 +40,55 @@ pub fn paint_text(
         Some(f) => f,
         None    => return (0, 0),
     };
+
+    // Measure first for background and lines
+    let (sw, sh) = font.size_of(text).map(|(w, h)| (w as i32, h as i32)).unwrap_or((0, 0));
+
+    // 1. Background highlight
+    if let Some(bg) = style.bg_color {
+        if style.border_radius != [0, 0, 0, 0] {
+            // Note: fill_rounded_rect currently doesn't support outer clipping,
+            // but for highlights inside a clipped container, it's usually small enough.
+            fill_rounded_rect(canvas, rgba_color(bg, style.bg_alpha), style.bg_alpha,
+                              x, y, sw, sh, style.border_radius,
+                              scroll_y, viewport_h);
+        } else {
+            fill_rect_alpha(canvas, rgba_color(bg, style.bg_alpha), style.bg_alpha,
+                            x, y, sw, sh, clip, scroll_y, viewport_h);
+        }
+    }
+
+    // 2. The Text itself
     let alpha = style.color_alpha;
     let color = rgba_color(style.color, alpha);
     if alpha < 255 {
         canvas.set_blend_mode(BlendMode::Blend);
     }
-    let surface = match font.render(text).blended(color) {
-        Ok(s)  => s,
-        Err(_) => return (0, 0),
-    };
-    let (sw, sh) = (surface.width() as i32, surface.height() as i32);
-    let ry = y - scroll_y;
-    if ry + sh > 0 && ry < viewport_h {
-        if let Ok(mut tex) = tc.create_texture_from_surface(&surface) {
-            if alpha < 255 {
-                let _ = tex.set_blend_mode(BlendMode::Blend);
-                let _ = tex.set_alpha_mod(alpha);
+    if let Ok(surface) = font.render(text).blended(color) {
+        let ry = y - scroll_y;
+        if ry + sh > 0 && ry < viewport_h {
+            if let Ok(mut tex) = tc.create_texture_from_surface(&surface) {
+                if alpha < 255 {
+                    let _ = tex.set_blend_mode(BlendMode::Blend);
+                    let _ = tex.set_alpha_mod(alpha);
+                }
+                let _ = canvas.copy(&tex, None, Rect::new(x, ry, sw as u32, sh as u32));
             }
-            let _ = canvas.copy(&tex, None, Rect::new(x, ry, sw as u32, sh as u32));
         }
     }
     if alpha < 255 {
         canvas.set_blend_mode(BlendMode::None);
     }
+
+    // 3. Decorations (underline / strikethrough)
+    let dc = rgba_color(style.color, alpha);
+    if style.underline {
+        fill_rect_alpha(canvas, dc, alpha, x, y + sh - 2, sw, 1, clip, scroll_y, viewport_h);
+    }
+    if style.strikethrough {
+        fill_rect_alpha(canvas, dc, alpha, x, y + sh / 2, sw, 1, clip, scroll_y, viewport_h);
+    }
+
     (sw, sh)
 }
 
@@ -108,17 +129,21 @@ pub fn paint_box_shadow(
             y + shadow.offset_y - expand,
             w + expand * 2,
             h + expand * 2,
+            None,
             scroll_y,
             viewport_h,
         );
     }
 }
 
-// ---------------------------------------------------------------------------
-// Rectangles
-// ---------------------------------------------------------------------------
+fn isqrt(n: i64) -> i64 {
+    if n <= 0 { return 0; }
+    let mut x = (n as f64).sqrt() as i64;
+    while x * x > n              { x -= 1; }
+    while (x + 1) * (x + 1) <= n { x += 1; }
+    x
+}
 
-/// Fill a rectangle, clipped to the viewport.
 pub fn fill_rect(
     canvas:     &mut Canvas<Window>,
     color:      Color,
@@ -126,34 +151,90 @@ pub fn fill_rect(
     scroll_y:   i32,
     viewport_h: i32,
 ) {
-    fill_rect_alpha(canvas, color, 255, x, y, w, h, scroll_y, viewport_h);
+    fill_rect_alpha(canvas, color, 255, x, y, w, h, None, scroll_y, viewport_h);
 }
 
-/// Fill a rectangle with an explicit alpha value, enabling blend mode when alpha < 255.
 pub fn fill_rect_alpha(
     canvas:     &mut Canvas<Window>,
     color:      Color,
     alpha:      u8,
     x: i32, y: i32, w: i32, h: i32,
+    clip:       Option<&RoundedClip>,
     scroll_y:   i32,
     viewport_h: i32,
 ) {
     let ry = y - scroll_y;
-    if ry + h > 0 && ry < viewport_h && w > 0 && h > 0 {
-        // Blend alpha into the colour if not fully opaque
-        let c = Color::RGBA(color.r, color.g, color.b, alpha);
-        if alpha < 255 {
-            canvas.set_blend_mode(BlendMode::Blend);
+    if ry + h <= 0 || ry >= viewport_h || w <= 0 || h <= 0 { return; }
+
+    let c = Color::RGBA(color.r, color.g, color.b, alpha);
+    if alpha < 255 {
+        canvas.set_blend_mode(BlendMode::Blend);
+    }
+    canvas.set_draw_color(c);
+
+    match clip {
+        Some(rc) => {
+            // Rounded clipping: paint row by row
+            for row in 0..h {
+                let abs_y = y + row;
+                let row_ry = abs_y - scroll_y;
+                if row_ry < 0 { continue; }
+                if row_ry >= viewport_h { break; }
+
+                // Intersect the row with the rounded clip's horizontal range
+                let (cl, cr) = get_rounded_rect_row_range(abs_y - rc.y, rc.h, &rc.radii);
+                let safe_lx = rc.x + cl;
+                let safe_rx = rc.x + rc.w - cr;
+
+                let draw_lx = x.max(safe_lx);
+                let draw_rx = (x + w).min(safe_rx);
+                let draw_w  = draw_rx - draw_lx;
+
+                if draw_w > 0 {
+                    let _ = canvas.fill_rect(Rect::new(draw_lx, row_ry, draw_w as u32, 1));
+                }
+            }
         }
-        canvas.set_draw_color(c);
-        let _ = canvas.fill_rect(Rect::new(x, ry, w as u32, h as u32));
-        if alpha < 255 {
-            canvas.set_blend_mode(BlendMode::None);
+        None => {
+            let _ = canvas.fill_rect(Rect::new(x, ry, w as u32, h as u32));
         }
+    }
+
+    if alpha < 255 {
+        canvas.set_blend_mode(BlendMode::None);
     }
 }
 
-/// Draw a rectangle outline, clipped to the viewport.
+fn get_rounded_rect_row_range(row: i32, h: i32, r: &[u16; 4]) -> (i32, i32) {
+    if row < 0 || row >= h { return (h, h); } // fully clipped
+
+    let left_clip = if row < r[0] as i32 {
+        let dy = r[0] as i32 - row - 1;
+        let r0 = r[0] as i64;
+        r[0] as i32 - isqrt(r0 * r0 - (dy as i64) * (dy as i64)) as i32
+    } else if row >= h - r[3] as i32 {
+        let dy = row - (h - r[3] as i32);
+        let r3 = r[3] as i64;
+        r[3] as i32 - isqrt(r3 * r3 - (dy as i64) * (dy as i64)) as i32
+    } else {
+        0
+    };
+
+    let right_clip = if row < r[1] as i32 {
+        let dy = r[1] as i32 - row - 1;
+        let r1 = r[1] as i64;
+        r[1] as i32 - isqrt(r1 * r1 - (dy as i64) * (dy as i64)) as i32
+    } else if row >= h - r[2] as i32 {
+        let dy = row - (h - r[2] as i32);
+        let r2 = r[2] as i64;
+        r[2] as i32 - isqrt(r2 * r2 - (dy as i64) * (dy as i64)) as i32
+    } else {
+        0
+    };
+
+    (left_clip, right_clip)
+}
+
 pub fn draw_rect(
     canvas:     &mut Canvas<Window>,
     color:      Color,
@@ -166,20 +247,6 @@ pub fn draw_rect(
         canvas.set_draw_color(color);
         let _ = canvas.draw_rect(Rect::new(x, ry, w as u32, h as u32));
     }
-}
-
-// ---------------------------------------------------------------------------
-// Rounded rectangles
-// ---------------------------------------------------------------------------
-
-/// Integer square-root helper (returns floor(sqrt(n))).
-fn isqrt(n: i64) -> i64 {
-    if n <= 0 { return 0; }
-    let mut x = (n as f64).sqrt() as i64;
-    // one correction step
-    while x * x > n        { x -= 1; }
-    while (x + 1) * (x + 1) <= n { x += 1; }
-    x
 }
 
 /// Fill a rounded rectangle using horizontal scan-lines. No SDL2_gfx required.
@@ -199,7 +266,7 @@ pub fn fill_rounded_rect(
 
     // Fast path — no rounding needed
     if radii == [0, 0, 0, 0] {
-        fill_rect_alpha(canvas, color, alpha, x, y, w, h, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, x, y, w, h, None, scroll_y, viewport_h);
         return;
     }
 
@@ -218,49 +285,14 @@ pub fn fill_rounded_rect(
         let abs_y = y + row;
         let row_ry = abs_y - scroll_y;
         if row_ry >= viewport_h { break; }
-        if row_ry + 1 <= 0     { continue; }
+        if row_ry < 0 { continue; }
 
-        // Determine left and right clip from corner arcs
-        let left_clip;
-        let right_clip;
-
-        if row < r[0] as i32 {
-            // top-left corner region
-            let dy   = r[0] as i32 - row - 1;   // distance from arc centre
-            let r0   = r[0] as i64;
-            let fill = isqrt(r0 * r0 - (dy as i64) * (dy as i64));
-            left_clip = r[0] as i32 - fill as i32;
-        } else if row >= h - r[3] as i32 {
-            // bottom-left corner region
-            let dy   = row - (h - r[3] as i32);
-            let r3   = r[3] as i64;
-            let fill = isqrt(r3 * r3 - (dy as i64) * (dy as i64));
-            left_clip = r[3] as i32 - fill as i32;
-        } else {
-            left_clip = 0;
-        }
-
-        if row < r[1] as i32 {
-            // top-right corner region
-            let dy   = r[1] as i32 - row - 1;
-            let r1   = r[1] as i64;
-            let fill = isqrt(r1 * r1 - (dy as i64) * (dy as i64));
-            right_clip = r[1] as i32 - fill as i32;
-        } else if row >= h - r[2] as i32 {
-            // bottom-right corner region
-            let dy   = row - (h - r[2] as i32);
-            let r2   = r[2] as i64;
-            let fill = isqrt(r2 * r2 - (dy as i64) * (dy as i64));
-            right_clip = r[2] as i32 - fill as i32;
-        } else {
-            right_clip = 0;
-        }
-
-        let lx   = x + left_clip;
-        let rw   = w - left_clip - right_clip;
+        let (cl, cr) = get_rounded_rect_row_range(row, h, &r);
+        let lx   = x + cl;
+        let rw   = w - cl - cr;
         if rw <= 0 { continue; }
 
-        fill_rect_alpha(canvas, color, alpha, lx, abs_y, rw, 1, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, lx, abs_y, rw, 1, None, scroll_y, viewport_h);
     }
 }
 
@@ -281,10 +313,10 @@ pub fn draw_rounded_rect(
 
     if radii == [0, 0, 0, 0] {
         // Plain outline: top, bottom, left, right
-        fill_rect_alpha(canvas, color, alpha, x,         y,         w, 1, scroll_y, viewport_h);
-        fill_rect_alpha(canvas, color, alpha, x,         y + h - 1, w, 1, scroll_y, viewport_h);
-        fill_rect_alpha(canvas, color, alpha, x,         y,         1, h, scroll_y, viewport_h);
-        fill_rect_alpha(canvas, color, alpha, x + w - 1, y,         1, h, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, x,         y,         w, 1, None, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, x,         y + h - 1, w, 1, None, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, x,         y,         1, h, None, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, x + w - 1, y,         1, h, None, scroll_y, viewport_h);
         return;
     }
 
@@ -301,7 +333,7 @@ pub fn draw_rounded_rect(
     let top_right_x = x + w - r[1] as i32;
     if top_right_x > top_left_x {
         fill_rect_alpha(canvas, color, alpha,
-            top_left_x, y, top_right_x - top_left_x, 1, scroll_y, viewport_h);
+            top_left_x, y, top_right_x - top_left_x, 1, None, scroll_y, viewport_h);
     }
 
     // Bottom edge
@@ -309,7 +341,7 @@ pub fn draw_rounded_rect(
     let bot_right_x = x + w - r[2] as i32;
     if bot_right_x > bot_left_x {
         fill_rect_alpha(canvas, color, alpha,
-            bot_left_x, y + h - 1, bot_right_x - bot_left_x, 1, scroll_y, viewport_h);
+            bot_left_x, y + h - 1, bot_right_x - bot_left_x, 1, None, scroll_y, viewport_h);
     }
 
     // Left edge
@@ -317,7 +349,7 @@ pub fn draw_rounded_rect(
     let left_bottom_y = y + h - r[3] as i32;
     if left_bottom_y > left_top_y {
         fill_rect_alpha(canvas, color, alpha,
-            x, left_top_y, 1, left_bottom_y - left_top_y, scroll_y, viewport_h);
+            x, left_top_y, 1, left_bottom_y - left_top_y, None, scroll_y, viewport_h);
     }
 
     // Right edge
@@ -325,7 +357,7 @@ pub fn draw_rounded_rect(
     let right_bottom_y = y + h - r[2] as i32;
     if right_bottom_y > right_top_y {
         fill_rect_alpha(canvas, color, alpha,
-            x + w - 1, right_top_y, 1, right_bottom_y - right_top_y, scroll_y, viewport_h);
+            x + w - 1, right_top_y, 1, right_bottom_y - right_top_y, None, scroll_y, viewport_h);
     }
 
     // Corner arcs — draw the outermost pixel ring of each quarter circle
@@ -335,7 +367,7 @@ pub fn draw_rounded_rect(
         let dy = r[0] as i32 - row - 1;
         let outer = isqrt(r0 * r0 - (dy as i64) * (dy as i64));
         let px = x + r[0] as i32 - outer as i32;
-        fill_rect_alpha(canvas, color, alpha, px, y + row, 1, 1, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, px, y + row, 1, 1, None, scroll_y, viewport_h);
     }
     // Top-right (r[1])
     let r1 = r[1] as i64;
@@ -343,7 +375,7 @@ pub fn draw_rounded_rect(
         let dy = r[1] as i32 - row - 1;
         let outer = isqrt(r1 * r1 - (dy as i64) * (dy as i64));
         let px = x + w - r[1] as i32 + outer as i32 - 1;
-        fill_rect_alpha(canvas, color, alpha, px, y + row, 1, 1, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, px, y + row, 1, 1, None, scroll_y, viewport_h);
     }
     // Bottom-right (r[2])
     let r2 = r[2] as i64;
@@ -351,7 +383,7 @@ pub fn draw_rounded_rect(
         let dy = row;
         let outer = isqrt(r2 * r2 - (dy as i64) * (dy as i64));
         let px = x + w - r[2] as i32 + outer as i32 - 1;
-        fill_rect_alpha(canvas, color, alpha, px, y + h - r[2] as i32 + row, 1, 1, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, px, y + h - r[2] as i32 + row, 1, 1, None, scroll_y, viewport_h);
     }
     // Bottom-left (r[3])
     let r3 = r[3] as i64;
@@ -359,6 +391,39 @@ pub fn draw_rounded_rect(
         let dy = row;
         let outer = isqrt(r3 * r3 - (dy as i64) * (dy as i64));
         let px = x + r[3] as i32 - outer as i32;
-        fill_rect_alpha(canvas, color, alpha, px, y + h - r[3] as i32 + row, 1, 1, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, color, alpha, px, y + h - r[3] as i32 + row, 1, 1, None, scroll_y, viewport_h);
+    }
+}
+
+pub fn paint_disclosure_triangle(
+    canvas:     &mut Canvas<Window>,
+    color:      Color,
+    x:          i32,
+    y:          i32,
+    size:       i32,
+    is_open:    bool,
+    scroll_y:   i32,
+    viewport_h: i32,
+) {
+    let ry = y - scroll_y;
+    if ry + size < 0 || ry > viewport_h { return; }
+
+    canvas.set_draw_color(color);
+    if is_open {
+        // Pointing down
+        for i in 0..size {
+            let _ = canvas.draw_line(
+                sdl2::rect::Point::new(x + i, ry + i),
+                sdl2::rect::Point::new(x + size * 2 - i, ry + i),
+            );
+        }
+    } else {
+        // Pointing right
+        for i in 0..size {
+            let _ = canvas.draw_line(
+                sdl2::rect::Point::new(x + i, ry + i),
+                sdl2::rect::Point::new(x + i, ry + size * 2 - i),
+            );
+        }
     }
 }

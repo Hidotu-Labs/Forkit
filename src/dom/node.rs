@@ -14,7 +14,7 @@ pub enum Display {
     #[default] Inline,
     Block,
     InlineBlock,
-    Hidden,   // display:none
+    Hidden,
 }
 /// CSS `text-transform`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -24,8 +24,8 @@ pub enum TextTransform { #[default] None, Uppercase, Lowercase, Capitalize }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     #[default] Visible,
-    Hidden,    // invisible but still occupies layout space
-    Collapse,  // like hidden for most elements; like display:none for table rows
+    Hidden,
+    Collapse,
 }
 
 /// CSS `overflow`

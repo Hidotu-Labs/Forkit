@@ -72,35 +72,29 @@ pub fn layout_table(
 
         let row_h = cell_heights.iter().copied().max().unwrap_or(24).max(24);
 
-        // Pass 2 — render cells at uniform row height
         for (ci, cell_node) in cells.iter().enumerate() {
             if let Node::Element(cell) = cell_node {
                 let cx = table_x + ci as i32 * col_w;
 
-                // Background
                 if let Some(bg) = cell.style.bg_color {
                     fill_rect(canvas, Color::RGB(bg[0], bg[1], bg[2]),
                               cx, row_start_y, col_w, row_h,
                               ls.ctx.scroll_y, ls.ctx.viewport_height);
                 }
 
-                // Border — collapsed model: only draw if the cell has an
-                // explicit border. Each cell draws only top + left edges to
-                // avoid doubling shared borders between adjacent cells.
                 if cell.style.borders.top.width > 0 {
                     let bc   = cell.style.borders.top.color;
                     let bc_c = Color::RGB(bc[0], bc[1], bc[2]);
-                    // top edge
                     fill_rect_alpha(canvas, bc_c, 255,
                         cx, row_start_y, col_w, 1,
+                        ls.rounding_clip.as_ref(),
                         ls.ctx.scroll_y, ls.ctx.viewport_height);
-                    // left edge
                     fill_rect_alpha(canvas, bc_c, 255,
                         cx, row_start_y, 1, row_h,
+                        ls.rounding_clip.as_ref(),
                         ls.ctx.scroll_y, ls.ctx.viewport_height);
                 }
 
-                // Content
                 let pad_top  = if cell.style.padding.top    > 0 { cell.style.padding.top    } else { DEFAULT_CELL_PAD };
                 let pad_left = if cell.style.padding.left   > 0 { cell.style.padding.left   } else { DEFAULT_CELL_PAD };
                 let pad_rgt  = if cell.style.padding.right  > 0 { cell.style.padding.right  } else { DEFAULT_CELL_PAD };
@@ -111,6 +105,7 @@ pub fn layout_table(
                 // Merge clickable areas back to the parent state
                 ls.link_areas.extend(sub.link_areas);
                 ls.button_areas.extend(sub.button_areas);
+                ls.details_areas.extend(sub.details_areas);
                 // Merge input areas back, fixing up indices relative to parent's count
                 let base_idx = ls.input_count;
                 for mut ia in sub.input_areas {
@@ -142,23 +137,28 @@ pub fn layout_table(
         let gc = Color::RGB(grid_color[0], grid_color[1], grid_color[2]);
         fill_rect_alpha(canvas, gc, 255,
             table_x + table_w - 1, table_start_y, 1, table_h,
+            ls.rounding_clip.as_ref(),
             ls.ctx.scroll_y, ls.ctx.viewport_height);
         fill_rect_alpha(canvas, gc, 255,
             table_x, ls.cursor_y - 1, table_w, 1,
+            ls.rounding_clip.as_ref(),
             ls.ctx.scroll_y, ls.ctx.viewport_height);
     }
 
-    // Optional explicit outer border (only when table has a CSS border set).
     if table.style.borders.top.width > 0 {
         let bc = table.style.borders.top.color;
         let bc_c = Color::RGB(bc[0], bc[1], bc[2]);
         fill_rect_alpha(canvas, bc_c, 255, table_x, table_start_y, table_w, 1,
+            ls.rounding_clip.as_ref(),
             ls.ctx.scroll_y, ls.ctx.viewport_height);
         fill_rect_alpha(canvas, bc_c, 255, table_x, table_start_y, 1, table_h,
+            ls.rounding_clip.as_ref(),
             ls.ctx.scroll_y, ls.ctx.viewport_height);
         fill_rect_alpha(canvas, bc_c, 255, table_x + table_w - 1, table_start_y, 1, table_h,
+            ls.rounding_clip.as_ref(),
             ls.ctx.scroll_y, ls.ctx.viewport_height);
         fill_rect_alpha(canvas, bc_c, 255, table_x, table_start_y + table_h - 1, table_w, 1,
+            ls.rounding_clip.as_ref(),
             ls.ctx.scroll_y, ls.ctx.viewport_height);
     }
 
@@ -166,10 +166,6 @@ pub fn layout_table(
     ls.cursor_x    = ls.margin_left;
     ls.line_height = 16;
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Create a child LayoutState that shares the same RenderCtx.
 fn sub_state<'ctx>(
@@ -189,12 +185,14 @@ fn sub_state<'ctx>(
         link_areas:    Vec::new(),
         input_areas:   Vec::new(),
         button_areas:  Vec::new(),
+        details_areas: Vec::new(),
         input_count:   0,
         input_values:  parent.input_values.clone(),
         focused_input: parent.focused_input,
         form_action:   parent.form_action.clone(),
         ol_stack:      Vec::new(),
         content_height: 0,
+        rounding_clip:  parent.rounding_clip.clone(),
     }
 }
 

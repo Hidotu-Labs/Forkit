@@ -9,7 +9,6 @@ pub fn fetch_url(url: &str) -> Result<(String, String), String> {
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
-    // Capture the final URL after redirects (ureq exposes it via the response)
     let final_url = resp.get_url().to_owned();
 
     // Extract charset from Content-Type header (e.g. "text/html; charset=ISO-8859-9")
@@ -25,7 +24,6 @@ pub fn fetch_url(url: &str) -> Result<(String, String), String> {
         })
         .unwrap_or_default();
 
-    // Read raw bytes — we handle decoding ourselves
     let mut bytes = Vec::new();
     resp.into_reader()
         .read_to_end(&mut bytes)
@@ -41,7 +39,6 @@ pub fn fetch_url(url: &str) -> Result<(String, String), String> {
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
         }
         cs => {
-            // Detect which single-byte table to use
             let table: &[char; 128] = if cs.contains("1254") || cs == "iso-8859-9"
                 || cs == "iso8859-9" || cs == "latin5" || cs == "l5"
             {

@@ -9,10 +9,6 @@ use crate::render::renderer::RenderCtx;
 use super::block;
 use super::inline;
 
-// ---------------------------------------------------------------------------
-// LayoutBox — bounding box of a rendered block element
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct LayoutBox {
     pub x: i32, pub y: i32, pub w: i32, pub h: i32,
@@ -40,16 +36,15 @@ impl LinkArea {
     }
 }
 
-// ---------------------------------------------------------------------------
-// InputArea — clickable/focusable form control region
-// ---------------------------------------------------------------------------
-
-/// The kind of form control this area represents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputKind {
     Text,
     Password,
     TextArea,
+    Checkbox,
+    Radio,
+    Range,
+    Color,
     Other,
 }
 
@@ -62,7 +57,10 @@ pub struct InputArea {
     /// Unique index among all inputs on the page (assigned at layout time).
     pub index: usize,
     pub kind:  InputKind,
+    /// Value of the HTML `name` attribute (used for radio button grouping).
+    pub name:  String,
 }
+
 
 impl InputArea {
     /// Returns true if `(px, py)` is inside this area (scroll-adjusted).
@@ -73,12 +71,7 @@ impl InputArea {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ButtonArea — clickable button/submit/reset region
-// ---------------------------------------------------------------------------
-
-/// What action a button performs when clicked.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ButtonAction {
     /// Navigate to this URL (href from <a> styled as button, or form action).
     Navigate(String),
@@ -107,18 +100,40 @@ impl ButtonArea {
     }
 }
 
-pub const MARGIN_LEFT:  i32 = 0;   // default left edge — overridden by body CSS
-pub const MARGIN_RIGHT: i32 = 0;   // default right edge
-pub const MARGIN_TOP:   i32 = 0;   // default top edge
+#[derive(Debug, Clone)]
+pub struct DetailsArea {
+    pub x:           i32,
+    pub y:           i32,
+    pub w:           i32,
+    pub h:           i32,
+    pub element_ptr: usize,
+}
+
+impl DetailsArea {
+    pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
+        let ay = self.y - scroll_y;
+        px >= self.x && px < self.x + self.w
+            && py >= ay && py < ay + self.h
+    }
+}
+
+pub const MARGIN_LEFT:  i32 = 0;
+pub const MARGIN_RIGHT: i32 = 0;
+pub const MARGIN_TOP:   i32 = 0;
 pub const LINE_SPACING: i32 = 1;
 pub const BLOCK_MARGIN: i32 = 0;
 
 /// Fallback page margin used when body has no margin/padding CSS set.
 const DEFAULT_PAGE_MARGIN: i32 = 8;
 
-// ---------------------------------------------------------------------------
-// LayoutState
-// ---------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub struct RoundedClip {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub radii: [u16; 4],
+}
 
 pub struct LayoutState<'ctx> {
     pub ctx:         &'ctx RenderCtx,
@@ -132,6 +147,7 @@ pub struct LayoutState<'ctx> {
     pub link_areas:  Vec<LinkArea>,
     pub input_areas: Vec<InputArea>,
     pub button_areas: Vec<ButtonArea>,
+    pub details_areas: Vec<DetailsArea>,
     /// Counter for assigning unique indices to input areas.
     pub input_count: usize,
     /// Live values for each focusable input (indexed by input order on the page).
@@ -144,6 +160,8 @@ pub struct LayoutState<'ctx> {
     pub ol_stack:    Vec<u32>,
     /// Total document height in pixels (set after layout completes).
     pub content_height: i32,
+    /// Optional rounded clip to apply to child elements (experimental).
+    pub rounding_clip: Option<RoundedClip>,
 }
 
 impl<'ctx> LayoutState<'ctx> {
@@ -159,12 +177,14 @@ impl<'ctx> LayoutState<'ctx> {
             link_areas:    Vec::new(),
             input_areas:   Vec::new(),
             button_areas:  Vec::new(),
+            details_areas: Vec::new(),
             input_count:   0,
             input_values:  Vec::new(),
             focused_input: None,
             form_action:   String::new(),
             ol_stack:      Vec::new(),
             content_height: 0,
+            rounding_clip:  None,
         }
     }
 
@@ -209,9 +229,7 @@ impl<'ctx> LayoutState<'ctx> {
     ) {
         match node {
             Node::Text(t)    => {
-                // visibility:hidden text — skip painting but keep space
                 if t.style.visibility == Visibility::Hidden {
-                    // Advance cursor by the text's approximate width
                     block::advance_text_invisible(self, fonts, &t.text, &t.style);
                 } else {
                     // Re-resolve viewport-relative font-size (vw/vh/calc) now

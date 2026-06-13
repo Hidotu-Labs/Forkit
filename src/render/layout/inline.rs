@@ -18,29 +18,39 @@ pub fn paint_wrapped(
     style:  &Style,
     max_w:  i32,
 ) {
-    // ---- white-space: pre — line-by-line, no wrapping ----
     if style.white_space_pre {
         for line in text.lines() {
-            let (sw, sh) = paint_text(
-                canvas, tc, fonts, line, style,
-                ls.cursor_x, ls.cursor_y,
-                ls.ctx.scroll_y, ls.ctx.viewport_height,
-            );
-            if sh > ls.line_height { ls.line_height = sh; }
-            ls.cursor_x += sw;
+            flush_line(ls, canvas, tc, fonts, line, style, max_w);
             ls.newline(style.font_size, style.line_height_mul);
         }
         return;
     }
 
-    // ---- normal word-wrap ----
-    if max_w - ls.cursor_x < 40 {
-        ls.cursor_y   += ls.line_height + LINE_SPACING;
-        ls.cursor_x    = ls.margin_left + ls.indent;
-        ls.line_height = style.font_size as i32;
-    }
 
-    // Apply text-transform before breaking into words
+
+    // 1. Whitespace normalization (if not pre)
+    let normalized_ws: String;
+    let text = if !style.white_space_pre {
+        let mut n = String::with_capacity(text.len());
+        let mut last_was_ws = false;
+        for c in text.chars() {
+            if c.is_whitespace() {
+                if !last_was_ws {
+                    n.push(' ');
+                    last_was_ws = true;
+                }
+            } else {
+                n.push(c);
+                last_was_ws = false;
+            }
+        }
+        normalized_ws = n;
+        &normalized_ws as &str
+    } else {
+        text
+    };
+
+    // 2. Apply text-transform before breaking into words
     let transformed: String;
     let text = match style.text_transform {
         TextTransform::Uppercase  => { transformed = text.to_uppercase();  &transformed as &str }
@@ -62,20 +72,131 @@ pub fn paint_wrapped(
     };
 
     let mut line = String::new();
+    let has_content = text.chars().any(|c| !c.is_whitespace());
 
-    for word in text.split_whitespace() {
-        let test = if line.is_empty() { word.to_string() }
-                   else               { format!("{} {}", line, word) };
-        let (tw, _) = measure_text(fonts, &test, style);
-
-        if tw > max_w - ls.cursor_x && !line.is_empty() {
-            flush_line(ls, canvas, tc, fonts, &line, style, max_w);
+    // If the node is just whitespace, ensure it advances the cursor correctly (collapsed to a single space).
+    if !has_content && !text.is_empty() {
+        let (sw, _) = measure_text(fonts, " ", style);
+        if ls.cursor_x + sw > max_w && ls.cursor_x > ls.margin_left + ls.indent {
             ls.newline(style.font_size, style.line_height_mul);
-            line = word.to_string();
-        } else {
-            line = test;
+        }
+        ls.cursor_x += sw;
+        return;
+    }
+
+    // Attempt to render the entire node as a single chunk if it fits.
+    let (tw, _) = measure_text(fonts, text, style);
+    if ls.cursor_x + tw <= max_w {
+        flush_line(ls, canvas, tc, fonts, text, style, max_w);
+        return;
+    } else if ls.cursor_x > ls.margin_left + ls.indent {
+        ls.newline(style.font_size, style.line_height_mul);
+        if tw <= max_w - ls.cursor_x {
+            flush_line(ls, canvas, tc, fonts, text, style, max_w);
+            return;
         }
     }
+
+    // Fallback: Split by a single space to preserve word-level metrics.
+    use crate::dom::node::WordBreak;
+
+    let mut started = false;
+    for word in text.split(' ') {
+        let mut cur_word = word;
+
+        while !cur_word.is_empty() {
+            let test = if !started || line.is_empty() {
+                cur_word.to_string()
+            } else {
+                format!("{} {}", line, cur_word)
+            };
+            let (tw, _) = measure_text(fonts, &test, style);
+            let available_w = max_w - ls.cursor_x;
+
+            if tw > available_w {
+                // If word-break: break-all is set, we try to fill the current line by breaking the word.
+                if style.word_break == WordBreak::BreakAll {
+                    let prefix = if line.is_empty() { String::new() } else { format!("{} ", line) };
+                    let mut split_idx = 0;
+                    for (idx, _) in cur_word.char_indices() {
+                        let (sw, _) = measure_text(fonts, &format!("{}{}", prefix, &cur_word[..idx]), style);
+                        if sw > available_w { break; }
+                        split_idx = idx;
+                    }
+
+                    if split_idx > 0 {
+                        flush_line(ls, canvas, tc, fonts, &format!("{}{}", prefix, &cur_word[..split_idx]), style, max_w);
+                        ls.newline(style.font_size, style.line_height_mul);
+                        cur_word = &cur_word[split_idx..];
+                        line = String::new();
+                        started = true;
+                        continue;
+                    } else if !line.is_empty() {
+                        // Could not fit even one char of the word on the same line (even with break-all),
+                        // so flush the current line and try the word on the next line.
+                        flush_line(ls, canvas, tc, fonts, &line, style, max_w);
+                        ls.newline(style.font_size, style.line_height_mul);
+                        line = String::new();
+                        continue;
+                    } else if ls.cursor_x > ls.margin_left + ls.indent {
+                        // Line is empty (for this node), but we aren't at the start of a physical line.
+                        ls.newline(style.font_size, style.line_height_mul);
+                        continue;
+                    }
+                    // If we are here, line is empty, ls.cursor_x is at marginal/indent, and split_idx is 0.
+                    // This means not even one character fits on a fresh line.
+                    // Force one character anyway to avoid infinite loop.
+                    split_idx = cur_word.chars().next().unwrap().len_utf8();
+                    flush_line(ls, canvas, tc, fonts, &cur_word[..split_idx], style, max_w);
+                    ls.newline(style.font_size, style.line_height_mul);
+                    cur_word = &cur_word[split_idx..];
+                    line = String::new();
+                    started = true;
+                    continue;
+                }
+
+                // Normal behavior or break-word
+                if !line.is_empty() {
+                    flush_line(ls, canvas, tc, fonts, &line, style, max_w);
+                    ls.newline(style.font_size, style.line_height_mul);
+                    line = String::new();
+                    continue;
+                } else if ls.cursor_x > ls.margin_left + ls.indent {
+                    ls.newline(style.font_size, style.line_height_mul);
+                    continue;
+                } else {
+                    // Line is empty and we are at the margin, but it still doesn't fit.
+                    if style.word_break == WordBreak::BreakWord {
+                        // For break-word, we break if it doesn't fit on a fresh line.
+                        let mut split_idx = 0;
+                        for (idx, _) in cur_word.char_indices() {
+                            if idx == 0 { continue; }
+                            let (sw, _) = measure_text(fonts, &cur_word[..idx], style);
+                            if sw > available_w { break; }
+                            split_idx = idx;
+                        }
+                        if split_idx == 0 { split_idx = cur_word.chars().next().unwrap().len_utf8(); }
+
+                        flush_line(ls, canvas, tc, fonts, &cur_word[..split_idx], style, max_w);
+                        ls.newline(style.font_size, style.line_height_mul);
+                        cur_word = &cur_word[split_idx..];
+                        line = String::new();
+                        started = true;
+                    } else {
+                        // Normal: just let it overflow.
+                        line = cur_word.to_string();
+                        cur_word = "";
+                        started = true;
+                    }
+                }
+            } else {
+                line = test;
+                cur_word = "";
+                started = true;
+            }
+        }
+    }
+
     if !line.is_empty() {
         flush_line(ls, canvas, tc, fonts, &line, style, max_w);
     }
@@ -99,42 +220,24 @@ pub fn flush_line(
     let x = match style.text_align {
         TextAlign::Left   => ls.cursor_x,
         TextAlign::Center => {
-            let avail = max_w - ls.margin_left - MARGIN_RIGHT;
-            ls.margin_left + ((avail - tw) / 2).max(0)
+            let container_l = ls.margin_left + ls.indent;
+            let container_w = (max_w - MARGIN_RIGHT - container_l).max(0);
+            container_l + ((container_w - tw) / 2).max(0)
         }
-        TextAlign::Right => (max_w - MARGIN_RIGHT - tw).max(ls.margin_left),
+        TextAlign::Right => (max_w - MARGIN_RIGHT - tw).max(ls.margin_left + ls.indent),
     };
 
-    // Background (mark, code, etc.) — use blend mode directly, no pre-compositing
-    if let Some(bg) = style.bg_color {
-        let alpha = style.bg_alpha;
-        fill_rect_alpha(
-            canvas, Color::RGBA(bg[0], bg[1], bg[2], alpha),
-            alpha,
-            x, ls.cursor_y, tw, th,
-            ls.ctx.scroll_y, ls.ctx.viewport_height,
-        );
-    }
+    // For now, use top-alignment to prevent stairstepping between elements
+    // of different sizes on the same line.
+    let paint_y = ls.cursor_y;
 
+    // paint_text now handles bg_color, underline, and strikethrough internally.
     let (sw, sh) = paint_text(
-        canvas, tc, fonts, text, style, x, ls.cursor_y,
+        canvas, tc, fonts, text, style, x, paint_y,
+        ls.rounding_clip.as_ref(),
         ls.ctx.scroll_y, ls.ctx.viewport_height,
     );
     if sh > ls.line_height { ls.line_height = sh; }
 
-    let c = Color::RGB(style.color[0], style.color[1], style.color[2]);
-
-    // Underline
-    if style.underline {
-        fill_rect(canvas, c, x, ls.cursor_y + sh - 2, sw, 1,
-                  ls.ctx.scroll_y, ls.ctx.viewport_height);
-    }
-
-    // Strikethrough
-    if style.strikethrough {
-        fill_rect(canvas, c, x, ls.cursor_y + sh / 2, sw, 1,
-                  ls.ctx.scroll_y, ls.ctx.viewport_height);
-    }
-
-    ls.cursor_x = x + sw + 4;
+    ls.cursor_x = x + sw;
 }

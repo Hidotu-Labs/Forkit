@@ -77,6 +77,7 @@
 
     /* ── Selectors for Section 11 ── */
     #sel-id-demo       { color: #7c3aed; }
+    .sel-tag-div div   { background-color: #fef3c7; border: 1px solid #f59e0b; padding: 10px; margin-top: 5px; }
     .sel-compound      { font-weight: bold; font-style: italic; }
     .sel-ancestor p    { letter-spacing: 3px; }
     .sel-parent > span { color: #c2410c; }
@@ -149,6 +150,16 @@
 
     /* :empty */
     .pc-empty:empty { background-color: #fecaca; min-height: 20px; border: 1px dashed #dc2626; }
+
+    /* :nth-last-child */
+    .pc-nth-last li:nth-last-child(2) { color: #f59e0b; font-weight: bold; }
+
+    /* :nth-of-type with complex formula */
+    .pc-type-complex p:nth-of-type(2n+1) { border-left: 3px solid #7c3aed; padding-left: 8px; }
+
+    /* :not with class */
+    .pc-not-class li:not(.special) { opacity: 0.4; }
+    .pc-not-class li.special { color: #059669; font-weight: bold; }
 
     /* attribute extended selectors */
     a[href^="https"] { color: #059669; }
@@ -608,6 +619,13 @@
   </div>
 
   <div class="test ok">
+    <div class="test-label">Tag selector — .sel-tag-div div → yellow bg</div>
+    <div class="test-result sel-tag-div">
+      <div>Inner div with yellow background from tag selector</div>
+    </div>
+  </div>
+
+  <div class="test ok">
     <div class="test-label">Compound selector — .sel-compound → bold + italic</div>
     <div class="test-result sel-compound">Bold and italic from compound rule</div>
   </div>
@@ -631,6 +649,19 @@
     <div class="test-label">Attribute selectors — [attr], [attr=val]</div>
     <div class="test-result">
       <a href="https://example.com">link with href attr present</a>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">Nested Blocks — div > div > div</div>
+    <div class="test-result" style="background-color:#eee; padding:15px;">
+      <div style="background-color:#0f3460; color:white; padding:10px;">
+        Level 1
+        <div style="background-color:#e94560; margin:10px 0; padding:10px;">
+          Level 2
+          <div style="background-color:#009944; margin-top:10px; padding:10px;">Level 3</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -864,6 +895,34 @@
   </div>
 
   <div class="test ok">
+    <div class="test-label">:nth-last-child(2) → orange bold (second from end)</div>
+    <ul class="pc-nth-last" style="margin:4px 0; padding-left:24px; list-style:none;">
+      <li>Item 1</li>
+      <li>Item 2 — orange bold</li>
+      <li>Item 3 — end</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:nth-of-type(2n+1) among mixed tags → purple border</div>
+    <div class="test-result pc-type-complex">
+      <p style="margin:2px 0;">P 1 — odd: purple border</p>
+      <div style="color:#888;">(div is not a p)</div>
+      <p style="margin:2px 0;">P 2 — even: normal</p>
+      <p style="margin:2px 0;">P 3 — odd: purple border</p>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">:not(.special) → faded, .special → green bold</div>
+    <ul class="pc-not-class" style="margin:4px 0; padding-left:24px; list-style:none;">
+      <li>Normal item (faded)</li>
+      <li class="special">Special item (green bold)</li>
+      <li>Another normal (faded)</li>
+    </ul>
+  </div>
+
+  <div class="test ok">
     <div class="test-label">:link → navy, :visited → purple (after visiting)</div>
     <div class="test-result">
       <a href="https://example.com">example.com (link: navy)</a>
@@ -910,6 +969,58 @@
     <div class="test-label">:focus → blue border + light bg (click the input)</div>
     <div class="test-result">
       <input type="text" placeholder="Click to focus — border turns blue">
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>18. Advanced Div Layouts</h2>
+<div class="card">
+
+  <div class="test ok">
+    <div class="test-label">div: rounded corners + overflow clipping</div>
+    <div class="test-result" style="width:120px; height:80px; border-radius:30px; overflow:hidden; background:#0f3460;">
+      <div style="background:#e94560; width:100px; height:100px; margin-left:60px; margin-top:20px;">
+        <!-- This red block should be clipped by the navy rounded parent -->
+      </div>
+    </div>
+    <div style="font-size:12px; color:#666; margin-top:4px;">Red square should be clipped by navy rounded container edges</div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">div: background-image + specific position (bottom right)</div>
+    <div class="test-result" style="height:100px; background-image:url(https://placehold.co/40x40/ff9900/white?text=X); background-repeat:no-repeat; background-position:right bottom; background-color:#eee; border:1px solid #ccc; border-radius:8px;">
+      <!-- Image 'X' should be in the bottom-right corner -->
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">div: nested opacity (multi-layer layering)</div>
+    <div class="test-result" style="opacity:0.7; background:#0f3460; padding:20px; border-radius:8px;">
+      <div style="opacity:0.7; background:#e94560; padding:15px; border-radius:6px;">
+        <div style="opacity:0.7; background:#009944; padding:10px; border-radius:4px; color:white;">
+          Layer 3 (0.7 * 0.7 * 0.7 = ~34% final opacity)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">div: zero-size with borders (triangle simulation)</div>
+    <div class="test-result">
+      <div style="width:0; height:0; border-left:25px solid transparent; border-right:25px solid transparent; border-bottom:40px solid #7c3aed;">
+        <!-- Should look like a purple triangle -->
+      </div>
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">div: white-space: pre-wrap (many spaces)</div>
+    <div class="test-result" style="white-space:pre-wrap; background:#f8f8f8; padding:8px; border:1px solid #ddd; font-family:monospace;">
+      Multiple      spaces      here
+      and a newline
+      leading     spaces
     </div>
   </div>
 

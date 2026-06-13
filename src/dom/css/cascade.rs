@@ -90,10 +90,6 @@ pub fn apply_cascade(root: &mut Node, sheets: &[StyleSheet]) {
 /// Like [`apply_cascade`] but uses the given [`PseudoState`] for dynamic
 /// pseudo-class matching (`:hover`, `:focus`, `:checked`, etc.).
 pub fn apply_cascade_with_state(root: &mut Node, sheets: &[StyleSheet], state: &PseudoState) {
-    // Reset every element's computed style back to UA defaults + inline style
-    // before re-applying the cascade. This is necessary because this function
-    // is called every frame and styles from the previous frame must not bleed
-    // into the current one (e.g. :hover styles persisting after mouse-out).
     reset_styles(root);
     let parent_style = Style::default();
     cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None);
@@ -136,8 +132,6 @@ fn cascade_node_inner(
     match node {
         Node::Text(t) => {
             inherit_from(&mut t.style, parent_style);
-            t.style.bg_color = None;
-            t.style.bg_alpha = 255;
         }
         Node::Element(el) => {
             // ── 1. Collect matching rules ─────────────────────────────────
@@ -277,8 +271,14 @@ fn matches_full(
         }
 
         Selector::Descendant(a, b) => {
-            matches_full(el, b, ancestors, state, sib)
-                && ancestors.iter().any(|anc| matches_full(anc, a, &[], state, None))
+            if !matches_full(el, b, ancestors, state, sib) { return false; }
+            // Try matching 'a' against any ancestor, providing its own context
+            for (i, anc) in ancestors.iter().enumerate() {
+                if matches_full(anc, a, &ancestors[..i], state, None) {
+                    return true;
+                }
+            }
+            false
         }
 
         Selector::Child(a, b) => {
@@ -295,27 +295,30 @@ fn matches_full(
 
         Selector::AdjacentSibling(a, b) => {
             if !matches_full(el, b, ancestors, state, sib) { return false; }
-            match ancestors.last() {
-                Some(prev_sib) => matches_full(
-                    prev_sib, a,
-                    &ancestors[..ancestors.len() - 1],
-                    state, None,
-                ),
-                None => false,
+            if let Some(s) = sib {
+                // Find the direct previous element-node sibling
+                for i in (0..s.index).rev() {
+                    match &s.siblings[i] {
+                        Node::Element(prev) => {
+                            return matches_full(prev, a, ancestors, state, None);
+                        }
+                        Node::Text(t) if !t.text.trim().is_empty() => {
+                            // Non-empty text node prevents adjacency
+                            return false;
+                        }
+                        _ => { /* Skip comment/empty-text */ }
+                    }
+                }
             }
+            false
         }
 
         Selector::GeneralSibling(a, b) => {
             if !matches_full(el, b, ancestors, state, sib) { return false; }
             if let Some(s) = sib {
-                let anc_for_siblings = if ancestors.is_empty() {
-                    &[][..]
-                } else {
-                    &ancestors[..ancestors.len().saturating_sub(1)]
-                };
                 s.siblings[..s.index].iter().any(|sibling| {
                     if let Node::Element(prev) = sibling {
-                        matches_full(prev, a, anc_for_siblings, state, None)
+                        matches_full(prev, a, ancestors, state, None)
                     } else {
                         false
                     }
@@ -521,10 +524,19 @@ fn has_class(el: &Element, cls: &str) -> bool {
 fn inherit_from(child: &mut Style, parent: &Style) {
     let def = Style::default();
 
+    // ── Regular CSS inheritance ──────────────────────────────────────────────
     if child.color == def.color {
         child.color       = parent.color;
         child.color_alpha = parent.color_alpha;
     }
+    
+    // Forkit extension: inline backgrounds (not standard CSS, but needed for 
+    // Forkit's inline-layout model where text nodes paint the backgrounds).
+    if child.bg_color.is_none() && parent.display == crate::dom::node::Display::Inline {
+        child.bg_color = parent.bg_color;
+        child.bg_alpha = parent.bg_alpha;
+    }
+
     if child.font_size == def.font_size {
         child.font_size = parent.font_size;
         if child.font_size_raw.is_none() {
@@ -567,6 +579,12 @@ fn inherit_from(child: &mut Style, parent: &Style) {
     }
     if child.visibility == def.visibility {
         child.visibility = parent.visibility;
+    }
+    if child.underline == def.underline {
+        child.underline = parent.underline;
+    }
+    if child.strikethrough == def.strikethrough {
+        child.strikethrough = parent.strikethrough;
     }
 }
 

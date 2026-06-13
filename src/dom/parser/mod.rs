@@ -1,6 +1,11 @@
+mod attr;
+mod builder;
 mod entities;
 mod lexer;
-mod builder;
+mod meta;
+mod tags;
 
-pub use builder::{parse, parse_with_sheets, get_attr, extract_page_meta};
+pub use attr::get_attr;
+pub use builder::parse_with_sheets;
 pub use entities::decode_entities;
+pub use meta::extract_page_meta;
