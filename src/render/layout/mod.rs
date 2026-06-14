@@ -2,6 +2,7 @@ pub mod state;
 pub mod block;
 pub mod inline;
 pub mod table;
+pub mod flex;
 pub mod paint;
 
 pub use state::LayoutState;

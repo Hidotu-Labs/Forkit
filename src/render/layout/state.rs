@@ -45,6 +45,7 @@ pub enum InputKind {
     Radio,
     Range,
     Color,
+    Number,
     Other,
 }
 
@@ -59,6 +60,12 @@ pub struct InputArea {
     pub kind:  InputKind,
     /// Value of the HTML `name` attribute (used for radio button grouping).
     pub name:  String,
+    /// The HTML `value` attribute default (used when no live value has been typed yet).
+    pub default_value: String,
+    /// The input has the `disabled` attribute — not focusable or editable.
+    pub disabled: bool,
+    /// The input has the `readonly` attribute — focusable but not editable.
+    pub readonly: bool,
 }
 
 
@@ -79,6 +86,10 @@ pub enum ButtonAction {
     Submit(String),
     /// Reset all form inputs on the page.
     Reset,
+    /// Increment the number input at this index.
+    StepUp(usize),
+    /// Decrement the number input at this index.
+    StepDown(usize),
     /// Generic button with no built-in action.
     None,
 }
@@ -225,6 +236,11 @@ pub struct LayoutState<'ctx> {
     pub content_height: i32,
     /// Optional rounded clip to apply to child elements (experimental).
     pub rounding_clip: Option<RoundedClip>,
+    /// Stack of (x, y, w, h) for ancestors with position: relative/absolute/fixed.
+    /// Used as the containing block for position: absolute children.
+    pub positioned_ancestors: Vec<LayoutBox>,
+    /// Flag to indicate we are currently laying out an element's INNERS after it was absolutely positioned.
+    pub in_absolute_pass: bool,
 }
 
 impl<'ctx> LayoutState<'ctx> {
@@ -251,6 +267,8 @@ impl<'ctx> LayoutState<'ctx> {
             ol_stack:      Vec::new(),
             content_height: 0,
             rounding_clip:  None,
+            positioned_ancestors: Vec::new(),
+            in_absolute_pass: false,
         }
     }
 

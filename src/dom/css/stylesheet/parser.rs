@@ -1,5 +1,6 @@
 use super::selector::*;
 use super::utils::*;
+use crate::dom::css::inline;
 
 /// A single CSS rule: one or more selectors paired with a block of declarations.
 #[derive(Debug, Clone)]
@@ -10,16 +11,27 @@ pub struct Rule {
     pub declarations: Vec<(String, String)>,
 }
 
-/// A parsed CSS stylesheet containing zero or more rules.
+/// A rule for custom fonts.
+#[derive(Debug, Clone, Default)]
+pub struct FontFaceRule {
+    pub family: String,
+    pub srcs:   Vec<String>,
+    pub bold:   bool,
+    pub italic: bool,
+}
+
+/// A parsed CSS stylesheet containing zero or more rules and @font-face definitions.
 #[derive(Debug, Clone, Default)]
 pub struct StyleSheet {
-    pub rules: Vec<Rule>,
+    pub rules:      Vec<Rule>,
+    pub font_faces: Vec<FontFaceRule>,
 }
 
 impl StyleSheet {
     /// Parse a CSS source string into a `StyleSheet`.
     pub fn parse(css: &str) -> StyleSheet {
         let mut rules = Vec::new();
+        let mut font_faces = Vec::new();
 
         // Step 1: strip block comments
         let stripped = strip_comments(css);
@@ -37,6 +49,40 @@ impl StyleSheet {
 
             // Check for at-rules
             if chars[pos] == '@' {
+                let rule_start = pos;
+                skip_at_rule_name(&chars, &mut pos);
+                let name: String = chars[rule_start + 1..pos].iter().collect();
+
+                if name == "font-face" {
+                    skip_whitespace(&chars, &mut pos);
+                    if pos < len && chars[pos] == '{' {
+                        pos += 1;
+                        let inner_start = pos;
+                        skip_to_closing_brace(&chars, &mut pos);
+                        let inner_block: String = chars[inner_start..pos-1].iter().collect();
+                        let decls = parse_declarations(&inner_block, "@font-face");
+
+                        let mut face = FontFaceRule::default();
+                        for (p, v) in decls {
+                            match p.as_str() {
+                                "font-family" => face.family = v.trim_matches(|c| c == '"' || c == '\'').to_string(),
+                                "src" => {
+                                    face.srcs = inline::extract_css_urls(&v);
+                                }
+                                "font-weight" => face.bold = v.contains("bold") || v.contains("700"),
+                                "font-style"  => face.italic = v.contains("italic"),
+                                _ => {}
+                            }
+                        }
+                        if !face.family.is_empty() && !face.srcs.is_empty() {
+                            font_faces.push(face);
+                        }
+                        continue;
+                    }
+                }
+
+                // If not @font-face or failed, use generic skip
+                pos = rule_start;
                 skip_at_rule(&chars, &mut pos);
                 continue;
             }
@@ -112,7 +158,14 @@ impl StyleSheet {
             rules.push(Rule { selectors, declarations });
         }
 
-        StyleSheet { rules }
+        StyleSheet { rules, font_faces }
+    }
+}
+
+fn skip_at_rule_name(chars: &[char], pos: &mut usize) {
+    *pos += 1; // skip '@'
+    while *pos < chars.len() && (chars[*pos].is_alphanumeric() || chars[*pos] == '-') {
+        *pos += 1;
     }
 }
 

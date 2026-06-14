@@ -76,6 +76,8 @@ pub struct LoadResult {
     pub push_history: bool,
     /// Parsed stylesheets, stored for re-applying the cascade each frame.
     pub style_sheets: Vec<crate::dom::css::StyleSheet>,
+    /// Downloaded custom fonts: (family, bold, italic, temp_path)
+    pub fonts:        Vec<(String, bool, bool, String)>,
     /// Console entries produced by JS execution on this page.
     pub console_entries: Vec<ConsoleEntry>,
 }
@@ -138,13 +140,15 @@ pub struct Tab {
     pub console_open: bool,
     /// Scroll offset within the console panel.
     pub console_scroll: i32,
+    /// Custom fonts that need to be registered in the central FontCache.
+    pub pending_fonts:  Vec<(String, bool, bool, String)>,
 }
 
 impl Tab {
     /// Synchronously load the initial tab (only used for startup — after that
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
-        let (resolved, dom, meta, sheets, console_entries) = load_dom(url)?;
+        let (resolved, dom, meta, sheets, fonts, console_entries) = load_dom(url)?;
         Some(Tab {
             dom,
             scroll_y:       0,
@@ -168,6 +172,7 @@ impl Tab {
             console_entries,
             console_open:   false,
             console_scroll: 0,
+            pending_fonts:  fonts,
         })
     }
 
@@ -256,13 +261,14 @@ impl Tab {
             let send_val = match result {
                 Err(msg) => Err(msg),
                 Ok(None) => Err(format!("Failed to load: {url}")),
-                Ok(Some((final_url, dom, meta, sheets, console_entries))) => Ok(LoadResult {
+                 Ok(Some((final_url, dom, meta, sheets, fonts, console_entries))) => Ok(LoadResult {
                     final_url,
                     dom,
                     meta,
                     images: ImageCache::new(),
                     push_history,
                     style_sheets: sheets,
+                    fonts,
                     console_entries,
                 }),
             };
@@ -296,6 +302,7 @@ impl Tab {
                         self.hovered_ptr   = None;
                         self.focused_ptr   = None;
                         self.style_sheets  = result.style_sheets;
+                        self.pending_fonts = result.fonts;
                         self.console_entries = result.console_entries;
                         self.console_scroll  = 0;
                         if result.push_history {
@@ -418,14 +425,54 @@ impl Tab {
     /// Append typed text to the focused input.
     pub fn type_text(&mut self, text: &str) {
         if let Some(idx) = self.focused_input {
+            // Block input for disabled or readonly inputs.
+            let flags = self.input_areas.iter()
+                .find(|a| a.index == idx)
+                .map(|a| (a.disabled || a.readonly, a.kind.clone()));
+            if flags.as_ref().map(|(b, _)| *b).unwrap_or(false) { return; }
             self.ensure_input_slot(idx);
-            self.input_values[idx].push_str(text);
+            // For number inputs, only allow digits, minus sign, and decimal point.
+            if flags.map(|(_, k)| k) == Some(InputKind::Number) {
+                let filtered: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.').collect();
+                self.input_values[idx].push_str(&filtered);
+            } else {
+                self.input_values[idx].push_str(text);
+            }
         }
+    }
+
+    /// Increment or decrement a number input by `delta` (typically ±1).
+    pub fn step_number(&mut self, idx: usize, delta: i32) {
+        self.ensure_input_slot(idx);
+        // If the live value is empty, seed it from the HTML default first.
+        if self.input_values[idx].is_empty() {
+            if let Some(default) = self.input_areas.iter()
+                .find(|a| a.index == idx)
+                .map(|a| a.default_value.clone())
+            {
+                self.input_values[idx] = default;
+            }
+        }
+        let current: f64 = self.input_values[idx].parse().unwrap_or(0.0);
+        let next = current + delta as f64;
+        // Format as integer when the result is whole, otherwise keep decimals.
+        self.input_values[idx] = if next.fract() == 0.0 {
+            format!("{}", next as i64)
+        } else {
+            format!("{}", next)
+        };
+        // Keep the input focused after stepping.
+        self.focused_input = Some(idx);
     }
 
     /// Handle backspace in the focused input.
     pub fn backspace(&mut self) {
         if let Some(idx) = self.focused_input {
+            let is_blocked = self.input_areas.iter()
+                .find(|a| a.index == idx)
+                .map(|a| a.disabled || a.readonly)
+                .unwrap_or(false);
+            if is_blocked { return; }
             self.ensure_input_slot(idx);
             let mut chars = self.input_values[idx].chars();
             chars.next_back();
@@ -549,16 +596,20 @@ impl<'ttf> Browser<'ttf> {
         initial: &str,
     ) -> Result<Self, String> {
         let window = AppWindow::new(sdl, "Forkit")?;
-        let fonts  = FontCache::new(ttf_ctx);
+        let mut fonts_cache = FontCache::new(ttf_ctx);
 
-        let tab = Tab::new(initial)
+        let mut tab = Tab::new(initial)
             .ok_or_else(|| format!("Failed to load initial page: {initial}"))?;
+
+        for (name, bold, italic, path) in tab.pending_fonts.drain(..) {
+            fonts_cache.register(&name, bold, italic, &path);
+        }
 
         let bar_url = tab.current_url().to_owned();
 
         Ok(Browser {
             window,
-            fonts,
+            fonts:          fonts_cache,
             tabs:           vec![tab],
             active:         0,
             bar:            SearchBar::new(&bar_url),
@@ -646,6 +697,13 @@ impl<'ttf> Browser<'ttf> {
         for tab in &mut self.tabs {
             if tab.poll_load() {
                 changed = true;
+            }
+            // Register any new fonts this tab brought in
+            if !tab.pending_fonts.is_empty() {
+                for (name, bold, italic, path) in tab.pending_fonts.drain(..) {
+                    self.fonts.register(&name, bold, italic, &path);
+                }
+                changed = true; 
             }
         }
         if changed {
@@ -781,6 +839,14 @@ impl<'ttf> Browser<'ttf> {
                     let url = url.clone();
                     self.navigate(&url);
                 }
+                ButtonAction::StepUp(idx) => {
+                    self.tab_mut().step_number(idx, 1);
+                    self.need_draw = true;
+                }
+                ButtonAction::StepDown(idx) => {
+                    self.tab_mut().step_number(idx, -1);
+                    self.need_draw = true;
+                }
                 ButtonAction::None => {}
             }
             return;
@@ -829,9 +895,16 @@ impl<'ttf> Browser<'ttf> {
                     }
                 }
                 _ => {
-                    self.tab_mut().focused_input = Some(idx);
-                    self.bar.focused = false;
-                    self.need_draw = true;
+                    // disabled inputs cannot be focused; readonly can be focused but not edited
+                    let is_disabled = self.tab().input_areas.iter()
+                        .find(|a| a.index == idx)
+                        .map(|a| a.disabled)
+                        .unwrap_or(false);
+                    if !is_disabled {
+                        self.tab_mut().focused_input = Some(idx);
+                        self.bar.focused = false;
+                        self.need_draw = true;
+                    }
                 }
             }
             return;

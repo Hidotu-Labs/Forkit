@@ -30,7 +30,8 @@ pub fn paint_form_control(
         "textarea" => InputKind::TextArea,
         "input" => match input_type.as_str() {
             "password" => InputKind::Password,
-            "text" | "email" | "search" | "tel" | "url" | "number" | "date" => InputKind::Text,
+            "text" | "email" | "search" | "tel" | "url" | "date" => InputKind::Text,
+            "number" => InputKind::Number,
             "checkbox" => InputKind::Checkbox,
             "radio"    => InputKind::Radio,
             "range"    => InputKind::Range,
@@ -96,14 +97,19 @@ pub fn paint_form_control(
     let y = ls.cursor_y;
 
     let input_name = crate::dom::parser::get_attr(&el.attrs_raw, "name").unwrap_or("").to_owned();
-    let input_index = if matches!(kind, InputKind::Text | InputKind::Password | InputKind::TextArea | InputKind::Checkbox | InputKind::Radio | InputKind::Range | InputKind::Color) {
+    let input_index = if matches!(kind, InputKind::Text | InputKind::Password | InputKind::TextArea | InputKind::Checkbox | InputKind::Radio | InputKind::Range | InputKind::Color | InputKind::Number) {
         let idx = ls.input_count;
         ls.input_count += 1;
+        let is_disabled = crate::dom::parser::get_attr(&el.attrs_raw, "disabled").is_some();
+        let is_readonly = crate::dom::parser::get_attr(&el.attrs_raw, "readonly").is_some();
         ls.input_areas.push(InputArea {
             x, y, w: ctrl_w, h: ctrl_h,
             index: idx,
             kind: kind.clone(),
             name: input_name,
+            default_value: label.clone(),
+            disabled: is_disabled,
+            readonly: is_readonly,
         });
         Some(idx)
     } else {
@@ -219,7 +225,15 @@ pub fn paint_form_control(
         return;
     }
 
-    let bg = s.bg_color.unwrap_or([255, 255, 255]);
+    let is_disabled = crate::dom::parser::get_attr(&el.attrs_raw, "disabled").is_some();
+    let is_readonly = crate::dom::parser::get_attr(&el.attrs_raw, "readonly").is_some();
+
+    // Background: grey for disabled, white for readonly/normal
+    let bg = if is_disabled {
+        [229, 231, 235] // light grey — matches CSS :disabled UA style
+    } else {
+        s.bg_color.unwrap_or([255, 255, 255])
+    };
     let radii = s.border_radius;
 
     if radii != [0, 0, 0, 0] {
@@ -231,8 +245,15 @@ pub fn paint_form_control(
                         x, y, ctrl_w, ctrl_h, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
     }
 
-    let border_color = if is_focused { Color::RGB(66, 133, 244) } else { Color::RGB(180, 180, 180) };
-    let border_width = if is_focused { 2i32 } else { 1i32 };
+    // Border: hidden for disabled, normal grey for readonly, blue when focused
+    let border_color = if is_disabled {
+        Color::RGB(209, 213, 219) // barely-visible grey
+    } else if is_focused {
+        Color::RGB(66, 133, 244)
+    } else {
+        Color::RGB(180, 180, 180)
+    };
+    let border_width = if is_focused && !is_disabled { 2i32 } else { 1i32 };
 
     if radii != [0, 0, 0, 0] {
         draw_rounded_rect(canvas, border_color, 255,
@@ -242,10 +263,10 @@ pub fn paint_form_control(
         for bw in 0..border_width {
             let bx = x - bw; let by2 = y - bw;
             let bw2 = ctrl_w + bw * 2; let bh2 = ctrl_h + bw * 2;
-            fill_rect_alpha(canvas, border_color, 255, bx,       by2,            bw2, 1, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
-            fill_rect_alpha(canvas, border_color, 255, bx,       by2 + bh2 - 1, bw2, 1, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
-            fill_rect_alpha(canvas, border_color, 255, bx,       by2,            1, bh2, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
-            fill_rect_alpha(canvas, border_color, 255, bx + bw2 - 1, by2,        1, bh2, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx,           by2,            bw2, 1, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx,           by2 + bh2 - 1, bw2, 1, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx,           by2,            1, bh2, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            fill_rect_alpha(canvas, border_color, 255, bx + bw2 - 1, by2,            1, bh2, ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
     }
 
@@ -261,7 +282,13 @@ pub fn paint_form_control(
     };
 
     let is_placeholder = display_text.is_empty() && !label.is_empty();
-    let text_color = if is_placeholder { [160, 160, 160] } else { [30, 30, 30] };
+    let text_color = if is_disabled {
+        [156, 163, 175] // grey — matches CSS :disabled text color
+    } else if is_placeholder {
+        [160, 160, 160]
+    } else {
+        [30, 30, 30]
+    };
 
     let text_style = Style {
         font_size: s.font_size,
@@ -288,12 +315,12 @@ pub fn paint_form_control(
     }
 
     if is_focused {
-        let cursor_text = live_value.as_deref().unwrap_or("");
         let cursor_style = Style { font_size: s.font_size, ..Default::default() };
+        // Use the same text that's actually displayed so the cursor aligns correctly.
         let display_before_cursor = if kind == InputKind::Password {
-            "•".repeat(cursor_text.chars().count())
+            "•".repeat(display_text.chars().count())
         } else {
-            cursor_text.to_owned()
+            display_text.clone()
         };
         let (cx_off, _) = measure_text(fonts, &display_before_cursor, &cursor_style);
         let cx = x + s.padding.left.max(6) + cx_off;
@@ -303,6 +330,53 @@ pub fn paint_form_control(
                         cx, cy_top, 1, (cy_bottom - cy_top).max(2),
                         ls.rounding_clip.as_ref(),
                         ls.ctx.scroll_y, ls.ctx.viewport_height);
+    }
+
+    if input_type == "number" {
+        // Only draw and register steppers when the input is focused.
+        if is_focused {
+            let arrow_w = 16i32;
+            let half_h  = ctrl_h / 2;
+            let ax = x + ctrl_w - arrow_w;
+
+            // Divider line between text area and arrows, and between the two halves
+            fill_rect_alpha(canvas, Color::RGB(180, 180, 180), 255,
+                            ax, y, 1, ctrl_h,
+                            ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            let mid_y = y + half_h;
+            fill_rect_alpha(canvas, Color::RGB(180, 180, 180), 255,
+                            ax, mid_y, arrow_w, 1,
+                            ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+
+            let ac = Color::RGB(80, 80, 80);
+            // Up arrow (▲)
+            let up_cy = y + half_h / 2;
+            for i in 0..4i32 {
+                fill_rect_alpha(canvas, ac, 255,
+                                ax + arrow_w / 2 - i, up_cy + i, (i * 2 + 1).max(1), 1,
+                                ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            }
+            // Down arrow (▼)
+            let dn_cy = mid_y + half_h / 2 - 3;
+            for i in 0..4i32 {
+                let row = 3 - i;
+                fill_rect_alpha(canvas, ac, 255,
+                                ax + arrow_w / 2 - row, dn_cy + i, (row * 2 + 1).max(1), 1,
+                                ls.rounding_clip.as_ref(), ls.ctx.scroll_y, ls.ctx.viewport_height);
+            }
+
+            // Register clickable stepper areas (only when an index exists)
+            if let Some(idx) = input_index {
+                ls.button_areas.push(crate::render::layout::state::ButtonArea {
+                    x: ax, y, w: arrow_w, h: half_h,
+                    action: crate::render::layout::state::ButtonAction::StepUp(idx),
+                });
+                ls.button_areas.push(crate::render::layout::state::ButtonArea {
+                    x: ax, y: y + half_h, w: arrow_w, h: ctrl_h - half_h,
+                    action: crate::render::layout::state::ButtonAction::StepDown(idx),
+                });
+            }
+        }
     }
 
     if input_type == "date" {

@@ -15,11 +15,45 @@ pub struct PageMeta {
     pub favicon_url: Option<String>,
 }
 
-pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<ConsoleEntry>)> {
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<(String, bool, bool, String)>, Vec<ConsoleEntry>)> {
     let (final_url, html) = fetch_html(source)?;
     let (title, favicon_url) = extract_page_meta(&html, &final_url);
     let (mut dom, sheets) = parse_with_sheets(&html, &final_url);
     let meta = PageMeta { title, favicon_url };
+
+    // Download fonts
+    let mut downloaded_fonts = Vec::new();
+    let temp_dir = std::env::temp_dir().join("forkit_fonts");
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    for sheet in &sheets {
+        for face in &sheet.font_faces {
+            for src_url in &face.srcs {
+                let font_url = crate::net::resolve_url(src_url, &final_url);
+                let ext = if font_url.contains(".otf") { "otf" } 
+                          else if font_url.contains(".woff2") { "woff2" }
+                          else if font_url.contains(".woff") { "woff" }
+                          else { "ttf" };
+                let hash = format!("{:x}", md5_hash(&font_url));
+                let local_path = temp_dir.join(format!("{}.{}", hash, ext));
+
+                if !local_path.exists() {
+                    println!("[loader] Downloading font: {} -> {:?}", font_url, local_path);
+                    if let Ok((_, bytes)) = crate::net::fetch_url_bytes(&font_url) {
+                        let _ = std::fs::write(&local_path, bytes);
+                    } else {
+                        eprintln!("[loader] Failed to download font: {}", font_url);
+                    }
+                }
+
+                if local_path.exists() {
+                    // Stop at the first successfully downloaded source for this face
+                    downloaded_fonts.push((face.family.clone(), face.bold, face.italic, local_path.to_string_lossy().to_string()));
+                    break;
+                }
+            }
+        }
+    }
 
     let mut console_entries: Vec<ConsoleEntry> = Vec::new();
     let js_dom = js::JsDom::with_title(&dom, meta.title.clone());
@@ -28,17 +62,21 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>
             console_entries.push(entry);
         }
     }
-    // Apply any DOM mutations queued by JS scripts, then re-run the cascade
-    // so that class/style changes take effect in the computed style.
     let mutations = js_dom.take_mutations();
     if !mutations.is_empty() {
         js::apply_mutations(&mut dom, mutations);
-        // Re-apply the cascade so that JS-mutated class names and inline styles
-        // are reflected in each element's computed `style` field before rendering.
         crate::dom::css::apply_cascade(&mut dom, &sheets);
     }
 
-    Some((final_url, dom, meta, sheets, console_entries))
+    Some((final_url, dom, meta, sheets, downloaded_fonts, console_entries))
+}
+
+fn md5_hash(s: &str) -> u64 {
+    let mut h = 0u64;
+    for b in s.as_bytes() {
+        h = h.wrapping_add(*b as u64).wrapping_mul(31);
+    }
+    h
 }
 
 fn fetch_html(source: &str) -> Option<(String, String)> {

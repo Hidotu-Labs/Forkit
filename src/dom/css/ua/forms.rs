@@ -1,4 +1,4 @@
-use crate::dom::node::{Element, Border, Borders, BoxSpacing, Display, FontFamilyHint};
+use crate::dom::node::{Element, Border, Borders, BoxSpacing, Display, FontFamily};
 
 pub fn apply_form_defaults(tag: &str, el: &mut Element) {
     let s = &mut el.style;
@@ -45,7 +45,7 @@ pub fn apply_form_defaults(tag: &str, el: &mut Element) {
                     if tag == "textarea" {
                         s.size.width  = Some(300);
                         s.size.height = Some(80);
-                        s.font_family = FontFamilyHint::Monospace;
+                        s.font_family = FontFamily::Monospace;
                         s.white_space_pre = true;
                     } else if !matches!(input_type.as_str(), "checkbox" | "radio" | "range" | "color") {
                         s.size.width = Some(200);

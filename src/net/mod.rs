@@ -1,11 +1,26 @@
 use std::io::Read;
 
+/// Fetch an HTTP/HTTPS URL, returning `(final_url, bytes)`.
+pub fn fetch_url_bytes(url: &str) -> Result<(String, Vec<u8>), String> {
+    let resp = ureq::get(url)
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .call()
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    let final_url = resp.get_url().to_owned();
+
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read body failed: {e}"))?;
+
+    Ok((final_url, bytes))
+}
+
 /// Fetch an HTTP/HTTPS URL, returning `(final_url, body)`.
-/// Tries HTTPS first if the caller passes a bare domain; the caller is
-/// responsible for scheme normalisation — see `resolve_url`.
 pub fn fetch_url(url: &str) -> Result<(String, String), String> {
     let resp = ureq::get(url)
-        .set("User-Agent", "Forkit/0.1 (Rust browser)")
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
 

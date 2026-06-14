@@ -23,6 +23,27 @@ pub fn resolve_size(
     }
 }
 
+pub fn resolve_pos(
+    pre_resolved: Option<i32>,
+    raw:          Option<&str>,
+    percent_base: i32,
+    viewport_w:   i32,
+    viewport_h:   i32,
+    font_size:    u16,
+) -> Option<i32> {
+    if let Some(r) = raw {
+        let ctx = LengthContext {
+            base_font_size:  font_size,
+            percent_base,
+            viewport_width:  viewport_w,
+            viewport_height: viewport_h,
+        };
+        parse_length_ctx(r, &ctx)
+    } else {
+        pre_resolved
+    }
+}
+
 pub fn open_block(ls: &mut LayoutState, s: &Style) {
     if ls.cursor_x > ls.margin_left + ls.indent {
         ls.cursor_y += ls.line_height + LINE_SPACING;

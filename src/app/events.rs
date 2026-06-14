@@ -230,6 +230,28 @@ fn handle_key(browser: &mut Browser, k: Keycode, mods: Mod) {
         match k {
             Keycode::Backspace => { browser.tab_mut().backspace(); browser.need_draw = true; }
             Keycode::Escape    => { browser.tab_mut().focused_input = None; browser.need_draw = true; }
+            Keycode::Up => {
+                let idx = browser.tab().focused_input.unwrap();
+                let is_number = browser.tab().input_areas.iter()
+                    .find(|a| a.index == idx)
+                    .map(|a| a.kind == crate::render::layout::state::InputKind::Number)
+                    .unwrap_or(false);
+                if is_number {
+                    browser.tab_mut().step_number(idx, 1);
+                    browser.need_draw = true;
+                }
+            }
+            Keycode::Down => {
+                let idx = browser.tab().focused_input.unwrap();
+                let is_number = browser.tab().input_areas.iter()
+                    .find(|a| a.index == idx)
+                    .map(|a| a.kind == crate::render::layout::state::InputKind::Number)
+                    .unwrap_or(false);
+                if is_number {
+                    browser.tab_mut().step_number(idx, -1);
+                    browser.need_draw = true;
+                }
+            }
             Keycode::A if ctrl => {
                 if let Some(idx) = browser.tab().focused_input {
                     browser.tab_mut().ensure_input_slot(idx);

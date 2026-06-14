@@ -698,7 +698,7 @@ fn inherit_from(child: &mut Style, parent: &Style) {
         child.font_variant_caps = parent.font_variant_caps;
     }
     if child.font_family == def.font_family {
-        child.font_family = parent.font_family;
+        child.font_family = parent.font_family.clone();
     }
     if child.word_break == def.word_break {
         child.word_break = parent.word_break;
@@ -731,7 +731,7 @@ fn apply_inherit_keyword(prop: &str, child: &mut Style, parent: &Style) {
         "white-space"       => { child.white_space_pre = parent.white_space_pre; }
         "text-transform"    => { child.text_transform = parent.text_transform; }
         "font-variant-caps" => { child.font_variant_caps = parent.font_variant_caps; }
-        "font-family"       => { child.font_family = parent.font_family; }
+        "font-family"       => { child.font_family = parent.font_family.clone(); }
         "word-break" | "overflow-wrap" => { child.word_break = parent.word_break; }
         "visibility"        => { child.visibility = parent.visibility; }
         _ => {}

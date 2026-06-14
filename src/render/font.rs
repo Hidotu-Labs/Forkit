@@ -1,28 +1,7 @@
 use sdl2::ttf::{Font, Sdl2TtfContext};
+use crate::dom::node::FontFamily;
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum FontFamily {
-    #[default]
-    SansSerif,
-    Monospace,
-    Serif,
-}
-
-impl FontFamily {
-    pub fn from_css(val: &str) -> Self {
-        let v = val.to_ascii_lowercase();
-        if v.contains("mono") || v.contains("courier") || v.contains("consolas")
-            || v.contains("code") || v.contains("terminal") || v.contains("vera")
-        {
-            FontFamily::Monospace
-        } else if v.contains("serif") && !v.contains("sans") {
-            FontFamily::Serif
-        } else {
-            FontFamily::SansSerif
-        }
-    }
-}
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -33,13 +12,33 @@ struct FontKey {
 }
 
 pub struct FontCache<'ttf> {
-    ttf:   &'ttf Sdl2TtfContext,
-    cache: HashMap<FontKey, Font<'ttf, 'static>>,
+    ttf:      &'ttf Sdl2TtfContext,
+    cache:    HashMap<FontKey, Font<'ttf, 'static>>,
+    /// Custom `@font-face` registry: Maps (name, bold, italic) -> local path or URL
+    registry: HashMap<(String, bool, bool), String>,
 }
 
 impl<'ttf> FontCache<'ttf> {
     pub fn new(ttf: &'ttf Sdl2TtfContext) -> Self {
-        FontCache { ttf, cache: HashMap::new() }
+        FontCache {
+            ttf,
+            cache:    HashMap::new(),
+            registry: HashMap::new(),
+        }
+    }
+
+    /// Register a custom font file path for a given family name.
+    pub fn register(&mut self, name: &str, bold: bool, italic: bool, path: &str) {
+        self.registry.insert((name.to_ascii_lowercase(), bold, italic), path.to_string());
+        // Clear cache entries for this family to force reload if already used.
+        self.cache.retain(|key, _| {
+            match &key.family {
+                FontFamily::Custom(n) if n.to_ascii_lowercase() == name.to_ascii_lowercase() => {
+                    key.bold != bold || key.italic != italic
+                }
+                _ => true,
+            }
+        });
     }
 
     pub fn get(&mut self, size: u16, bold: bool, italic: bool) -> Option<&Font<'ttf, 'static>> {
@@ -54,7 +53,7 @@ impl<'ttf> FontCache<'ttf> {
         family: FontFamily,
     ) -> Option<&Font<'ttf, 'static>> {
         let size = size.clamp(8, 96);
-        let key  = FontKey { size, bold, italic, family };
+        let key  = FontKey { size, bold, italic, family: family.clone() };
 
         if !self.cache.contains_key(&key) {
             let font = self.load_font(size, bold, italic, family);
@@ -71,6 +70,26 @@ impl<'ttf> FontCache<'ttf> {
         italic: bool,
         family: FontFamily,
     ) -> Option<Font<'ttf, 'static>> {
+        // 1. Check custom registry first
+        if let FontFamily::Custom(ref name) = family {
+            if let Some(path_str) = self.registry.get(&(name.to_ascii_lowercase(), bold, italic)) {
+                println!("[font] Loading custom font: {} (bold={}, italic={}) from {:?}", name, bold, italic, path_str);
+                match self.ttf.load_font(std::path::Path::new(path_str), size) {
+                    Ok(font) => return Some(font),
+                    Err(e) => eprintln!("[font] Failed to load custom font file {:?}: {}", path_str, e),
+                }
+            }
+            // Fallback: If custom name is not found, try to strip quotes and check again
+            let clean = name.trim_matches(|c| c == '"' || c == '\'').to_ascii_lowercase();
+            if let Some(path_str) = self.registry.get(&(clean.clone(), bold, italic)) {
+                println!("[font] Loading custom font (clean): {} from {:?}", clean, path_str);
+                match self.ttf.load_font(std::path::Path::new(path_str), size) {
+                    Ok(font) => return Some(font),
+                    Err(e) => eprintln!("[font] Failed to load custom font file {:?}: {}", path_str, e),
+                }
+            }
+        }
+
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -95,7 +114,7 @@ impl<'ttf> FontCache<'ttf> {
                 "NotoSansMono-Regular.ttf",
                 "NotoSansMono-Bold.ttf",
             ),
-            FontFamily::SansSerif | FontFamily::Serif => (
+            FontFamily::SansSerif | FontFamily::Serif | FontFamily::Custom(_) => (
                 "NotoSans-Regular.ttf",
                 "NotoSans-Bold.ttf",
                 "NotoSans-Italic.ttf",

@@ -1,4 +1,4 @@
-use crate::dom::node::{Style, Border, Borders, BoxSpacing, FontFamilyHint};
+use crate::dom::node::{Style, Border, Borders, BoxSpacing, FontFamily};
 
 pub fn apply_text_defaults(tag: &str, s: &mut Style) {
     match tag {
@@ -11,7 +11,7 @@ pub fn apply_text_defaults(tag: &str, s: &mut Style) {
 
         "b" | "strong"           => { s.bold = true; }
         "i" | "em" | "cite" | "dfn" => { s.italic = true; }
-        "var" => { s.italic = true; s.font_family = FontFamilyHint::Monospace; }
+        "var" => { s.italic = true; s.font_family = FontFamily::Monospace; }
         "u" | "ins"              => { s.underline = true; }
         "s" | "del" | "strike"   => { s.strikethrough = true; }
         "small"                  => { s.font_size = 12; }
@@ -26,14 +26,14 @@ pub fn apply_text_defaults(tag: &str, s: &mut Style) {
 
         "code" | "samp" | "tt" => {
             s.bg_color      = Some([240, 240, 240]);
-            s.font_family   = FontFamilyHint::Monospace;
+            s.font_family   = FontFamily::Monospace;
             s.font_size     = (s.font_size as f32 * 0.9) as u16;
             s.border_radius = [3, 3, 3, 3];
             s.padding       = BoxSpacing { top: 1, right: 4, bottom: 1, left: 4 };
         }
         "kbd" => {
             s.bg_color      = Some([240, 240, 240]);
-            s.font_family   = FontFamilyHint::Monospace;
+            s.font_family   = FontFamily::Monospace;
             s.font_size     = (s.font_size as f32 * 0.9) as u16;
             s.borders       = Borders::uniform(Border { width: 1, color: [180, 180, 180], ..Default::default() });
             s.border_radius = [3, 3, 3, 3];
@@ -41,7 +41,7 @@ pub fn apply_text_defaults(tag: &str, s: &mut Style) {
         }
         "pre" => {
             s.white_space_pre = true;
-            s.font_family     = FontFamilyHint::Monospace;
+            s.font_family     = FontFamily::Monospace;
             s.bg_color        = Some([248, 248, 248]);
             s.borders         = Borders::uniform(Border { width: 1, color: [220, 220, 220], ..Default::default() });
             s.border_radius   = [4, 4, 4, 4];

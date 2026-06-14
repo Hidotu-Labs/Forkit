@@ -33,6 +33,7 @@ pub fn measure_inline_block_children(fonts: &mut FontCache, children: &[Node], _
             }
             Node::Element(el) => {
                 if el.style.display == Display::Hidden { continue; }
+                if el.style.position == crate::dom::node::Position::Absolute { continue; }
                 total += measure_inline_block_children(fonts, &el.children, el.style.font_size);
             }
         }
@@ -54,6 +55,7 @@ pub fn measure_block_content_width(fonts: &mut FontCache, children: &[Node], fon
             }
             Node::Element(el) => {
                 if el.style.display == Display::Hidden { continue; }
+                if el.style.position == crate::dom::node::Position::Absolute { continue; }
                 let child_fs = el.style.font_size;
                 let pad_h = el.style.padding.left + el.style.padding.right;
                 let child_w = measure_block_content_width(fonts, &el.children, child_fs) + pad_h;
@@ -133,6 +135,10 @@ pub fn measure_children_recursive(
                 };
 
                 if !t.style.white_space_pre && text.chars().all(|c| c.is_whitespace()) && !text.is_empty() {
+                    // Skip leading whitespace at the start of a line.
+                    if *cx <= margin_left + indent {
+                        continue;
+                    }
                     let (sw, _) = fonts.get(font_size, t.style.bold, t.style.italic)
                         .and_then(|f| f.size_of(" ").ok())
                         .map(|(w, h)| (w as i32, h as i32))
@@ -179,6 +185,7 @@ pub fn measure_children_recursive(
             }
             Node::Element(child_el) => {
                 if child_el.style.display == Display::Hidden { continue; }
+                if child_el.style.position == crate::dom::node::Position::Absolute { continue; }
                 let child_tag = child_el.tag.as_str();
                 let child_font_size = if let Some(raw) = &child_el.style.font_size_raw {
                     let ctx = crate::dom::css::LengthContext {

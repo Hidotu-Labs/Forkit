@@ -14,7 +14,105 @@ pub enum Display {
     #[default] Inline,
     Block,
     InlineBlock,
+    Flex,
     Hidden,
+}
+
+/// CSS `position`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Position {
+    #[default] Static,
+    Relative,
+    Absolute,
+    Fixed,
+    Sticky,
+}
+
+/// CSS `flex-direction`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlexDirection {
+    #[default] Row,
+    Column,
+    RowReverse,
+    ColumnReverse,
+}
+
+impl FlexDirection {
+    pub fn from_css(val: &str) -> Self {
+        match val.to_ascii_lowercase().as_str() {
+            "column"         => FlexDirection::Column,
+            "row-reverse"    => FlexDirection::RowReverse,
+            "column-reverse" => FlexDirection::ColumnReverse,
+            _                => FlexDirection::Row,
+        }
+    }
+    pub fn is_row(self) -> bool {
+        matches!(self, FlexDirection::Row | FlexDirection::RowReverse)
+    }
+}
+
+/// CSS `flex-wrap`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlexWrap {
+    #[default] NoWrap,
+    Wrap,
+    WrapReverse,
+}
+
+impl FlexWrap {
+    pub fn from_css(val: &str) -> Self {
+        match val.to_ascii_lowercase().as_str() {
+            "wrap"         => FlexWrap::Wrap,
+            "wrap-reverse" => FlexWrap::WrapReverse,
+            _              => FlexWrap::NoWrap,
+        }
+    }
+}
+
+/// CSS `justify-content`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JustifyContent {
+    #[default] FlexStart,
+    FlexEnd,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+impl JustifyContent {
+    pub fn from_css(val: &str) -> Self {
+        match val.to_ascii_lowercase().as_str() {
+            "flex-end"     | "end"   => JustifyContent::FlexEnd,
+            "center"                 => JustifyContent::Center,
+            "space-between"          => JustifyContent::SpaceBetween,
+            "space-around"           => JustifyContent::SpaceAround,
+            "space-evenly"           => JustifyContent::SpaceEvenly,
+            _                        => JustifyContent::FlexStart,
+        }
+    }
+}
+
+/// CSS `align-items`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignItems {
+    #[default] Stretch,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
+}
+
+impl AlignItems {
+    pub fn from_css(val: &str) -> Self {
+        match val.to_ascii_lowercase().as_str() {
+            "flex-start" | "start" => AlignItems::FlexStart,
+            "flex-end"   | "end"   => AlignItems::FlexEnd,
+            "center"               => AlignItems::Center,
+            "baseline"             => AlignItems::Baseline,
+            _                      => AlignItems::Stretch,
+        }
+    }
 }
 /// CSS `text-transform`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -37,8 +135,46 @@ pub enum Overflow { #[default] Visible, Hidden, Auto, Scroll }
 pub enum WordBreak { #[default] Normal, BreakAll, BreakWord }
 
 /// Which font family to use for rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontFamilyHint { #[default] SansSerif, Monospace, Serif }
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum FontFamily {
+    #[default]
+    SansSerif,
+    Monospace,
+    Serif,
+    Custom(String),
+}
+
+impl FontFamily {
+    pub fn from_css(val: &str) -> Self {
+        // Split by commas and take the first family (fallback logic would be better but requires more changes)
+        let first = val.split(',').next().unwrap_or(val).trim();
+        let v = first.to_ascii_lowercase();
+
+        // Strip quotes
+        let stripped = if (v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\'')) {
+            v[1..v.len()-1].to_string()
+        } else {
+            v.to_string()
+        };
+
+        match stripped.as_str() {
+            "monospace" => FontFamily::Monospace,
+            "serif"     => FontFamily::Serif,
+            "sans-serif" | "helvetica" | "arial" | "verdana" | "tahoma" => FontFamily::SansSerif,
+            _ => {
+                if stripped.contains("mono") || stripped.contains("courier") || stripped.contains("consolas")
+                    || stripped.contains("code") || stripped.contains("terminal") || stripped.contains("vera")
+                {
+                    FontFamily::Monospace
+                } else if stripped.contains("serif") && !stripped.contains("sans") {
+                    FontFamily::Serif
+                } else {
+                    FontFamily::Custom(stripped)
+                }
+            }
+        }
+    }
+}
 
 /// CSS `border-style`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -205,6 +341,16 @@ pub struct Style {
     pub bg_alpha:            u8,   // alpha for `bg_color` (255 = fully opaque)
     pub border_radius:       [u16; 4],   // [top-left, top-right, bottom-right, bottom-left] in px
 
+    // --- flexbox ---
+    pub flex_direction:      FlexDirection,
+    pub flex_wrap:           FlexWrap,
+    pub justify_content:     JustifyContent,
+    pub align_items:         AlignItems,
+    pub flex_grow:           f32,
+    pub flex_shrink:         f32,
+    pub flex_basis:          Option<i32>,
+    pub gap:                 i32,
+
     // --- list ---
     pub list_style_type:     ListStyleType,
 
@@ -218,7 +364,7 @@ pub struct Style {
     pub href:                Option<String>,
 
     // --- font family ---
-    pub font_family:         FontFamilyHint,
+    pub font_family:         FontFamily,
 
     // --- box shadow (single shadow) ---
     pub box_shadow:          Option<BoxShadow>,
@@ -231,6 +377,17 @@ pub struct Style {
     /// because the real viewport dimensions aren't known yet; they are
     /// re-resolved at layout time in block.rs.
     pub font_size_raw:       Option<String>,
+
+    // --- positioning ---
+    pub position:            Position,
+    pub top:                 Option<i32>,
+    pub bottom:              Option<i32>,
+    pub left:                Option<i32>,
+    pub right:               Option<i32>,
+    pub top_raw:             Option<String>,
+    pub bottom_raw:          Option<String>,
+    pub left_raw:            Option<String>,
+    pub right_raw:           Option<String>,
 }
 
 impl Default for Style {
@@ -271,12 +428,31 @@ impl Default for Style {
 
             list_style_type:   ListStyleType::Disc,
             href:              None,
-            font_family:       FontFamilyHint::SansSerif,
+            font_family:       FontFamily::SansSerif,
             box_shadow:        None,
             word_break:        WordBreak::Normal,
             margin_auto_left:  false,
             margin_auto_right: false,
             font_size_raw:     None,
+
+            flex_direction:    FlexDirection::Row,
+            flex_wrap:         FlexWrap::NoWrap,
+            justify_content:   JustifyContent::FlexStart,
+            align_items:       AlignItems::Stretch,
+            flex_grow:         0.0,
+            flex_shrink:       1.0,
+            flex_basis:        None,
+            gap:               0,
+
+            position:          Position::Static,
+            top:               None,
+            bottom:            None,
+            left:              None,
+            right:             None,
+            top_raw:           None,
+            bottom_raw:        None,
+            left_raw:          None,
+            right_raw:         None,
         }
     }
 }

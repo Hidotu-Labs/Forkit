@@ -76,6 +76,11 @@ pub fn paint_wrapped(
 
     // If the node is just whitespace, ensure it advances the cursor correctly (collapsed to a single space).
     if !has_content && !text.is_empty() {
+        // Skip leading whitespace at the start of a line — the space would only
+        // add an unwanted indent before the first visible content.
+        if ls.cursor_x <= ls.margin_left + ls.indent {
+            return;
+        }
         let (sw, _) = measure_text(fonts, " ", style);
         if ls.cursor_x + sw > max_w && ls.cursor_x > ls.margin_left + ls.indent {
             ls.newline(style.font_size, style.line_height_mul);

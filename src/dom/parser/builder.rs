@@ -30,6 +30,15 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
                 if stack.len() <= 1 { continue; }
                 let in_pre = stack.iter().any(|e| e.style.white_space_pre);
                 if !in_pre && tok.attrs.chars().all(|c| c.is_ascii_whitespace()) {
+                    // Collapse inter-element whitespace to a single space so that
+                    // inline siblings (e.g. two <img> tags) get the standard HTML
+                    // inter-element space.  The renderer will skip it when the cursor
+                    // is already at the start of a line.
+                    let parent_style = stack.last().unwrap().style.clone();
+                    stack.last_mut().unwrap().children.push(Node::Text(TextNode {
+                        text:  " ".to_string(),
+                        style: parent_style,
+                    }));
                     continue;
                 }
                 let parent_style = stack.last().unwrap().style.clone();

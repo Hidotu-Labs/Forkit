@@ -14,7 +14,7 @@ use super::state::{
     LayoutState, LayoutBox, DetailsArea, MARGIN_RIGHT, BLOCK_MARGIN, LINE_SPACING,
     RoundedClip,
 };
-use super::table;
+use super::{table, flex};
 
 pub mod utils;
 pub mod measure;
@@ -22,7 +22,7 @@ pub mod paint;
 pub mod images;
 pub mod forms;
 
-pub use utils::{resolve_size, open_block, close_block};
+pub use utils::{resolve_size, resolve_pos, open_block, close_block};
 pub use measure::{measure_block_children, measure_inline_block_children, measure_block_content_width, advance_text_invisible};
 pub use paint::{paint_block_bg, paint_block_bg_gradient, paint_block_bg_image, paint_block_border, paint_scrollbar, paint_bullet};
 pub use images::{paint_image, paint_media_placeholder, paint_audio_player};
@@ -41,6 +41,11 @@ pub fn layout_element(
 
     if el.style.visibility == Visibility::Hidden {
         layout_element_invisible(ls, fonts, el, max_w);
+        return;
+    }
+
+    if el.style.position == crate::dom::node::Position::Absolute && !ls.in_absolute_pass {
+        layout_absolute_element(ls, canvas, tc, fonts, images, base_url, el, max_w);
         return;
     }
 
@@ -357,6 +362,11 @@ pub fn layout_element(
     let block_x = contain_left + ml;
     let block_w = box_w.min(contain_right - block_x - s.margin.right).max(0);
 
+    if s.display == Display::Flex {
+        flex::layout_flex(ls, canvas, tc, fonts, images, base_url, el, max_w);
+        return;
+    }
+
     if s.display == Display::InlineBlock {
         let pad_l = s.padding.left;
         let pad_r = s.padding.right;
@@ -391,9 +401,16 @@ pub fn layout_element(
         };
 
         // Measure height by doing a dry-run layout.
+        // Temporarily advance cursor_x to the content start of the inline-block so
+        // that measure_block_children's pending_lh check (cx > margin_left + indent)
+        // is always satisfied — otherwise the first inline-block on a fresh line
+        // (where cursor_x == margin_left + indent) would measure a zero-height body.
         let content_h = {
+            let saved_cx = ls.cursor_x;
+            ls.cursor_x = ib_x + pad_l;
             let raw_h = measure_block_children(ls, fonts, el,
                 ib_x + pad_l + content_w + pad_r, s);
+            ls.cursor_x = saved_cx;
             raw_h.max(font_size as i32)
         };
 
@@ -436,8 +453,31 @@ pub fn layout_element(
         ls.indent      = 0;
 
         let children_max_w = (ib_x + pad_l + content_w).max(ls.cursor_x + 1);
+        
+        let is_positioned = s.position != crate::dom::node::Position::Static;
+        if is_positioned {
+            ls.positioned_ancestors.push(LayoutBox { x: ib_x, y: ib_y, w: ib_w, h: ib_h });
+        }
+
+        // Phase 1: Normal flow
         for child in &el.children {
+            if let Node::Element(e) = child {
+                if e.style.position == crate::dom::node::Position::Absolute { continue; }
+            }
             ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
+        }
+
+        // Phase 2: Absolute
+        for child in &el.children {
+            if let Node::Element(e) = child {
+                if e.style.position == crate::dom::node::Position::Absolute {
+                    ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
+                }
+            }
+        }
+
+        if is_positioned {
+            ls.positioned_ancestors.pop();
         }
 
         ls.margin_left = saved_margin_left;
@@ -560,6 +600,9 @@ pub fn layout_element(
     }
 
     for child in &el.children {
+        if let Node::Element(e) = child {
+            if e.style.position == crate::dom::node::Position::Absolute { continue; }
+        }
         if is_header_major {
             if let crate::dom::node::Node::Element(child_el) = child {
                 let ct = child_el.tag.as_str();
@@ -650,6 +693,24 @@ pub fn layout_element(
 
         paint_block_border(ls, canvas, s, block_x, start_y, block_w, block_h);
         ls.boxes.push(LayoutBox { x: block_x, y: start_y, w: block_w, h: block_h });
+
+        let is_positioned = s.position != crate::dom::node::Position::Static;
+        if is_positioned {
+            ls.positioned_ancestors.push(LayoutBox { x: block_x, y: start_y, w: block_w, h: block_h });
+        }
+
+        // Phase 2: Absolute
+        for child in &el.children {
+            if let Node::Element(e) = child {
+                if e.style.position == crate::dom::node::Position::Absolute {
+                    ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
+                }
+            }
+        }
+
+        if is_positioned {
+            ls.positioned_ancestors.pop();
+        }
 
         let needs_scrollbar = matches!(
             s.overflow,
@@ -847,4 +908,115 @@ fn paint_header_major_decoration(
             let _ = canvas.draw_line((ax, ry), (bx, ry));
         }
     }
+}
+
+pub fn layout_absolute_element(
+    ls:       &mut LayoutState,
+    canvas:   &mut Canvas<Window>,
+    tc:       &TextureCreator<WindowContext>,
+    fonts:    &mut FontCache,
+    images:   &mut ImageCache,
+    base_url: &str,
+    el:       &Element,
+    max_w:    i32,
+) {
+    let s = &el.style;
+    let vw = ls.ctx.viewport_width;
+    let vh = ls.ctx.viewport_height;
+    
+    // 1. Determine containing block dimensions
+    let (ctx_x, ctx_y, ctx_w, ctx_h) = if let Some(parent) = ls.positioned_ancestors.last() {
+        (parent.x, parent.y, parent.w, parent.h)
+    } else {
+        (0, 0, vw, ls.content_height.max(vh))
+    };
+
+    let font_size = s.font_size; 
+
+    // 2. Measure size to determine total dimensions of the absolute box
+    let box_w = resolve_size(s.size.width, s.size.width_raw.as_deref(), ctx_w, vw, vh, font_size);
+    let box_h = resolve_size(s.size.height, s.size.height_raw.as_deref(), ctx_h, vw, vh, font_size);
+
+    let content_w = box_w.unwrap_or_else(|| {
+        measure_block_content_width(fonts, &el.children, font_size).min(ctx_w)
+    });
+    
+    let content_h = box_h.unwrap_or_else(|| {
+        let saved_x = ls.cursor_x;
+        let saved_y = ls.cursor_y;
+        let saved_ml = ls.margin_left;
+        let saved_ind = ls.indent;
+        let saved_lh = ls.line_height;
+        
+        ls.cursor_x = 0;
+        ls.cursor_y = 0;
+        ls.margin_left = 0;
+        ls.indent = 0;
+        ls.line_height = font_size as i32;
+        
+        let h = measure_block_children(ls, fonts, el, content_w, s);
+        
+        ls.cursor_x = saved_x;
+        ls.cursor_y = saved_y;
+        ls.margin_left = saved_ml;
+        ls.indent = saved_ind;
+        ls.line_height = saved_lh;
+        h
+    });
+
+    let border_w = (s.borders.left.width + s.borders.right.width) as i32;
+    let border_h = (s.borders.top.width + s.borders.bottom.width) as i32;
+    let total_w = content_w + s.padding.left + s.padding.right + border_w;
+    let total_h = content_h + s.padding.top + s.padding.bottom + border_h;
+
+    // 3. Determine top-left position relative to the document
+    let x = if let Some(l) = resolve_pos(s.left, s.left_raw.as_deref(), ctx_w, vw, vh, font_size) {
+        ctx_x + l
+    } else if let Some(r) = resolve_pos(s.right, s.right_raw.as_deref(), ctx_w, vw, vh, font_size) {
+        ctx_x + ctx_w - r - total_w
+    } else {
+        ctx_x
+    };
+
+    let y = if let Some(t) = resolve_pos(s.top, s.top_raw.as_deref(), ctx_h, vw, vh, font_size) {
+        ctx_y + t
+    } else if let Some(b) = resolve_pos(s.bottom, s.bottom_raw.as_deref(), ctx_h, vw, vh, font_size) {
+        ctx_y + ctx_h - b - total_h
+    } else {
+        ctx_y
+    };
+
+    // 4. Delegate INNER layout and painting to layout_element with the recursive flag set.
+    // This allows the element to behave like a normal block/flex container at the new coordinate.
+    let saved_x = ls.cursor_x;
+    let saved_y = ls.cursor_y;
+    let saved_ml = ls.margin_left;
+    let saved_ind = ls.indent;
+    let saved_lh = ls.line_height;
+
+    // Position the cursor so that the inner layout (which adds mar.top/left and BLOCK_MARGIN)
+    // lands exactly at our calculated (x, y).
+    let is_block = s.display_block || s.display == crate::dom::node::Display::Flex;
+    if is_block {
+        ls.cursor_x = x - s.margin.left;
+        ls.cursor_y = y - s.margin.top - crate::render::layout::state::BLOCK_MARGIN;
+    } else {
+        ls.cursor_x = x;
+        ls.cursor_y = y;
+    }
+    ls.margin_left = ls.cursor_x;
+    ls.indent      = 0;
+
+    // max_w for the inner pass should be the absolute box's right edge.
+    let inner_max_w = x + total_w + s.margin.right;
+    
+    ls.in_absolute_pass = true;
+    layout_element(ls, canvas, tc, fonts, images, base_url, el, inner_max_w);
+    ls.in_absolute_pass = false;
+
+    ls.cursor_x = saved_x;
+    ls.cursor_y = saved_y;
+    ls.margin_left = saved_ml;
+    ls.indent = saved_ind;
+    ls.line_height = saved_lh;
 }

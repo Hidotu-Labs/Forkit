@@ -1,13 +1,16 @@
 use crate::dom::node::{
     Style, TextAlign, ListStyleType, Display, Visibility, TextTransform, Overflow,
-    Border, BorderStyle, Borders, FontFamilyHint, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
-    LinearGradient, GradientStop,
+    Border, BorderStyle, Borders, FontFamily, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
+    LinearGradient, GradientStop, FlexDirection, FlexWrap, JustifyContent, AlignItems,
 };
 use super::color::parse_color_alpha;
 use super::length::{parse_length, parse_length_ctx, parse_box_spacing, LengthContext};
 /// Apply a `"property: value; …"` inline style string onto an existing `Style`.
 pub fn apply_inline(css: &str, s: &mut Style) {
     let base = s.font_size;
+    // Capture the parent-inherited state before any overrides so that
+    // `inherit` in an inline style can restore the inherited value.
+    let inherited = s.clone();
     for decl in css.split(';') {
         let decl = decl.trim();
         if decl.is_empty() { continue; }
@@ -15,8 +18,65 @@ pub fn apply_inline(css: &str, s: &mut Style) {
         if let Some(colon) = decl.find(':') {
             let prop = decl[..colon].trim().to_ascii_lowercase();
             let val  = decl[colon+1..].trim();
-            apply_property(&prop, val, base, s);
+            if val.eq_ignore_ascii_case("initial") {
+                apply_inline_initial(&prop, s);
+            } else if val.eq_ignore_ascii_case("inherit") {
+                apply_inline_inherit(&prop, s, &inherited);
+            } else {
+                apply_property(&prop, val, base, s);
+            }
         }
+    }
+}
+
+/// Reset a single property to its CSS initial (browser default) value.
+fn apply_inline_initial(prop: &str, s: &mut Style) {
+    let def = Style::default();
+    match prop {
+        "color"               => { s.color = def.color; s.color_alpha = def.color_alpha; }
+        "font-size"           => { s.font_size = def.font_size; s.font_size_raw = None; }
+        "font-weight"         => { s.bold = def.bold; }
+        "font-style"          => { s.italic = def.italic; }
+        "text-align"          => { s.text_align = def.text_align; }
+        "line-height"         => { s.line_height_mul = def.line_height_mul; }
+        "letter-spacing"      => { s.letter_spacing = def.letter_spacing; }
+        "word-spacing"        => { s.word_spacing = def.word_spacing; }
+        "white-space"         => { s.white_space_pre = def.white_space_pre; }
+        "text-transform"      => { s.text_transform = def.text_transform; }
+        "font-variant-caps"   => { s.font_variant_caps = def.font_variant_caps; }
+        "background-color"    => { s.bg_color = def.bg_color; s.bg_alpha = def.bg_alpha; }
+        "background-image"    => { s.bg_image_url = None; s.bg_gradient = None; }
+        "background-size"     => { s.bg_size = def.bg_size; }
+        "background-repeat"   => { s.bg_repeat = def.bg_repeat; }
+        "background-position" => { s.bg_position = def.bg_position; }
+        "border-radius"       => { s.border_radius = def.border_radius; }
+        "display"             => { s.display = def.display; s.display_block = def.display_block; }
+        "visibility"          => { s.visibility = def.visibility; }
+        "opacity"             => { s.opacity = def.opacity; }
+        _ => {}
+    }
+}
+
+/// Restore a single property to the value it had before inline overrides
+/// (i.e. the value inherited from the cascade / parent).
+fn apply_inline_inherit(prop: &str, s: &mut Style, inherited: &Style) {
+    match prop {
+        "color"               => { s.color = inherited.color; s.color_alpha = inherited.color_alpha; }
+        "font-size"           => { s.font_size = inherited.font_size; s.font_size_raw = inherited.font_size_raw.clone(); }
+        "font-weight"         => { s.bold = inherited.bold; }
+        "font-style"          => { s.italic = inherited.italic; }
+        "text-align"          => { s.text_align = inherited.text_align; }
+        "line-height"         => { s.line_height_mul = inherited.line_height_mul; }
+        "letter-spacing"      => { s.letter_spacing = inherited.letter_spacing; }
+        "word-spacing"        => { s.word_spacing = inherited.word_spacing; }
+        "white-space"         => { s.white_space_pre = inherited.white_space_pre; }
+        "text-transform"      => { s.text_transform = inherited.text_transform; }
+        "font-variant-caps"   => { s.font_variant_caps = inherited.font_variant_caps; }
+        "background-color"    => { s.bg_color = inherited.bg_color; s.bg_alpha = inherited.bg_alpha; }
+        "display"             => { s.display = inherited.display; s.display_block = inherited.display_block; }
+        "visibility"          => { s.visibility = inherited.visibility; }
+        "opacity"             => { s.opacity = inherited.opacity; }
+        _ => {}
     }
 }
 
@@ -277,7 +337,9 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
         "display" => {
             match val.to_ascii_lowercase().as_str() {
                 "none"         => { s.display = Display::Hidden;      s.display_block = false; }
-                "block" | "flex" | "grid" | "list-item" | "table" => {
+                "flex" | "inline-flex" => {
+                                   s.display = Display::Flex;          s.display_block = true; }
+                "block" | "grid" | "list-item" | "table" => {
                                    s.display = Display::Block;         s.display_block = true; }
                 "inline-block" => { s.display = Display::InlineBlock; s.display_block = false; }
                 _              => { s.display = Display::Inline;      s.display_block = false; }
@@ -554,11 +616,7 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
         // ---- font family ----
         "font-family" => {
-            s.font_family = match crate::render::font::FontFamily::from_css(val) {
-                crate::render::font::FontFamily::Monospace => FontFamilyHint::Monospace,
-                crate::render::font::FontFamily::Serif     => FontFamilyHint::Serif,
-                _                                          => FontFamilyHint::SansSerif,
-            };
+            s.font_family = crate::dom::node::FontFamily::from_css(val);
         }
 
         // ---- word break / overflow wrap ----
@@ -603,6 +661,121 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             } else {
                 s.size.min_height_raw = None;
                 s.size.min_height     = parse_length(val, base, 0).filter(|&n| n > 0);
+            }
+        }
+
+        // ---- positioning ----
+        "position" => {
+            s.position = match val.to_ascii_lowercase().as_str() {
+                "relative" => crate::dom::node::Position::Relative,
+                "absolute" => crate::dom::node::Position::Absolute,
+                "fixed"    => crate::dom::node::Position::Fixed,
+                "sticky"   => crate::dom::node::Position::Sticky,
+                _          => crate::dom::node::Position::Static,
+            };
+        }
+        "top" => {
+            let lv = val.to_ascii_lowercase();
+            if needs_deferred_resolve(&lv) {
+                s.top = None;
+                s.top_raw = Some(val.to_owned());
+            } else {
+                s.top_raw = None;
+                s.top = parse_length(val, base, 0);
+            }
+        }
+        "bottom" => {
+            let lv = val.to_ascii_lowercase();
+            if needs_deferred_resolve(&lv) {
+                s.bottom = None;
+                s.bottom_raw = Some(val.to_owned());
+            } else {
+                s.bottom_raw = None;
+                s.bottom = parse_length(val, base, 0);
+            }
+        }
+        "left" => {
+            let lv = val.to_ascii_lowercase();
+            if needs_deferred_resolve(&lv) {
+                s.left = None;
+                s.left_raw = Some(val.to_owned());
+            } else {
+                s.left_raw = None;
+                s.left = parse_length(val, base, 0);
+            }
+        }
+        "right" => {
+            let lv = val.to_ascii_lowercase();
+            if needs_deferred_resolve(&lv) {
+                s.right = None;
+                s.right_raw = Some(val.to_owned());
+            } else {
+                s.right_raw = None;
+                s.right = parse_length(val, base, 0);
+            }
+        }
+
+        // ---- flexbox ----
+        "flex-direction" => {
+            s.flex_direction = FlexDirection::from_css(val);
+        }
+        "flex-wrap" => {
+            s.flex_wrap = FlexWrap::from_css(val);
+        }
+        "justify-content" => {
+            s.justify_content = JustifyContent::from_css(val);
+        }
+        "align-items" => {
+            s.align_items = AlignItems::from_css(val);
+        }
+        "align-content" => {
+            // Minimal: treat align-content like align-items for now
+        }
+        "flex-grow" => {
+            if let Ok(n) = val.parse::<f32>() { s.flex_grow = n.max(0.0); }
+        }
+        "flex-shrink" => {
+            if let Ok(n) = val.parse::<f32>() { s.flex_shrink = n.max(0.0); }
+        }
+        "flex-basis" => {
+            if val.eq_ignore_ascii_case("auto") {
+                s.flex_basis = None;
+            } else {
+                s.flex_basis = parse_length(val, base, 0).filter(|&n| n >= 0);
+            }
+        }
+        "flex" => {
+            // Shorthand: <flex-grow> [<flex-shrink> [<flex-basis>]] | auto | none
+            let lv = val.trim().to_ascii_lowercase();
+            match lv.as_str() {
+                "auto" => { s.flex_grow = 1.0; s.flex_shrink = 1.0; s.flex_basis = None; }
+                "none" => { s.flex_grow = 0.0; s.flex_shrink = 0.0; s.flex_basis = Some(0); }
+                _ => {
+                    let parts: Vec<&str> = val.split_whitespace().collect();
+                    if let Some(g) = parts.first().and_then(|v| v.parse::<f32>().ok()) {
+                        s.flex_grow = g.max(0.0);
+                    }
+                    if let Some(sh) = parts.get(1).and_then(|v| v.parse::<f32>().ok()) {
+                        s.flex_shrink = sh.max(0.0);
+                    }
+                    if let Some(basis_tok) = parts.get(2) {
+                        s.flex_basis = if basis_tok.eq_ignore_ascii_case("auto") {
+                            None
+                        } else {
+                            parse_length(basis_tok, base, 0).filter(|&n| n >= 0)
+                        };
+                    }
+                }
+            }
+        }
+        "gap" | "row-gap" | "column-gap" => {
+            // Simplified: treat gap as uniform spacing between flex items
+            if prop == "gap" {
+                // gap can be two values: row-gap column-gap
+                let first = val.split_whitespace().next().unwrap_or(val);
+                s.gap = parse_length(first, base, 0).unwrap_or(0).max(0);
+            } else {
+                s.gap = parse_length(val, base, 0).unwrap_or(0).max(0);
             }
         }
 
@@ -1010,4 +1183,38 @@ fn split_gradient_args(s: &str) -> Vec<String> {
     let t = cur.trim().to_string();
     if !t.is_empty() { result.push(t); }
     result
+}
+
+/// Extracts all `url(...)` contents from a string.
+pub(crate) fn extract_css_urls(val: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let lower = val.to_ascii_lowercase();
+    let mut pos = 0;
+    while let Some(start) = lower[pos..].find("url(") {
+        let after_open = pos + start + 4;
+        let mut depth = 1usize;
+        let mut i = after_open;
+        let bytes = val.as_bytes();
+        while i < bytes.len() {
+            match bytes[i] as char {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let inner = &val[after_open..i];
+                        let clean = inner.trim_matches(|c| c == '"' || c == '\'').trim();
+                        if !clean.is_empty() {
+                            urls.push(clean.to_string());
+                        }
+                        pos = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if i >= bytes.len() { break; }
+    }
+    urls
 }

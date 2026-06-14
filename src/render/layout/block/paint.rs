@@ -8,7 +8,7 @@ use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::layout::paint::{
     paint_text, measure_text, fill_rect_alpha, fill_rounded_rect,
-    draw_rounded_rect, rgba_color,
+    draw_rounded_rect, rgba_color, get_rounded_rect_row_range_pub,
 };
 use crate::render::layout::state::{LayoutState, LINE_SPACING, BLOCK_MARGIN};
 use crate::render::layout::block::measure::measure_block_children;pub fn paint_scrollbar(
@@ -406,15 +406,111 @@ pub fn paint_block_border(
     if !has_any { return; }
 
     if radii != [0, 0, 0, 0] {
-        let outline = if b.top.width > 0 { b.top.color } else { b.left.color };
-        draw_rounded_rect(canvas, rgba_color(outline, alpha), alpha,
-                          x, y, w, h, radii, ls.ctx.scroll_y, ls.ctx.viewport_height);
+        let bw_t = b.top.width    as i32;
+        let bw_r = b.right.width  as i32;
+        let bw_b = b.bottom.width as i32;
+        let bw_l = b.left.width   as i32;
+        let max_bw = bw_t.max(bw_r).max(bw_b).max(bw_l);
 
-        if b.left.width > 1 {
-            let bw_l = b.left.width as i32;
-            fill_rounded_rect(canvas, rgba_color(b.left.color, 255), alpha,
-                              x, y, bw_l, h, [radii[0], 0, 0, radii[3]],
-                              ls.ctx.scroll_y, ls.ctx.viewport_height);
+        // Clamp radii for outer and inner boxes
+        let clamp_radii = |bx: i32, bw: i32, bh: i32, r: [u16; 4]| -> [u16; 4] {
+            let max_r = ((bw.min(bh)) / 2).max(0) as u16;
+            [r[0].min(max_r), r[1].min(max_r), r[2].min(max_r), r[3].min(max_r)]
+        };
+
+        let outer_r = clamp_radii(x, w, h, radii);
+
+        // Inner box (inset by border widths on each side)
+        let inner_x = x + bw_l;
+        let inner_y = y + bw_t;
+        let inner_w = w - bw_l - bw_r;
+        let inner_h = h - bw_t - bw_b;
+        let inner_radii = [
+            (radii[0] as i32 - bw_l.min(bw_t)).max(0) as u16,
+            (radii[1] as i32 - bw_r.min(bw_t)).max(0) as u16,
+            (radii[2] as i32 - bw_r.min(bw_b)).max(0) as u16,
+            (radii[3] as i32 - bw_l.min(bw_b)).max(0) as u16,
+        ];
+        let inner_r = if inner_w > 0 && inner_h > 0 {
+            Some(clamp_radii(inner_x, inner_w, inner_h, inner_radii))
+        } else {
+            None
+        };
+
+        let scroll_y   = ls.ctx.scroll_y;
+        let viewport_h = ls.ctx.viewport_height;
+
+        // Paint the border ring row by row using the scanline approach:
+        // For each row, get the outer [lx..rx] span and inner [lx..rx] span,
+        // and fill only the ring pixels between them.
+        // This correctly handles all border widths and radii without needing
+        // to know the background color.
+        for row in 0..h {
+            let abs_y = y + row;
+            let row_ry = abs_y - scroll_y;
+            if row_ry < 0 { continue; }
+            if row_ry >= viewport_h { break; }
+
+            // Outer span
+            let (ocl, ocr) = get_rounded_rect_row_range_pub(row, h, &outer_r);
+            let o_lx = x + ocl;
+            let o_rx = x + w - ocr;
+            if o_rx <= o_lx { continue; }
+
+            // Determine border color for this row (top/bottom portions use their color)
+            let is_top_region    = row < bw_t;
+            let is_bottom_region = row >= h - bw_b;
+            let is_left_color    = !is_top_region && !is_bottom_region;
+
+            // Inner span (the area NOT covered by border)
+            let (i_lx, i_rx) = if let Some(ir) = inner_r {
+                if inner_w > 0 && inner_h > 0 {
+                    let inner_row = row - bw_t;
+                    if inner_row >= 0 && inner_row < inner_h {
+                        let (icl, icr) = get_rounded_rect_row_range_pub(inner_row, inner_h, &ir);
+                        (inner_x + icl, inner_x + inner_w - icr)
+                    } else {
+                        (o_rx, o_rx) // no inner span on this row
+                    }
+                } else {
+                    (o_rx, o_rx)
+                }
+            } else {
+                (o_rx, o_rx) // no inner box at all — solid fill
+            };
+
+            // Left ring segment (from outer left to inner left)
+            let left_w = (i_lx - o_lx).max(0);
+            if left_w > 0 {
+                let left_color = if is_top_region { b.top.color }
+                                 else if is_bottom_region { b.bottom.color }
+                                 else { b.left.color };
+                fill_rect_alpha(canvas, rgba_color(left_color, alpha), alpha,
+                                o_lx, abs_y, left_w, 1, None, scroll_y, viewport_h);
+            }
+
+            // Right ring segment (from inner right to outer right)
+            let right_w = (o_rx - i_rx).max(0);
+            if right_w > 0 {
+                let right_color = if is_top_region { b.top.color }
+                                  else if is_bottom_region { b.bottom.color }
+                                  else { b.right.color };
+                fill_rect_alpha(canvas, rgba_color(right_color, alpha), alpha,
+                                i_rx, abs_y, right_w, 1, None, scroll_y, viewport_h);
+            }
+
+            // Top/bottom full-row fill (when inner span doesn't exist for this row)
+            if is_top_region || is_bottom_region {
+                // Fill the middle gap between left ring and right ring with top/bottom color
+                let mid_lx = (o_lx + left_w).max(o_lx);
+                let mid_rx = (o_rx - right_w).min(o_rx);
+                let mid_w  = (mid_rx - mid_lx).max(0);
+                if mid_w > 0 {
+                    let mid_color = if is_top_region { b.top.color } else { b.bottom.color };
+                    fill_rect_alpha(canvas, rgba_color(mid_color, alpha), alpha,
+                                    mid_lx, abs_y, mid_w, 1, None, scroll_y, viewport_h);
+                }
+            }
         }
     } else {
         let bw_t = b.top.width    as i32;

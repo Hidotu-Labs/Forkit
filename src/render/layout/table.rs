@@ -197,6 +197,8 @@ fn sub_state<'ctx>(
         ol_stack:      Vec::new(),
         content_height: 0,
         rounding_clip:  parent.rounding_clip.clone(),
+        positioned_ancestors: parent.positioned_ancestors.clone(),
+        in_absolute_pass: parent.in_absolute_pass,
     }
 }
 
