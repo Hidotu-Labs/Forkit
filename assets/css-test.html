@@ -2094,6 +2094,521 @@
     </div>
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>21. calc() — Comprehensive</h2>
+  <style>
+    .calc-bar {
+      background-color: #0f3460;
+      color: white;
+      padding: 6px 8px;
+      font-size: 13px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+  </style>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">calc(100% - 40px) — fills parent minus 40px margins</div>
+      <div class="test-result" style="background:#e0e7ff; padding:6px; border-radius:4px;">
+        <div class="calc-bar" style="width: calc(100% - 40px);">calc(100% - 40px)</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">calc(50% - 60px) — half width minus fixed offset</div>
+      <div class="test-result" style="background:#e0e7ff; padding:6px; border-radius:4px;">
+        <div class="calc-bar" style="width: calc(50% - 60px);">calc(50% - 60px)</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">calc(100% / 3) — one third of parent</div>
+      <div class="test-result" style="background:#e0e7ff; padding:6px; border-radius:4px;">
+        <div class="calc-bar" style="width: calc(100% / 3);">calc(100% / 3)</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">calc(2em * 4) — relative unit multiplied</div>
+      <div class="test-result" style="background:#e0e7ff; padding:6px; border-radius:4px;">
+        <div class="calc-bar" style="width: calc(2em * 4);">calc(2em × 4) = 8em</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">calc(10px + 2vw) — absolute + viewport-relative mixed</div>
+      <div class="test-result" style="background:#e0e7ff; padding:6px; border-radius:4px;">
+        <div class="calc-bar" style="width: calc(10px + 2vw);">calc(10px + 2vw)</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">calc(100% - 2em - 20px) — three operands</div>
+      <div class="test-result" style="background:#e0e7ff; padding:6px; border-radius:4px;">
+        <div class="calc-bar" style="width: calc(100% - 2em - 20px);">calc(100% - 2em - 20px)</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">font-size: calc(12px + 0.5vw) — responsive font</div>
+      <div class="test-result">
+        <span style="font-size: calc(12px + 0.5vw); background:#fef3c7; padding:4px; border-radius:4px;">
+          font-size: calc(12px + 0.5vw)
+        </span>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">padding: calc(1em + 4px) — mixed unit padding</div>
+      <div class="test-result">
+        <div style="background:#d1fae5; padding: calc(1em + 4px); border-radius:4px;">
+          padding: calc(1em + 4px) — all sides
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">margin: 0 calc(10% - 8px) — calc in shorthand</div>
+      <div class="test-result" style="background:#fef9c3; padding:4px;">
+        <div style="background:#fde68a; margin: 0 calc(10% - 8px); padding:6px; border-radius:4px;">
+          margin: 0 calc(10% - 8px)
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Three equal columns via calc — calc(33.333% - 8px) each</div>
+      <div class="test-result" style="display:flex; gap:6px; background:#f3f4f6; padding:6px; border-radius:4px;">
+        <div style="width: calc(33.333% - 4px); background:#0f3460; color:white; padding:6px; border-radius:4px; font-size:12px;">Col 1</div>
+        <div style="width: calc(33.333% - 4px); background:#e94560; color:white; padding:6px; border-radius:4px; font-size:12px;">Col 2</div>
+        <div style="width: calc(33.333% - 4px); background:#009944; color:white; padding:6px; border-radius:4px; font-size:12px;">Col 3</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">height: calc(100px - 20px) = 80px explicit</div>
+      <div class="test-result">
+        <div style="height: calc(100px - 20px); background:#c7d2fe; padding:4px; border-radius:4px;">
+          height: calc(100px - 20px) = 80px
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">max-width: calc(600px - 10%) — mixed units in max-width</div>
+      <div class="test-result" style="background:#f0f4ff; padding:6px; border-radius:4px;">
+        <div style="max-width: calc(600px - 10%); background:#6366f1; color:white; padding:6px; border-radius:4px; font-size:13px;">
+          max-width: calc(600px - 10%)
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>22. clamp() / min() / max()</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">font-size: clamp(12px, 2vw, 28px) — scales between 12 and 28px</div>
+      <div class="test-result">
+        <p style="font-size: clamp(12px, 2vw, 28px); margin:0; background:#fef3c7; padding:6px; border-radius:4px;">
+          Responsive text: clamp(12px, 2vw, 28px)
+        </p>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">font-size: clamp(14px, 3vw, 32px) — wider range</div>
+      <div class="test-result">
+        <p style="font-size: clamp(14px, 3vw, 32px); margin:0; background:#e0f2fe; padding:6px; border-radius:4px;">
+          Wider clamp range: clamp(14px, 3vw, 32px)
+        </p>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">width: clamp(100px, 40%, 300px) — constrained fluid width</div>
+      <div class="test-result" style="background:#f0fdf4; padding:6px; border-radius:4px;">
+        <div style="width: clamp(100px, 40%, 300px); background:#009944; color:white; padding:6px; border-radius:4px; font-size:12px;">
+          clamp(100px, 40%, 300px)
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">width: min(300px, 60%) — smaller of absolute or percent</div>
+      <div class="test-result" style="background:#f0f4ff; padding:6px; border-radius:4px;">
+        <div style="width: min(300px, 60%); background:#7c3aed; color:white; padding:6px; border-radius:4px; font-size:12px;">
+          min(300px, 60%)
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">width: min(200px, 30vw) — absolute vs viewport unit</div>
+      <div class="test-result" style="background:#f0f4ff; padding:6px; border-radius:4px;">
+        <div style="width: min(200px, 30vw); background:#0891b2; color:white; padding:6px; border-radius:4px; font-size:12px;">
+          min(200px, 30vw)
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">width: max(100px, 20%) — larger of absolute or percent</div>
+      <div class="test-result" style="background:#fef9c3; padding:6px; border-radius:4px;">
+        <div style="width: max(100px, 20%); background:#f59e0b; color:white; padding:6px; border-radius:4px; font-size:12px;">
+          max(100px, 20%)
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">padding: clamp(8px, 2%, 24px) — responsive padding</div>
+      <div class="test-result">
+        <div style="padding: clamp(8px, 2%, 24px); background:#d1fae5; border-radius:4px; border:1px solid #6ee7b7;">
+          padding: clamp(8px, 2%, 24px) on all sides
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Combining: width: min(max(150px, 30%), 500px)</div>
+      <div class="test-result" style="background:#f5f3ff; padding:6px; border-radius:4px;">
+        <div style="width: min(max(150px, 30%), 500px); background:#8b5cf6; color:white; padding:6px; border-radius:4px; font-size:12px;">
+          min(max(150px, 30%), 500px)
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>23. Linear Gradients</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">linear-gradient(to right, #0f3460, #e94560)</div>
+      <div class="test-result"
+        style="height:50px; background: linear-gradient(to right, #0f3460, #e94560); border-radius:6px;">
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">linear-gradient(to bottom, #009944, #ffffff)</div>
+      <div class="test-result"
+        style="height:60px; background: linear-gradient(to bottom, #009944, #ffffff); border-radius:6px;">
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">linear-gradient(135deg, #0f3460 0%, #7c3aed 50%, #e94560 100%)</div>
+      <div class="test-result"
+        style="height:60px; background: linear-gradient(135deg, #0f3460 0%, #7c3aed 50%, #e94560 100%); border-radius:6px;">
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">linear-gradient(to right, #ff9900, #ffcc00, #009944) — 3 stops</div>
+      <div class="test-result"
+        style="height:50px; background: linear-gradient(to right, #ff9900, #ffcc00, #009944); border-radius:6px;">
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">linear-gradient(to bottom right, #0f3460, #e94560) — diagonal</div>
+      <div class="test-result"
+        style="height:80px; background: linear-gradient(to bottom right, #0f3460, #e94560); border-radius:8px;">
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Gradient as text card background with white text overlay</div>
+      <div class="test-result"
+        style="height:70px; background: linear-gradient(to right, #0f3460, #7c3aed);
+               border-radius:8px; display:flex; align-items:center; justify-content:center;">
+        <span style="color:white; font-size:16px; font-weight:bold;">Gradient Card</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>24. outline &amp; text-overflow</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">outline: 3px solid #0f3460 (does not affect layout)</div>
+      <div class="test-result">
+        <div style="outline: 3px solid #0f3460; padding:8px; margin:4px;">
+          This box has an outline — it should not shift surrounding content
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">outline: 2px dashed #e94560</div>
+      <div class="test-result">
+        <div style="outline: 2px dashed #e94560; padding:8px; margin:4px; border-radius:4px;">
+          Dashed outline
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">outline + outline-offset: 4px</div>
+      <div class="test-result" style="padding:12px;">
+        <div style="outline: 2px solid #009944; outline-offset: 4px; padding:8px; background:#d1fae5; border-radius:4px; display:inline-block;">
+          outline-offset: 4px gap between border and outline
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">text-overflow: ellipsis — overflow:hidden + white-space:nowrap</div>
+      <div class="test-result">
+        <div style="width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+                    background:#fef9c3; padding:6px; border-radius:4px; border:1px solid #fde68a;">
+          This is a very long piece of text that should be clipped with ellipsis
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">text-overflow: clip (no ellipsis, just hard cut)</div>
+      <div class="test-result">
+        <div style="width: 180px; overflow: hidden; white-space: nowrap; text-overflow: clip;
+                    background:#e0e7ff; padding:6px; border-radius:4px; border:1px solid #c7d2fe;">
+          This text clips hard without any ellipsis character at the end
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>25. aspect-ratio</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">aspect-ratio: 16 / 9 — widescreen box</div>
+      <div class="test-result">
+        <div style="width: 240px; aspect-ratio: 16 / 9; background: linear-gradient(135deg, #0f3460, #e94560);
+                    border-radius:6px; display:flex; align-items:center; justify-content:center;">
+          <span style="color:white; font-size:13px;">16:9 (240×135)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">aspect-ratio: 1 — perfect square</div>
+      <div class="test-result">
+        <div style="width: 100px; aspect-ratio: 1; background:#009944; border-radius:6px;
+                    display:flex; align-items:center; justify-content:center;">
+          <span style="color:white; font-size:13px;">1:1</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">aspect-ratio: 4 / 3 — classic screen ratio</div>
+      <div class="test-result">
+        <div style="width: 200px; aspect-ratio: 4 / 3; background:#7c3aed; border-radius:6px;
+                    display:flex; align-items:center; justify-content:center;">
+          <span style="color:white; font-size:13px;">4:3 (200×150)</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>26. Real-World Layout Patterns</h2>
+  <style>
+    .rw-page { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden; margin-bottom:8px; }
+    .rw-header { background:#0f3460; color:white; padding:10px 16px; display:flex; justify-content:space-between; align-items:center; }
+    .rw-nav a { color:#93c5fd; font-size:13px; margin-left:12px; text-decoration:none; }
+    .rw-body { display:flex; gap:0; }
+    .rw-sidebar { width:160px; background:#1e3a5f; padding:12px; flex-shrink:0; }
+    .rw-sidebar-item { color:#93c5fd; font-size:13px; padding:4px 0; }
+    .rw-main { flex:1; padding:16px; }
+    .rw-footer { background:#1e293b; color:#94a3b8; font-size:12px; padding:8px 16px; text-align:center; }
+  </style>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">Sidebar + main content layout using flex + fixed sidebar width</div>
+      <div class="test-result">
+        <div class="rw-page">
+          <div class="rw-header">
+            <span style="font-weight:bold;">My App</span>
+            <div class="rw-nav">
+              <a>Home</a><a>Docs</a><a>API</a>
+            </div>
+          </div>
+          <div class="rw-body">
+            <div class="rw-sidebar">
+              <div class="rw-sidebar-item">Dashboard</div>
+              <div class="rw-sidebar-item">Settings</div>
+              <div class="rw-sidebar-item">Profile</div>
+            </div>
+            <div class="rw-main">
+              <div style="font-size:16px; font-weight:bold; color:#0f3460; margin-bottom:8px;">Dashboard</div>
+              <p style="font-size:13px; color:#374151; margin:0 0 8px 0;">Welcome back. Here's your overview.</p>
+              <div style="display:flex; gap:8px;">
+                <div style="flex:1; background:#eff6ff; border-radius:4px; padding:8px; font-size:12px;">
+                  <div style="font-weight:bold; color:#1d4ed8;">42</div>Users
+                </div>
+                <div style="flex:1; background:#f0fdf4; border-radius:4px; padding:8px; font-size:12px;">
+                  <div style="font-weight:bold; color:#15803d;">128</div>Tasks
+                </div>
+                <div style="flex:1; background:#fef9c3; border-radius:4px; padding:8px; font-size:12px;">
+                  <div style="font-weight:bold; color:#a16207;">7</div>Alerts
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="rw-footer">© 2026 Forkit Test Suite</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Article layout — constrained width + calc sidebar offset</div>
+      <div class="test-result">
+        <div style="max-width: min(600px, 90%); margin: 0 auto; background:white; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;">
+          <div style="padding:16px; border-bottom:1px solid #e2e8f0;">
+            <div style="font-size:18px; font-weight:bold; color:#0f3460; margin-bottom:4px;">Article Title</div>
+            <div style="font-size:11px; color:#94a3b8;">Published 15 June 2026 · 5 min read</div>
+          </div>
+          <div style="padding:16px;">
+            <p style="font-size:14px; line-height:1.7; color:#374151; margin:0 0 10px 0;">
+              This paragraph demonstrates a typical article reading view with constrained width
+              using <code>min(600px, 90%)</code> and centered via <code>margin: 0 auto</code>.
+            </p>
+            <p style="font-size:14px; line-height:1.7; color:#374151; margin:0;">
+              The container adapts between a fixed max-width and a percentage of viewport —
+              exactly what <code>min()</code> is for.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Pricing cards — three cards equal width with border emphasis</div>
+      <div class="test-result">
+        <div style="display:flex; gap:10px; align-items:stretch;">
+          <div style="flex:1; border:1px solid #e2e8f0; border-radius:8px; padding:14px; text-align:center;">
+            <div style="font-size:13px; font-weight:bold; color:#64748b; margin-bottom:6px;">FREE</div>
+            <div style="font-size:28px; font-weight:bold; color:#0f3460;">$0</div>
+            <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">/month</div>
+            <div style="font-size:12px; color:#374151;">5 pages</div>
+          </div>
+          <div style="flex:1; border:2px solid #0f3460; border-radius:8px; padding:14px; text-align:center; background:#eff6ff;">
+            <div style="font-size:13px; font-weight:bold; color:#0f3460; margin-bottom:6px;">PRO</div>
+            <div style="font-size:28px; font-weight:bold; color:#0f3460;">$9</div>
+            <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">/month</div>
+            <div style="font-size:12px; color:#374151;">Unlimited</div>
+          </div>
+          <div style="flex:1; border:1px solid #e2e8f0; border-radius:8px; padding:14px; text-align:center;">
+            <div style="font-size:13px; font-weight:bold; color:#64748b; margin-bottom:6px;">TEAM</div>
+            <div style="font-size:28px; font-weight:bold; color:#0f3460;">$29</div>
+            <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">/month</div>
+            <div style="font-size:12px; color:#374151;">5 seats</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Badge / chip row — inline-block items with border-radius pill</div>
+      <div class="test-result">
+        <div style="display:flex; flex-wrap:wrap; gap:6px; padding:4px;">
+          <span style="background:#dbeafe; color:#1d4ed8; font-size:12px; padding:3px 10px; border-radius:999px;">Rust</span>
+          <span style="background:#d1fae5; color:#065f46; font-size:12px; padding:3px 10px; border-radius:999px;">CSS</span>
+          <span style="background:#fce7f3; color:#9d174d; font-size:12px; padding:3px 10px; border-radius:999px;">HTML</span>
+          <span style="background:#fef3c7; color:#92400e; font-size:12px; padding:3px 10px; border-radius:999px;">calc()</span>
+          <span style="background:#ede9fe; color:#5b21b6; font-size:12px; padding:3px 10px; border-radius:999px;">clamp()</span>
+          <span style="background:#fee2e2; color:#991b1b; font-size:12px; padding:3px 10px; border-radius:999px;">flexbox</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Progress bar — calc() for dynamic width fill</div>
+      <div class="test-result">
+        <div style="margin-bottom:6px;">
+          <div style="font-size:12px; color:#374151; margin-bottom:2px;">CSS Coverage <span style="float:right;">72%</span></div>
+          <div style="height:10px; background:#e2e8f0; border-radius:999px; overflow:hidden;">
+            <div style="width:72%; height:100%; background:linear-gradient(to right, #0f3460, #3b82f6); border-radius:999px;"></div>
+          </div>
+        </div>
+        <div style="margin-bottom:6px;">
+          <div style="font-size:12px; color:#374151; margin-bottom:2px;">JS Coverage <span style="float:right;">55%</span></div>
+          <div style="height:10px; background:#e2e8f0; border-radius:999px; overflow:hidden;">
+            <div style="width:55%; height:100%; background:linear-gradient(to right, #009944, #34d399); border-radius:999px;"></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:12px; color:#374151; margin-bottom:2px;">Layout <span style="float:right;">88%</span></div>
+          <div style="height:10px; background:#e2e8f0; border-radius:999px; overflow:hidden;">
+            <div style="width:88%; height:100%; background:linear-gradient(to right, #7c3aed, #a78bfa); border-radius:999px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>27. calc() in Flex + Spacing Combos</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">Two columns: calc(50% - 8px) each with 16px gap total</div>
+      <div class="test-result" style="display:flex; gap:16px; background:#f8fafc; padding:6px; border-radius:4px;">
+        <div style="width: calc(50% - 8px); background:#0f3460; color:white; padding:8px; border-radius:4px; font-size:13px;">
+          Left — calc(50% - 8px)
+        </div>
+        <div style="width: calc(50% - 8px); background:#e94560; color:white; padding:8px; border-radius:4px; font-size:13px;">
+          Right — calc(50% - 8px)
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Sidebar + content: 220px + calc(100% - 220px - 12px)</div>
+      <div class="test-result" style="display:flex; gap:12px; background:#f8fafc; padding:6px; border-radius:4px;">
+        <div style="width:220px; background:#7c3aed; color:white; padding:8px; border-radius:4px; font-size:12px; flex-shrink:0;">
+          Sidebar 220px
+        </div>
+        <div style="width: calc(100% - 220px - 12px); background:#f3f4f6; padding:8px; border-radius:4px; font-size:12px; border:1px solid #e5e7eb;">
+          Content: calc(100% - 220px - 12px) wide
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Stacked calc heights — three rows summing to fixed parent</div>
+      <div class="test-result" style="height:150px; display:flex; flex-direction:column; gap:0; border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">
+        <div style="height:calc(50px); background:#0f3460; color:white; padding:4px 8px; font-size:12px;">Header: 50px</div>
+        <div style="height:calc(150px - 50px - 30px); background:#f0f4ff; padding:4px 8px; font-size:12px; color:#374151; flex:1;">Body: calc(150px - 50px - 30px) = 70px</div>
+        <div style="height:calc(30px); background:#1e293b; color:#94a3b8; padding:4px 8px; font-size:12px; display:flex; align-items:center;">Footer: 30px</div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Grid-like row of 4: calc(25% - 9px) per item, 12px gaps</div>
+      <div class="test-result" style="display:flex; gap:12px; flex-wrap:wrap; background:#f8fafc; padding:6px; border-radius:4px;">
+        <div style="width: calc(25% - 9px); background:#0f3460; color:white; padding:8px; border-radius:4px; font-size:12px; text-align:center;">A</div>
+        <div style="width: calc(25% - 9px); background:#e94560; color:white; padding:8px; border-radius:4px; font-size:12px; text-align:center;">B</div>
+        <div style="width: calc(25% - 9px); background:#009944; color:white; padding:8px; border-radius:4px; font-size:12px; text-align:center;">C</div>
+        <div style="width: calc(25% - 9px); background:#ff9900; color:white; padding:8px; border-radius:4px; font-size:12px; text-align:center;">D</div>
+      </div>
+    </div>
+
   </div>
 
 </body>

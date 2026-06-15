@@ -75,6 +75,12 @@ pub fn fetch_url(url: &str) -> Result<(String, String), String> {
 
 /// Decode a single-byte encoded byte slice using the provided table for
 /// the high 128 codepoints (0x80–0xFF).  ASCII range (0x00–0x7F) maps 1:1.
+pub fn decode_single_byte_pub(bytes: &[u8], high: &[char; 128]) -> String {
+    decode_single_byte(bytes, high)
+}
+
+/// Decode a single-byte encoded byte slice using the provided table for
+/// the high 128 codepoints (0x80–0xFF).  ASCII range (0x00–0x7F) maps 1:1.
 fn decode_single_byte(bytes: &[u8], high: &[char; 128]) -> String {
     let mut out = String::with_capacity(bytes.len());
     for &b in bytes {
@@ -93,7 +99,7 @@ fn decode_single_byte(bytes: &[u8], high: &[char; 128]) -> String {
 
 /// ISO-8859-9 (Latin-5 / Turkish) — same as ISO-8859-1 except 6 codepoints:
 /// 0xD0→Ğ, 0xDD→İ, 0xDE→Ş, 0xF0→ğ, 0xFD→ı, 0xFE→ş
-const ISO_8859_9_HIGH: [char; 128] = [
+pub const ISO_8859_9_HIGH: [char; 128] = [
     // 0x80–0x9F (same as ISO-8859-1 C1 controls — render as replacement)
     '\u{0080}','\u{0081}','\u{0082}','\u{0083}','\u{0084}','\u{0085}','\u{0086}','\u{0087}',
     '\u{0088}','\u{0089}','\u{008A}','\u{008B}','\u{008C}','\u{008D}','\u{008E}','\u{008F}',
@@ -118,7 +124,7 @@ const ISO_8859_9_HIGH: [char; 128] = [
 ];
 
 /// ISO-8859-1 (Latin-1) — high byte value equals Unicode codepoint directly.
-const ISO_8859_1_HIGH: [char; 128] = [
+pub const ISO_8859_1_HIGH: [char; 128] = [
     '\u{0080}','\u{0081}','\u{0082}','\u{0083}','\u{0084}','\u{0085}','\u{0086}','\u{0087}',
     '\u{0088}','\u{0089}','\u{008A}','\u{008B}','\u{008C}','\u{008D}','\u{008E}','\u{008F}',
     '\u{0090}','\u{0091}','\u{0092}','\u{0093}','\u{0094}','\u{0095}','\u{0096}','\u{0097}',
@@ -132,7 +138,7 @@ const ISO_8859_1_HIGH: [char; 128] = [
 ];
 
 /// Windows-1252 — like ISO-8859-1 but 0x80–0x9F contains printable chars.
-const WINDOWS_1252_HIGH: [char; 128] = [
+pub const WINDOWS_1252_HIGH: [char; 128] = [
     '€','\u{FFFD}','‚','ƒ','„','…','†','‡','ˆ','‰','Š','‹','Œ','\u{FFFD}','Ž','\u{FFFD}',
     '\u{FFFD}','\u{2018}','\u{2019}','\u{201C}','\u{201D}','•','–','—','˜','™','š','›','œ','\u{FFFD}','ž','Ÿ',
     '\u{00A0}','¡','¢','£','¤','¥','¦','§','¨','©','ª','«','¬','\u{00AD}','®','¯',
@@ -144,7 +150,7 @@ const WINDOWS_1252_HIGH: [char; 128] = [
 ];
 
 /// Windows-1250 (Central European).
-const WINDOWS_1250_HIGH: [char; 128] = [
+pub const WINDOWS_1250_HIGH: [char; 128] = [
     '€','\u{FFFD}','‚','\u{FFFD}','„','…','†','‡','\u{FFFD}','‰','Š','‹','Ś','\u{0164}','Ž','\u{0179}',
     '\u{FFFD}','\u{2018}','\u{2019}','\u{201C}','\u{201D}','•','–','—','\u{FFFD}','™','š','›','ś','\u{0165}','ž','\u{017A}',
     '\u{00A0}','\u{02C7}','˘','Ł','¤','Ą','¦','§','¨','©','Ş','«','¬','\u{00AD}','®','Ż',

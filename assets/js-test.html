@@ -327,6 +327,83 @@
     <div class="row write" id="fn-hoist">fn-hoist not yet run</div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21a. Arrays — literal and index access</h2>
+  <div class="card">
+    <div class="label">let nums = [10,20,30,40,50]  ·  nums[0]  nums[4]  nums.length</div>
+    <div class="row write" id="arr-literal">arr-literal not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21b. Arrays — index write</h2>
+  <div class="card">
+    <div class="label">mutable[1] = 99 — mutate an element by index</div>
+    <div class="row write" id="arr-index-write">arr-index-write not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21c. Arrays — push / pop</h2>
+  <div class="card">
+    <div class="label">stack.push(4); stack.push(5); let popped = stack.pop()</div>
+    <div class="row write" id="arr-push-pop">arr-push-pop not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21d. Arrays — indexOf / includes</h2>
+  <div class="card">
+    <div class="label">fruits.indexOf("banana")  ·  fruits.includes("banana")  ·  fruits.includes("grape")</div>
+    <div class="row write" id="arr-indexof">arr-indexof not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21e. Arrays — join</h2>
+  <div class="card">
+    <div class="label">words.join(", ")  ·  words.join("-")</div>
+    <div class="row write" id="arr-join">arr-join not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21f. Arrays — for loop with index</h2>
+  <div class="card">
+    <div class="label">for (let i = 0; i &lt; arr.length; i++) — sum [3,1,4,1,5]</div>
+    <div class="row write" id="arr-for-loop">arr-for-loop not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21g. Arrays — for...of loop</h2>
+  <div class="card">
+    <div class="label">for (let ch of letters) — concatenate "abcd"</div>
+    <div class="row write" id="arr-for-of">arr-for-of not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21h. Arrays — map / filter / reduce</h2>
+  <div class="card">
+    <div class="label">base.map(x=&gt;x*2)  ·  filter(x%2==0)  ·  reduce(sum,0)</div>
+    <div class="row write" id="arr-hof">arr-hof not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21i. Arrays — slice / concat</h2>
+  <div class="card">
+    <div class="label">orig.slice(1,4)  ·  slice(0,2).concat(slice(3,5))</div>
+    <div class="row write" id="arr-slice-concat">arr-slice-concat not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21j. Arrays — arrow callbacks (filter / map / every / some)</h2>
+  <div class="card">
+    <div class="label">scores.filter(s=&gt;s&gt;=7)  ·  .map(s=&gt;s*10)  ·  .every(s=&gt;s&gt;0)  ·  .some(s=&gt;s==10)</div>
+    <div class="row write" id="arr-arrow-cb">arr-arrow-cb not yet run</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>21k. Arrays — passed to / returned from function</h2>
+  <div class="card">
+    <div class="label">function buildRange(n) + function sumArray(arr)</div>
+    <div class="row write" id="arr-in-fn">arr-in-fn not yet run</div>
+  </div>
+
   <script>
     // ════════════════════════════════════════════════════════
     // 17a — Variables & arithmetic
@@ -1040,6 +1117,247 @@
     function earlyCall(n) { return n * n; }
 
     console.warn("Function tests complete");
+
+    // ════════════════════════════════════════════════════════
+    // 21a — Array literal and index access
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21a: array literal & index ---");
+
+    let nums = [10, 20, 30, 40, 50];
+    console.log("nums[0]:", nums[0]);
+    console.log("nums[4]:", nums[4]);
+    console.log("nums.length:", nums.length);
+
+    let arr21aEl = document.getElementById("arr-literal");
+    if (nums[0] == 10 && nums[4] == 50 && nums.length == 5) {
+      arr21aEl.textContent = "PASS: [10,20,30,40,50] — index & length OK";
+      arr21aEl.className = "row pass";
+    } else {
+      arr21aEl.textContent = "FAIL: nums[0]=" + nums[0] + " nums[4]=" + nums[4] + " len=" + nums.length;
+      arr21aEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21b — Index write
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21b: index write ---");
+
+    let mutable = [1, 2, 3];
+    mutable[1] = 99;
+    console.log("mutable[1] after write:", mutable[1]);
+
+    let arr21bEl = document.getElementById("arr-index-write");
+    if (mutable[0] == 1 && mutable[1] == 99 && mutable[2] == 3) {
+      arr21bEl.textContent = "PASS: [1,99,3] after mutable[1]=99";
+      arr21bEl.className = "row pass";
+    } else {
+      arr21bEl.textContent = "FAIL: got [" + mutable[0] + "," + mutable[1] + "," + mutable[2] + "]";
+      arr21bEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21c — push / pop
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21c: push / pop ---");
+
+    let stack = [1, 2, 3];
+    stack.push(4);
+    stack.push(5);
+    let popped = stack.pop();
+    console.log("stack after push(4),push(5),pop():", stack.length, "popped:", popped);
+
+    let arr21cEl = document.getElementById("arr-push-pop");
+    if (stack.length == 4 && popped == 5 && stack[3] == 4) {
+      arr21cEl.textContent = "PASS: push/pop — len=4 popped=5";
+      arr21cEl.className = "row pass";
+    } else {
+      arr21cEl.textContent = "FAIL: len=" + stack.length + " popped=" + popped;
+      arr21cEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21d — indexOf / includes
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21d: indexOf / includes ---");
+
+    let fruits = ["apple", "banana", "cherry"];
+    let idxBanana = fruits.indexOf("banana");
+    let hasBanana = fruits.includes("banana");
+    let hasGrape  = fruits.includes("grape");
+    console.log("indexOf banana:", idxBanana, "includes banana:", hasBanana, "includes grape:", hasGrape);
+
+    let arr21dEl = document.getElementById("arr-indexof");
+    if (idxBanana == 1 && hasBanana == true && hasGrape == false) {
+      arr21dEl.textContent = "PASS: indexOf=1 includes(banana)=true includes(grape)=false";
+      arr21dEl.className = "row pass";
+    } else {
+      arr21dEl.textContent = "FAIL: idx=" + idxBanana + " has=" + hasBanana + " grape=" + hasGrape;
+      arr21dEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21e — join
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21e: join ---");
+
+    let words = ["hello", "world", "foo"];
+    let joined = words.join(", ");
+    let joined2 = words.join("-");
+    console.log("join(', '):", joined);
+    console.log("join('-'):", joined2);
+
+    let arr21eEl = document.getElementById("arr-join");
+    if (joined == "hello, world, foo" && joined2 == "hello-world-foo") {
+      arr21eEl.textContent = "PASS: join(', ') and join('-') correct";
+      arr21eEl.className = "row pass";
+    } else {
+      arr21eEl.textContent = "FAIL: '" + joined + "' / '" + joined2 + "'";
+      arr21eEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21f — for loop over array with index
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21f: for loop over array ---");
+
+    let values = [3, 1, 4, 1, 5];
+    let arrSum = 0;
+    for (let ai = 0; ai < values.length; ai++) {
+      arrSum += values[ai];
+    }
+    console.log("sum of [3,1,4,1,5]:", arrSum);
+
+    let arr21fEl = document.getElementById("arr-for-loop");
+    if (arrSum == 14) {
+      arr21fEl.textContent = "PASS: sum [3,1,4,1,5] = 14";
+      arr21fEl.className = "row pass";
+    } else {
+      arr21fEl.textContent = "FAIL: sum=" + arrSum;
+      arr21fEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21g — for...of loop
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21g: for...of ---");
+
+    let letters = ["a", "b", "c", "d"];
+    let ofResult = "";
+    for (let ch of letters) {
+      ofResult = ofResult + ch;
+    }
+    console.log("for...of result:", ofResult);
+
+    let arr21gEl = document.getElementById("arr-for-of");
+    if (ofResult == "abcd") {
+      arr21gEl.textContent = "PASS: for...of → abcd";
+      arr21gEl.className = "row pass";
+    } else {
+      arr21gEl.textContent = "FAIL: got '" + ofResult + "'";
+      arr21gEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21h — map / filter / reduce
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21h: map / filter / reduce ---");
+
+    let base = [1, 2, 3, 4, 5];
+    let doubled = base.map(function(x) { return x * 2; });
+    let evens   = base.filter(function(x) { return x % 2 == 0; });
+    let total   = base.reduce(function(acc, x) { return acc + x; }, 0);
+    console.log("map *2:", doubled.join(","));
+    console.log("filter even:", evens.join(","));
+    console.log("reduce sum:", total);
+
+    let arr21hEl = document.getElementById("arr-hof");
+    if (doubled.join(",") == "2,4,6,8,10" && evens.join(",") == "2,4" && total == 15) {
+      arr21hEl.textContent = "PASS: map=[2,4,6,8,10] filter=[2,4] reduce=15";
+      arr21hEl.className = "row pass";
+    } else {
+      arr21hEl.textContent = "FAIL: map=" + doubled.join(",") + " filter=" + evens.join(",") + " reduce=" + total;
+      arr21hEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21i — slice / concat
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21i: slice / concat ---");
+
+    let orig = [0, 1, 2, 3, 4];
+    let sliced  = orig.slice(1, 4);
+    let cat     = orig.slice(0, 2).concat(orig.slice(3, 5));
+    console.log("slice(1,4):", sliced.join(","));
+    console.log("concat [0,1]+[3,4]:", cat.join(","));
+
+    let arr21iEl = document.getElementById("arr-slice-concat");
+    if (sliced.join(",") == "1,2,3" && cat.join(",") == "0,1,3,4") {
+      arr21iEl.textContent = "PASS: slice=[1,2,3] concat=[0,1,3,4]";
+      arr21iEl.className = "row pass";
+    } else {
+      arr21iEl.textContent = "FAIL: slice=" + sliced.join(",") + " cat=" + cat.join(",");
+      arr21iEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21j — array with arrow callbacks
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21j: arrow callbacks ---");
+
+    let scores = [8, 3, 10, 5, 7];
+    let high   = scores.filter((s) => s >= 7);
+    let scaled = scores.map((s) => s * 10);
+    let passed = scores.every((s) => s > 0);
+    let hasMax = scores.some((s) => s == 10);
+    console.log("filter >=7:", high.join(","));
+    console.log("map *10:", scaled.join(","));
+    console.log("every >0:", passed);
+    console.log("some ==10:", hasMax);
+
+    let arr21jEl = document.getElementById("arr-arrow-cb");
+    if (high.join(",") == "8,10,7" && scaled.join(",") == "80,30,100,50,70" && passed == true && hasMax == true) {
+      arr21jEl.textContent = "PASS: filter=[8,10,7] map=[80,30,100,50,70] every=true some=true";
+      arr21jEl.className = "row pass";
+    } else {
+      arr21jEl.textContent = "FAIL: filter=" + high.join(",") + " every=" + passed + " some=" + hasMax;
+      arr21jEl.className = "row fail";
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 21k — array passed to/returned from function
+    // ════════════════════════════════════════════════════════
+    console.log("--- 21k: arrays in functions ---");
+
+    function sumArray(arr) {
+      let s = 0;
+      for (let i = 0; i < arr.length; i++) {
+        s += arr[i];
+      }
+      return s;
+    }
+
+    function buildRange(n) {
+      let r = [];
+      for (let i = 1; i <= n; i++) {
+        r.push(i);
+      }
+      return r;
+    }
+
+    let range5 = buildRange(5);
+    let rangeSum = sumArray(range5);
+    console.log("buildRange(5):", range5.join(","), "sum:", rangeSum);
+
+    let arr21kEl = document.getElementById("arr-in-fn");
+    if (range5.join(",") == "1,2,3,4,5" && rangeSum == 15) {
+      arr21kEl.textContent = "PASS: buildRange=[1,2,3,4,5] sum=15";
+      arr21kEl.className = "row pass";
+    } else {
+      arr21kEl.textContent = "FAIL: range=" + range5.join(",") + " sum=" + rangeSum;
+      arr21kEl.className = "row fail";
+    }
+
+    console.warn("Array tests complete");
   </script>
 
 </body>

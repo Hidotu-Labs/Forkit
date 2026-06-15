@@ -11,6 +11,12 @@ struct FontKey {
     family: FontFamily,
 }
 
+/// A resolved font + fallback font pair for rendering a single text run.
+pub struct FontRun<'a, 'ttf> {
+    pub primary:  &'a Font<'ttf, 'static>,
+    pub fallback: Option<&'a Font<'ttf, 'static>>,
+}
+
 pub struct FontCache<'ttf> {
     ttf:      &'ttf Sdl2TtfContext,
     cache:    HashMap<FontKey, Font<'ttf, 'static>>,
@@ -61,6 +67,76 @@ impl<'ttf> FontCache<'ttf> {
         }
 
         self.cache.get(&key)
+    }
+
+    /// Get the symbol/fallback font at the given size.
+    /// Used for glyphs not covered by the primary NotoSans fonts
+    /// (e.g. arrows U+2190–U+21FF, misc symbols U+2600–U+26FF, etc.)
+    pub fn get_fallback(&mut self, size: u16) -> Option<&Font<'ttf, 'static>> {
+        let size = size.clamp(8, 96);
+        // Use a sentinel key: Custom("__fallback__") bold=false italic=false
+        let key = FontKey {
+            size,
+            bold:   false,
+            italic: false,
+            family: FontFamily::Custom("__fallback__".into()),
+        };
+        if !self.cache.contains_key(&key) {
+            let font = self.load_fallback_font(size);
+            self.cache.insert(key.clone(), font?);
+        }
+        self.cache.get(&key)
+    }
+
+    /// Get the math fallback font (NotoSansMath) at the given size.
+    pub fn get_math_fallback(&mut self, size: u16) -> Option<&Font<'ttf, 'static>> {
+        let size = size.clamp(8, 96);
+        let key = FontKey {
+            size,
+            bold:   false,
+            italic: false,
+            family: FontFamily::Custom("__math__".into()),
+        };
+        if !self.cache.contains_key(&key) {
+            let font = self.load_math_font(size);
+            self.cache.insert(key.clone(), font?);
+        }
+        self.cache.get(&key)
+    }
+
+    fn load_fallback_font(&self, size: u16) -> Option<Font<'ttf, 'static>> {
+        // NotoSansSymbols-Regular covers arrows (U+2190–U+21FF), misc symbols
+        // (U+2600–U+26FF), dingbats, card suits, etc.
+        // NotoSansSymbols2 has broader historic/emoji coverage but lacks basic arrows.
+        let candidates = [
+            "/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                if let Ok(font) = self.ttf.load_font(std::path::Path::new(path), size) {
+                    return Some(font);
+                }
+            }
+        }
+        None
+    }
+
+    fn load_math_font(&self, size: u16) -> Option<Font<'ttf, 'static>> {
+        let candidates = [
+            "/usr/share/fonts/noto/NotoSansMath-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansMath-Regular.ttf",
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                if let Ok(font) = self.ttf.load_font(std::path::Path::new(path), size) {
+                    return Some(font);
+                }
+            }
+        }
+        None
     }
 
     fn load_font(

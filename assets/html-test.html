@@ -1,6 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Forkit — HTML Elements Test</title>
   <style>
     body {
@@ -132,20 +134,65 @@
       <tr><td>meter, progress, output, data</td><td class="done">Implemented</td></tr>
       <tr><td>Semantic elements (header, footer, nav, article, section, aside)</td><td class="done">Implemented</td></tr>
       <tr><td>Tables (table, thead, tbody, tfoot, tr, th, td, caption)</td><td class="done">Implemented</td></tr>
-      <tr><td>Flexbox / Grid layout</td><td class="todo">Not yet</td></tr>
-      <tr><td>position: absolute / fixed / sticky</td><td class="todo">Not yet</td></tr>
-      <tr><td>CSS Variables (--custom-prop, var())</td><td class="todo">Not yet</td></tr>
+      <tr><td>Flexbox / Grid layout</td><td class="done">Flexbox implemented (Grid: not yet)</td></tr>
+      <tr><td>position: absolute / fixed / sticky</td><td class="done">Implemented (partial)</td></tr>
+      <tr><td>CSS Variables (--custom-prop, var())</td><td class="done">Implemented (root-level)</td></tr>
       <tr><td>Pseudo-elements (::before, ::after)</td><td class="todo">Not yet</td></tr>
       <tr><td>CSS Transitions / Animations / Transforms</td><td class="todo">Not yet</td></tr>
       <tr><td>table colspan / rowspan</td><td class="todo">Not yet</td></tr>
-      <tr><td>Full JavaScript (if/for/functions/DOM API)</td><td class="todo">Not yet</td></tr>
+      <tr><td>Full JavaScript (if/for/functions/DOM API)</td><td class="done">Implemented (subset)</td></tr>
       <tr><td>Audio playback (&lt;audio&gt; with default player UI)</td><td class="done">Implemented</td></tr>
+      <tr><td>&lt;meta charset&gt; / &lt;meta viewport&gt; / &lt;base href&gt;</td><td class="done">Implemented</td></tr>
     </tbody>
   </table>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>2. Text Semantics</h2>
+<h2>2. Head Meta Tags</h2>
+<div class="card">
+
+  <div class="note">
+    This page uses <code>&lt;meta charset="UTF-8"&gt;</code>,
+    <code>&lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;</code>,
+    and no <code>&lt;base href&gt;</code> (same-directory links resolve normally).
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">&lt;meta charset="UTF-8"&gt; — unicode characters render correctly</div>
+    <div class="test-result">
+      Greek: α β γ δ ε ζ η θ &nbsp;|&nbsp;
+      Math: ∑ ∞ ≠ ≤ ≥ ± √ &nbsp;|&nbsp;
+      Emoji-adjacent: © ® ™ &nbsp;|&nbsp;
+      Arrows: ← → ↑ ↓ ↔
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">&lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;</div>
+    <div class="test-result">
+      Viewport meta is parsed. <code>width=device-width</code> and <code>initial-scale=1.0</code>
+      are stored in <code>PageMeta</code> and available for layout scaling.
+    </div>
+  </div>
+
+  <div class="test ok">
+    <div class="test-label">&lt;base href&gt; — relative links resolve against the declared base</div>
+    <div class="test-result">
+      When a page declares <code>&lt;base href="https://example.com/docs/"&gt;</code>,
+      all relative hrefs (images, scripts, stylesheets, links) are resolved against
+      that base URL instead of the fetch URL.
+      <br>
+      The links below use relative paths — they resolve against this file's directory:
+      <a href="test.html" style="display:inline; margin:0 8px;">test.html</a>
+      <a href="css-test.html" style="display:inline; margin:0 8px;">css-test.html</a>
+      <a href="js-test.html" style="display:inline; margin:0 8px;">js-test.html</a>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>3. Text Semantics</h2>
 <div class="card">
 
   <div class="test ok">
@@ -212,7 +259,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>3. Headings (h1–h6)</h2>
+<h2>4. Headings (h1–h6)</h2>
 <div class="card">
   <div class="test ok">
     <div class="test-label">h1 through h6 — decreasing size, all bold</div>
@@ -228,7 +275,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>4. Lists</h2>
+<h2>5. Lists</h2>
 <div class="card">
 
   <div class="test ok">
@@ -275,7 +322,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>5. Tables</h2>
+<h2>6. Tables</h2>
 <div class="card">
 
   <div class="test ok">
@@ -317,7 +364,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>6. Semantic Structure Elements</h2>
+<h2>7. Semantic Structure Elements</h2>
 <div class="card">
 
   <div class="test ok">
@@ -378,7 +425,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>7. Form Elements</h2>
+<h2>8. Form Elements</h2>
 <div class="card">
 
   <div class="test ok">
@@ -462,7 +509,7 @@ Second line here</textarea>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>8. &lt;data&gt; Element</h2>
+<h2>9. &lt;data&gt; Element</h2>
 <div class="card">
 
   <div class="note">
@@ -501,7 +548,7 @@ Second line here</textarea>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>9. &lt;meter&gt; Element</h2>
+<h2>10. &lt;meter&gt; Element</h2>
 <div class="card">
 
   <div class="note">
@@ -558,7 +605,7 @@ Second line here</textarea>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>10. &lt;progress&gt; Element</h2>
+<h2>11. &lt;progress&gt; Element</h2>
 <div class="card">
 
   <div class="note">
@@ -592,7 +639,7 @@ Second line here</textarea>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>11. &lt;output&gt; Element</h2>
+<h2>12. &lt;output&gt; Element</h2>
 <div class="card">
 
   <div class="note">
@@ -626,7 +673,7 @@ Second line here</textarea>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════ -->
-<h2>12. Media</h2>
+<h2>13. Media</h2>
 <div class="card">
 
   <div class="test na">

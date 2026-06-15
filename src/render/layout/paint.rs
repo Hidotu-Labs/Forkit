@@ -15,6 +15,10 @@ pub fn rgba_color(rgb: [u8; 3], alpha: u8) -> Color {
 
 /// Render `text` at canvas position `(x, y)` applying the scroll offset.
 /// Returns `(rendered_width, rendered_height)` in pixels.
+///
+/// Glyphs not present in the primary font are rendered from the fallback
+/// symbol font (NotoSansSymbols) so that arrows, math symbols, etc. display
+/// correctly instead of showing tofu boxes.
 pub fn paint_text(
     canvas:     &mut Canvas<Window>,
     tc:         &TextureCreator<WindowContext>,
@@ -27,71 +31,185 @@ pub fn paint_text(
     viewport_h: i32,
 ) -> (i32, i32) {
     if text.is_empty() { return (0, 0); }
+
+    // Pre-load both fonts so we can borrow them individually below.
+    // We cache the font keys first to avoid borrow-checker conflicts.
+    let size   = style.font_size;
+    let bold   = style.bold;
+    let italic = style.italic;
     let family = style.font_family.clone();
-    let font = match fonts.get_family(style.font_size, style.bold, style.italic, family) {
-        Some(f) => f,
-        None    => return (0, 0),
-    };
 
-    // Measure first for background and lines
-    let (sw, sh) = font.size_of(text).map(|(w, h)| (w as i32, h as i32)).unwrap_or((0, 0));
+    // Ensure both fonts are loaded into the cache.
+    let _ = fonts.get_family(size, bold, italic, family.clone());
+    let _ = fonts.get_fallback(size);
+    let _ = fonts.get_math_fallback(size);
 
-    // 1. Background highlight
-    if let Some(bg) = style.bg_color {
-        if style.border_radius != [0, 0, 0, 0] {
-            // Note: fill_rounded_rect currently doesn't support outer clipping,
-            // but for highlights inside a clipped container, it's usually small enough.
-            fill_rounded_rect(canvas, rgba_color(bg, style.bg_alpha), style.bg_alpha,
-                              x, y, sw, sh, style.border_radius,
-                              scroll_y, viewport_h);
-        } else {
-            fill_rect_alpha(canvas, rgba_color(bg, style.bg_alpha), style.bg_alpha,
-                            x, y, sw, sh, clip, scroll_y, viewport_h);
-        }
-    }
+    // Split the text into runs: each run either uses the primary font or the
+    // fallback font, depending on whether the primary font has the glyph.
+    let runs = build_font_runs(fonts, text, size, bold, italic, family.clone());
 
-    // 2. The Text itself
     let alpha = style.color_alpha;
     let color = rgba_color(style.color, alpha);
     if alpha < 255 {
         canvas.set_blend_mode(BlendMode::Blend);
     }
-    if let Ok(surface) = font.render(text).blended(color) {
-        let ry = y - scroll_y;
-        if ry + sh > 0 && ry < viewport_h {
-            if let Ok(mut tex) = tc.create_texture_from_surface(&surface) {
-                if alpha < 255 {
-                    let _ = tex.set_blend_mode(BlendMode::Blend);
-                    let _ = tex.set_alpha_mod(alpha);
+
+    let mut cursor_x = x;
+    let mut max_h    = 0i32;
+
+    // Background highlight needs the total width — compute it first.
+    let total_w = measure_text(fonts, text, style).0;
+    let sh_for_bg = fonts.get_family(size, bold, italic, family.clone())
+        .and_then(|f| f.size_of("A").ok())
+        .map(|(_, h)| h as i32)
+        .unwrap_or(size as i32);
+
+    if let Some(bg) = style.bg_color {
+        fill_rect_alpha(canvas, rgba_color(bg, style.bg_alpha), style.bg_alpha,
+                        x, y, total_w, sh_for_bg, clip, scroll_y, viewport_h);
+    }
+
+    for (segment, run_font) in &runs {
+        let font = match run_font {
+            RunFont::Symbols => fonts.get_fallback(size),
+            RunFont::Math    => fonts.get_math_fallback(size),
+            RunFont::Primary => fonts.get_family(size, bold, italic, family.clone()),
+        };
+        let font = match font { Some(f) => f, None => continue };
+
+        let (sw, sh) = font.size_of(segment.as_str())
+            .map(|(w, h)| (w as i32, h as i32))
+            .unwrap_or((0, 0));
+        if sw == 0 { continue; }
+        max_h = max_h.max(sh);
+
+        if let Ok(surface) = font.render(segment.as_str()).blended(color) {
+            let ry = y - scroll_y;
+            if ry + sh > 0 && ry < viewport_h {
+                if let Ok(mut tex) = tc.create_texture_from_surface(&surface) {
+                    if alpha < 255 {
+                        let _ = tex.set_blend_mode(BlendMode::Blend);
+                        let _ = tex.set_alpha_mod(alpha);
+                    }
+                    let _ = canvas.copy(&tex, None, sdl2::rect::Rect::new(cursor_x, ry, sw as u32, sh as u32));
                 }
-                let _ = canvas.copy(&tex, None, Rect::new(x, ry, sw as u32, sh as u32));
             }
         }
+        cursor_x += sw;
     }
+
     if alpha < 255 {
         canvas.set_blend_mode(BlendMode::None);
     }
 
-    // 3. Decorations (underline / strikethrough)
+    let sh = max_h.max(sh_for_bg);
+
+    // Decorations (underline / strikethrough)
     let dc = rgba_color(style.color, alpha);
     if style.underline {
-        fill_rect_alpha(canvas, dc, alpha, x, y + sh - 2, sw, 1, clip, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, dc, alpha, x, y + sh - 2, total_w, 1, clip, scroll_y, viewport_h);
     }
     if style.strikethrough {
-        fill_rect_alpha(canvas, dc, alpha, x, y + sh / 2, sw, 1, clip, scroll_y, viewport_h);
+        fill_rect_alpha(canvas, dc, alpha, x, y + sh / 2, total_w, 1, clip, scroll_y, viewport_h);
     }
 
-    (sw, sh)
+    (total_w, sh)
 }
 
 /// Measure `text` without rendering.  Returns `(width, height)`.
 pub fn measure_text(fonts: &mut FontCache, text: &str, style: &Style) -> (i32, i32) {
+    if text.is_empty() { return (0, 0); }
+    let size   = style.font_size;
+    let bold   = style.bold;
+    let italic = style.italic;
     let family = style.font_family.clone();
-    let font = match fonts.get_family(style.font_size, style.bold, style.italic, family) {
-        Some(f) => f,
-        None    => return (0, 0),
-    };
-    font.size_of(text).map(|(w, h)| (w as i32, h as i32)).unwrap_or((0, 0))
+
+    let _ = fonts.get_family(size, bold, italic, family.clone());
+    let _ = fonts.get_fallback(size);
+    let _ = fonts.get_math_fallback(size);
+
+    let runs = build_font_runs(fonts, text, size, bold, italic, family.clone());
+
+    let mut total_w = 0i32;
+    let mut max_h   = 0i32;
+
+    for (segment, run_font) in &runs {
+        let font = match run_font {
+            RunFont::Symbols => fonts.get_fallback(size),
+            RunFont::Math    => fonts.get_math_fallback(size),
+            RunFont::Primary => fonts.get_family(size, bold, italic, family.clone()),
+        };
+        if let Some(font) = font {
+            if let Ok((w, h)) = font.size_of(segment.as_str()) {
+                total_w += w as i32;
+                max_h    = max_h.max(h as i32);
+            }
+        }
+    }
+
+    if max_h == 0 {
+        // fallback height estimate
+        max_h = size as i32;
+    }
+    (total_w, max_h)
+}
+
+/// Which font to use for a text run segment.
+#[derive(Clone, PartialEq)]
+enum RunFont {
+    Primary,
+    Symbols,  // NotoSansSymbols (arrows, misc symbols)
+    Math,     // NotoSansMath (math operators)
+}
+
+/// Split `text` into `(segment_string, RunFont)` runs.
+/// Consecutive characters that need the same font are merged into one run.
+fn build_font_runs(
+    fonts:  &mut FontCache,
+    text:   &str,
+    size:   u16,
+    bold:   bool,
+    italic: bool,
+    family: FontFamily,
+) -> Vec<(String, RunFont)> {
+    let mut runs: Vec<(String, RunFont)> = Vec::new();
+
+    for ch in text.chars() {
+        let primary_has = fonts
+            .get_family(size, bold, italic, family.clone())
+            .map(|f| f.find_glyph(ch).is_some())
+            .unwrap_or(false);
+
+        let run_font = if primary_has {
+            RunFont::Primary
+        } else {
+            // Check symbols font first (arrows, dingbats, misc symbols)
+            let symbols_has = fonts
+                .get_fallback(size)
+                .map(|f| f.find_glyph(ch).is_some())
+                .unwrap_or(false);
+            if symbols_has {
+                RunFont::Symbols
+            } else {
+                // Try math font (∑ ∞ ≠ ≤ ≥ etc.)
+                let math_has = fonts
+                    .get_math_fallback(size)
+                    .map(|f| f.find_glyph(ch).is_some())
+                    .unwrap_or(false);
+                if math_has { RunFont::Math } else { RunFont::Primary }
+            }
+        };
+
+        if let Some(last) = runs.last_mut() {
+            if last.1 == run_font {
+                last.0.push(ch);
+                continue;
+            }
+        }
+        runs.push((ch.to_string(), run_font));
+    }
+
+    runs
 }
 
 // ---------------------------------------------------------------------------

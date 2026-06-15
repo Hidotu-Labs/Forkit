@@ -241,26 +241,78 @@ fn run_statement(
                     if lexer.peek_token() == Token::Semi { lexer.next_token(); }
                     return Signal::None;
                 }
-                // Dot access — may be a write (el.prop = val) or a call (el.method(...))
+                // Dot access — may be a write (el.prop = val) or array method call, or DOM element method
                 Token::Dot => {
-                    // Check if it's a DOM element write or method call.
                     let var_val = scope.get(&name);
+                    // ── Array method call as statement: arr.push(...), arr.pop(), etc. ──
+                    if let JsValue::Array(ref arr) = var_val {
+                        let arr = arr.clone();
+                        lexer.next_token(); // consume `.`
+                        let method = match lexer.next_token() {
+                            Token::Ident(m) => m,
+                            _ => { lexer.pos = saved; skip_statement(lexer); return Signal::None; }
+                        };
+                        eval_array_method_full(lexer, scope, dom, &arr, &method);
+                        if lexer.peek_token() == Token::Semi { lexer.next_token(); }
+                        return Signal::None;
+                    }
+                    // ── DOM element write or method call ─────────────────────────────────
                     if let JsValue::Str(ref s) = var_val {
                         if s.starts_with("\x00elem\x00") {
                             let encoded = s.clone();
-                            // Try to handle as a write or method call on an element.
                             if handle_element_write(lexer, scope, entries, dom, &encoded, &name) {
                                 if lexer.peek_token() == Token::Semi { lexer.next_token(); }
                                 return Signal::None;
                             }
-                            // Not a write — fall through.
                         }
                     }
                     // restore and fall through to console/document handler
                     lexer.pos = saved;
                 }
-                // Anything else (e.g. `foo(...)` call as statement) — try function call, else skip
+                // Array index write: name[index] = value
+                Token::LBracket => {
+                    let var_val = scope.get(&name);
+                    if let JsValue::Array(ref arr) = var_val {
+                        let arr = arr.clone();
+                        lexer.next_token(); // consume `[`
+                        let idx_val = eval_expr_with_dom(lexer, scope, dom);
+                        if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
+                        if lexer.peek_token() == Token::Eq {
+                            lexer.next_token();
+                            let rhs = eval_expr_with_dom(lexer, scope, dom);
+                            let i = idx_val.to_number();
+                            if i >= 0.0 && i.fract() == 0.0 {
+                                let i = i as usize;
+                                let mut v = arr.borrow_mut();
+                                if i >= v.len() { v.resize(i + 1, JsValue::Undefined); }
+                                v[i] = rhs;
+                            }
+                        }
+                        if lexer.peek_token() == Token::Semi { lexer.next_token(); }
+                        return Signal::None;
+                    }
+                    // Not an array — fall through / skip
+                    lexer.pos = saved;
+                    skip_statement(lexer);
+                    return Signal::None;
+                }
+                // Array method call as statement: arr.push(...) etc.
                 _ => {
+                    // Check if it's an array method call: arr.push(v) etc.
+                    let var_val = scope.get(&name);
+                    if let JsValue::Array(ref arr) = var_val {
+                        if lexer.peek_token() == Token::Dot {
+                            let arr = arr.clone();
+                            lexer.next_token(); // consume `.`
+                            let method = match lexer.next_token() {
+                                Token::Ident(m) => m,
+                                _ => { lexer.pos = saved; skip_statement(lexer); return Signal::None; }
+                            };
+                            eval_array_method_full(lexer, scope, dom, &arr, &method);
+                            if lexer.peek_token() == Token::Semi { lexer.next_token(); }
+                            return Signal::None;
+                        }
+                    }
                     // Check if it's a bare function call: `foo(...)` or `foo.bar(...)`
                     if lexer.peek_token() == Token::LParen {
                         let val = scope.get(&name);
@@ -503,7 +555,7 @@ fn run_for(
     if lexer.peek_token() != Token::LParen { skip_statement(lexer); return Signal::None; }
     lexer.next_token(); // consume `(`
 
-    // Detect for...of / for...in  → skip for now (no arrays)
+    // Detect for...of / for...in
     {
         let saved = lexer.pos;
         let kw = match lexer.next_token() {
@@ -511,9 +563,38 @@ fn run_for(
             _ => { lexer.pos = saved; String::new() },
         };
         if matches!(kw.as_str(), "var" | "let" | "const") {
-            let _name = lexer.next_token();
+            let var_name = match lexer.next_token() {
+                Token::Ident(n) => n,
+                _ => { lexer.pos = saved; String::new() },
+            };
             if let Token::Ident(ref id) = lexer.peek_token() {
-                if id == "of" || id == "in" {
+                if id == "of" {
+                    lexer.next_token(); // consume `of`
+                    let iterable = eval_expr_with_dom(lexer, scope, dom);
+                    if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+
+                    let items: Vec<JsValue> = match iterable {
+                        JsValue::Array(arr) => arr.borrow().clone(),
+                        _ => Vec::new(),
+                    };
+
+                    scope.push();
+                    let mut ret = Signal::None;
+                    let body_start = lexer.pos;
+                    for item in items {
+                        lexer.pos = body_start;
+                        scope.declare(&var_name, item);
+                        let sig = run_block_or_stmt_signal(lexer, scope, entries, dom);
+                        match sig {
+                            Signal::Break           => break,
+                            Signal::Return(_)       => { ret = sig; break; }
+                            Signal::Continue | Signal::None => {}
+                        }
+                    }
+                    scope.pop();
+                    return ret;
+                } else if id == "in" {
+                    // for...in — skip
                     let mut depth = 1i32;
                     loop {
                         match lexer.next_token() {
@@ -1018,7 +1099,7 @@ pub fn eval_document_expr(
     // document.title — property, no parens
     if method == "title" {
         let val = dom.map(|d| JsValue::Str(d.title())).unwrap_or(JsValue::Str(String::new()));
-        return chain_string_props(lexer, val);
+        return chain_string_props(lexer, val, dom);
     }
 
     // All other document methods require ()
@@ -1290,12 +1371,18 @@ fn camel_to_kebab(s: &str) -> String {
 fn chain_element_props(
     lexer: &mut Lexer,
     val:   JsValue,
-    _dom:  Option<&JsDom<'_>>,
+    dom:   Option<&JsDom<'_>>,
 ) -> JsValue {
-    chain_props_inner(lexer, val)
+    chain_props_inner(lexer, val, dom)
 }
 
-fn chain_props_inner(lexer: &mut Lexer, val: JsValue) -> JsValue {
+/// Chain dot-property/method access on a value.
+/// When scope is needed (array callbacks), prefer `chain_with_scope`.
+fn chain_props_inner(
+    lexer: &mut Lexer,
+    val:   JsValue,
+    dom:   Option<&JsDom<'_>>,
+) -> JsValue {
     if lexer.peek_token() != Token::Dot { return val; }
     lexer.next_token(); // consume `.`
 
@@ -1304,7 +1391,10 @@ fn chain_props_inner(lexer: &mut Lexer, val: JsValue) -> JsValue {
         _ => return val,
     };
 
-    let next_val = if let JsValue::Str(ref s) = val {
+    let next_val = if let JsValue::Array(ref arr) = val {
+        // No scope — simple non-callback methods only
+        eval_array_method(lexer, arr, &prop)
+    } else if let JsValue::Str(ref s) = val {
         if s.starts_with("\x00elem\x00") {
             read_element_prop(s, &prop, lexer)
         } else if s.starts_with("\x00list\x00") {
@@ -1316,7 +1406,40 @@ fn chain_props_inner(lexer: &mut Lexer, val: JsValue) -> JsValue {
         JsValue::Undefined
     };
 
-    chain_props_inner(lexer, next_val)
+    chain_props_inner(lexer, next_val, dom)
+}
+
+/// Like `chain_props_inner` but has access to scope — supports full array methods incl. callbacks,
+/// and handles chained calls like `.slice(1,3).concat(...)`.
+fn chain_with_scope(
+    lexer: &mut Lexer,
+    val:   JsValue,
+    scope: &mut Scope,
+    dom:   Option<&JsDom<'_>>,
+) -> JsValue {
+    if lexer.peek_token() != Token::Dot { return val; }
+    lexer.next_token(); // consume `.`
+
+    let prop = match lexer.next_token() {
+        Token::Ident(p) => p,
+        _ => return val,
+    };
+
+    let next_val = if let JsValue::Array(ref arr) = val {
+        eval_array_method_full(lexer, scope, dom, arr, &prop)
+    } else if let JsValue::Str(ref s) = val {
+        if s.starts_with("\x00elem\x00") {
+            read_element_prop(s, &prop, lexer)
+        } else if s.starts_with("\x00list\x00") {
+            read_list_prop(s, &prop)
+        } else {
+            read_string_prop(s, &prop)
+        }
+    } else {
+        JsValue::Undefined
+    };
+
+    chain_with_scope(lexer, next_val, scope, dom)
 }
 
 fn read_element_prop(encoded: &str, prop: &str, lexer: &mut Lexer) -> JsValue {
@@ -1364,8 +1487,8 @@ fn read_list_prop(s: &str, prop: &str) -> JsValue {
     }
 }
 
-fn chain_string_props(lexer: &mut Lexer, val: JsValue) -> JsValue {
-    chain_props_inner(lexer, val)
+fn chain_string_props(lexer: &mut Lexer, val: JsValue, dom: Option<&JsDom<'_>>) -> JsValue {
+    chain_props_inner(lexer, val, dom)
 }
 
 // ---------------------------------------------------------------------------
@@ -1437,6 +1560,359 @@ fn escape_field(s: &str) -> String {
 
 fn unescape_field(s: &str) -> String {
     s.replace('\x02', "\x00").replace('\x03', "\x01")
+}
+
+// ---------------------------------------------------------------------------
+// Array helpers
+// ---------------------------------------------------------------------------
+
+/// Parse an array literal `[expr, expr, ...]`.  The `[` has already been
+/// consumed by the caller in `eval_primary_dom`.
+fn eval_array_literal(
+    lexer: &mut Lexer,
+    scope: &mut Scope,
+    dom:   Option<&JsDom<'_>>,
+) -> JsValue {
+    let mut items: Vec<JsValue> = Vec::new();
+    loop {
+        match lexer.peek_token() {
+            Token::RBracket | Token::Eof => break,
+            Token::Comma => { lexer.next_token(); items.push(JsValue::Undefined); }
+            _ => {
+                items.push(eval_expr_with_dom(lexer, scope, dom));
+                if lexer.peek_token() == Token::Comma { lexer.next_token(); }
+            }
+        }
+    }
+    if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
+    JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(items)))
+}
+
+/// Evaluate an array method call on `arr` — lexer is at the token *after* the
+/// method name has been consumed.  Returns the result value.
+fn eval_array_method(
+    lexer: &mut Lexer,
+    arr:   &std::rc::Rc<std::cell::RefCell<Vec<JsValue>>>,
+    prop:  &str,
+) -> JsValue {
+    // Property (no call): arr.length
+    if prop == "length" && lexer.peek_token() != Token::LParen {
+        return JsValue::Number(arr.borrow().len() as f64);
+    }
+
+    // Methods all require `(`
+    if lexer.peek_token() != Token::LParen {
+        // Unknown property
+        return JsValue::Undefined;
+    }
+
+    // We need scope+dom for methods that take callbacks, but since
+    // eval_array_method doesn't carry them we use a simpler path.
+    // Simple methods first (no callbacks needed from this level).
+    match prop {
+        "length" => {
+            // length called as method — skip parens and return length
+            skip_call_args(lexer);
+            JsValue::Number(arr.borrow().len() as f64)
+        }
+        "push" => {
+            // Collect raw arg tokens — we can't easily re-eval without scope here.
+            // Instead we return the array itself and let the statement-level handler
+            // deal with it.  For now parse args via skip and return new length.
+            // We actually want to push the value. Since we don't have scope here,
+            // return a sentinel; the real push happens in run_statement.
+            // Actually: we CAN'T eval args without scope. So this is a no-op.
+            // The statement-level arr.push() is handled in the Ident branch.
+            skip_call_args(lexer);
+            JsValue::Number(arr.borrow().len() as f64)
+        }
+        "pop" => {
+            skip_call_args(lexer);
+            arr.borrow_mut().pop().unwrap_or(JsValue::Undefined)
+        }
+        "join" => {
+            skip_call_args(lexer);
+            let sep = ",";
+            let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(sep);
+            JsValue::Str(s)
+        }
+        "indexOf" | "includes" | "slice" => {
+            // Need args — skip for now
+            skip_call_args(lexer);
+            if prop == "includes" { JsValue::Bool(false) } else { JsValue::Number(-1.0) }
+        }
+        _ => {
+            skip_call_args(lexer);
+            JsValue::Undefined
+        }
+    }
+}
+
+/// Full array method evaluation WITH scope and dom available.
+/// Called from eval_primary_dom when the leading ident is an Array variable.
+fn eval_array_method_full(
+    lexer: &mut Lexer,
+    scope: &mut Scope,
+    dom:   Option<&JsDom<'_>>,
+    arr:   &std::rc::Rc<std::cell::RefCell<Vec<JsValue>>>,
+    prop:  &str,
+) -> JsValue {
+    if prop == "length" && lexer.peek_token() != Token::LParen {
+        return JsValue::Number(arr.borrow().len() as f64);
+    }
+    if lexer.peek_token() != Token::LParen {
+        return JsValue::Undefined;
+    }
+    match prop {
+        "length" => {
+            skip_call_args(lexer);
+            JsValue::Number(arr.borrow().len() as f64)
+        }
+        "push" => {
+            lexer.next_token(); // consume `(`
+            let mut new_len = arr.borrow().len();
+            loop {
+                match lexer.peek_token() {
+                    Token::RParen | Token::Eof => break,
+                    _ => {
+                        let v = eval_expr_with_dom(lexer, scope, dom);
+                        arr.borrow_mut().push(v);
+                        new_len = arr.borrow().len();
+                        if lexer.peek_token() == Token::Comma { lexer.next_token(); }
+                    }
+                }
+            }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            JsValue::Number(new_len as f64)
+        }
+        "pop" => {
+            skip_call_args(lexer);
+            arr.borrow_mut().pop().unwrap_or(JsValue::Undefined)
+        }
+        "shift" => {
+            skip_call_args(lexer);
+            let mut v = arr.borrow_mut();
+            if v.is_empty() { JsValue::Undefined } else { v.remove(0) }
+        }
+        "unshift" => {
+            lexer.next_token(); // `(`
+            let mut items = Vec::new();
+            loop {
+                match lexer.peek_token() {
+                    Token::RParen | Token::Eof => break,
+                    _ => {
+                        items.push(eval_expr_with_dom(lexer, scope, dom));
+                        if lexer.peek_token() == Token::Comma { lexer.next_token(); }
+                    }
+                }
+            }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            let mut v = arr.borrow_mut();
+            for item in items.into_iter().rev() { v.insert(0, item); }
+            JsValue::Number(v.len() as f64)
+        }
+        "indexOf" => {
+            lexer.next_token();
+            let needle = eval_expr_with_dom(lexer, scope, dom);
+            // skip optional fromIndex
+            if lexer.peek_token() == Token::Comma { lexer.next_token(); eval_expr_with_dom(lexer, scope, dom); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            let v = arr.borrow();
+            for (i, item) in v.iter().enumerate() {
+                if crate::js::eval::js_loose_eq(item, &needle) {
+                    return JsValue::Number(i as f64);
+                }
+            }
+            JsValue::Number(-1.0)
+        }
+        "includes" => {
+            lexer.next_token();
+            let needle = eval_expr_with_dom(lexer, scope, dom);
+            if lexer.peek_token() == Token::Comma { lexer.next_token(); eval_expr_with_dom(lexer, scope, dom); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            let v = arr.borrow();
+            JsValue::Bool(v.iter().any(|item| crate::js::eval::js_loose_eq(item, &needle)))
+        }
+        "join" => {
+            lexer.next_token();
+            let sep = if matches!(lexer.peek_token(), Token::RParen | Token::Eof) {
+                ",".to_owned()
+            } else {
+                let s = eval_expr_with_dom(lexer, scope, dom).to_display();
+                s
+            };
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            let v = arr.borrow();
+            JsValue::Str(v.iter().map(|x| x.to_display()).collect::<Vec<_>>().join(&sep))
+        }
+        "reverse" => {
+            skip_call_args(lexer);
+            arr.borrow_mut().reverse();
+            JsValue::Array(arr.clone())
+        }
+        "slice" => {
+            lexer.next_token();
+            let len = arr.borrow().len() as i64;
+            let start_val = if matches!(lexer.peek_token(), Token::RParen | Token::Eof) {
+                0
+            } else {
+                let n = eval_expr_with_dom(lexer, scope, dom).to_number() as i64;
+                if n < 0 { (len + n).max(0) as usize } else { n.min(len) as usize }
+            } as usize;
+            let end_val = if lexer.peek_token() == Token::Comma {
+                lexer.next_token();
+                let n = eval_expr_with_dom(lexer, scope, dom).to_number() as i64;
+                (if n < 0 { (len + n).max(0) } else { n.min(len) }) as usize
+            } else {
+                len as usize
+            };
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            let v = arr.borrow();
+            let slice: Vec<JsValue> = v[start_val.min(v.len())..end_val.min(v.len())].to_vec();
+            JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(slice)))
+        }
+        "concat" => {
+            lexer.next_token();
+            let mut result: Vec<JsValue> = arr.borrow().clone();
+            loop {
+                match lexer.peek_token() {
+                    Token::RParen | Token::Eof => break,
+                    _ => {
+                        let v = eval_expr_with_dom(lexer, scope, dom);
+                        match v {
+                            JsValue::Array(other) => result.extend(other.borrow().iter().cloned()),
+                            other => result.push(other),
+                        }
+                        if lexer.peek_token() == Token::Comma { lexer.next_token(); }
+                    }
+                }
+            }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(result)))
+        }
+        "forEach" => {
+            let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![item, JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                }
+            }
+            JsValue::Undefined
+        }
+        "map" => {
+            let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let mut out = Vec::new();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![item, JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    let r = call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                    out.push(r);
+                }
+                JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(out)))
+            } else {
+                JsValue::Undefined
+            }
+        }
+        "filter" => {
+            let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let mut out = Vec::new();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![item.clone(), JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    let r = call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                    if r.to_bool() { out.push(item); }
+                }
+                JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(out)))
+            } else {
+                JsValue::Undefined
+            }
+        }
+        "find" => {
+            let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![item.clone(), JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    let r = call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                    if r.to_bool() { return item; }
+                }
+                JsValue::Undefined
+            } else {
+                JsValue::Undefined
+            }
+        }
+        "reduce" => {
+            lexer.next_token();
+            let cb = eval_expr_with_dom(lexer, scope, dom);
+            let mut acc = if lexer.peek_token() == Token::Comma {
+                lexer.next_token();
+                eval_expr_with_dom(lexer, scope, dom)
+            } else {
+                arr.borrow().first().cloned().unwrap_or(JsValue::Undefined)
+            };
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![acc, item, JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    acc = call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                }
+                acc
+            } else {
+                acc
+            }
+        }
+        "some" => {
+            let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![item, JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    let r = call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                    if r.to_bool() { return JsValue::Bool(true); }
+                }
+                JsValue::Bool(false)
+            } else {
+                JsValue::Bool(false)
+            }
+        }
+        "every" => {
+            let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
+            if let JsValue::Function(func) = cb {
+                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                for (i, item) in snapshot.into_iter().enumerate() {
+                    let args = vec![item, JsValue::Number(i as f64)];
+                    let mut dummy = Vec::new();
+                    let r = call_function(&func, args, &mut dummy, dom, scope, 0);
+                    scope.entries.extend(dummy);
+                    if !r.to_bool() { return JsValue::Bool(false); }
+                }
+                JsValue::Bool(true)
+            } else {
+                JsValue::Bool(true)
+            }
+        }
+        _ => {
+            skip_call_args(lexer);
+            JsValue::Undefined
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1575,23 +2051,62 @@ fn eval_unary_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>>)
 }
 
 fn eval_postfix_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>>) -> JsValue {
-    let val = eval_primary_dom(lexer, scope, dom);
-    // Postfix ++ / -- — return old value, update scope if it was a named var
-    match lexer.peek_token() {
-        Token::PlusPlus => {
-            lexer.next_token();
-            // We can't easily get the name back from `val`, so we do a best-effort:
-            // the caller already read the name in eval_primary_dom, but we lost it.
-            // Instead we return the old value (correct) and don't mutate (limitation).
-            // Full fix would require a "lvalue" path — acceptable trade-off for now.
-            val
+    let mut val = eval_primary_dom(lexer, scope, dom);
+    loop {
+        match lexer.peek_token() {
+            // Postfix ++ / --
+            Token::PlusPlus => {
+                lexer.next_token();
+                // We can't easily get the name back from `val`, so we do a best-effort:
+                // the caller already read the name in eval_primary_dom, but we lost it.
+                // Instead we return the old value (correct) and don't mutate (limitation).
+                // Full fix would require a "lvalue" path — acceptable trade-off for now.
+                break;
+            }
+            Token::MinusMinus => {
+                lexer.next_token();
+                break;
+            }
+            // Subscript access: arr[index]
+            Token::LBracket => {
+                lexer.next_token(); // consume `[`
+                let idx = eval_expr_with_dom(lexer, scope, dom);
+                if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
+                val = match &val {
+                    JsValue::Array(arr) => {
+                        let i = idx.to_number();
+                        if i >= 0.0 && i.fract() == 0.0 {
+                            arr.borrow().get(i as usize).cloned().unwrap_or(JsValue::Undefined)
+                        } else {
+                            JsValue::Undefined
+                        }
+                    }
+                    JsValue::Str(s) => {
+                        // string[n] — return character
+                        let i = idx.to_number();
+                        if i >= 0.0 && i.fract() == 0.0 {
+                            s.chars().nth(i as usize)
+                                .map(|c| JsValue::Str(c.to_string()))
+                                .unwrap_or(JsValue::Undefined)
+                        } else {
+                            JsValue::Undefined
+                        }
+                    }
+                    _ => JsValue::Undefined,
+                };
+            }
+            // Dot access on array: arr.push / arr.length etc. — handled via chain_with_scope
+            Token::Dot => {
+                if let JsValue::Array(_) = &val {
+                    val = chain_with_scope(lexer, val, scope, dom);
+                    break;
+                }
+                break;
+            }
+            _ => break,
         }
-        Token::MinusMinus => {
-            lexer.next_token();
-            val
-        }
-        _ => val,
     }
+    val
 }
 
 fn eval_primary_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>>) -> JsValue {
@@ -1613,16 +2128,42 @@ fn eval_primary_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>
             }
             name => {
                 let val = scope.get(name);
-                // Dot-chain: property access on DOM elements / lists
+                // Dot-chain: property access on DOM elements / lists / arrays
                 if lexer.peek_token() == Token::Dot {
+                    if let JsValue::Array(ref arr) = val {
+                        lexer.next_token(); // consume `.`
+                        let prop = match lexer.next_token() {
+                            Token::Ident(p) => p,
+                            _ => return JsValue::Undefined,
+                        };
+                        let result = eval_array_method_full(lexer, scope, dom, arr, &prop);
+                        // Continue chaining (e.g. arr.map(...).join(...))
+                        return chain_with_scope(lexer, result, scope, dom);
+                    }
                     if let JsValue::Str(ref s) = val {
                         if s.starts_with("\x00elem\x00") || s.starts_with("\x00list\x00") {
-                            return chain_props_inner(lexer, val);
+                            return chain_props_inner(lexer, val, dom);
                         }
                     }
                     // Unknown object — skip the dot-chain
                     crate::js::eval::skip_dot_call_chain(lexer);
                     return JsValue::Undefined;
+                }
+                // Subscript access: name[index]
+                if lexer.peek_token() == Token::LBracket {
+                    if let JsValue::Array(ref arr) = val {
+                        lexer.next_token(); // consume `[`
+                        let idx = eval_expr_with_dom(lexer, scope, dom);
+                        if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
+                        let i = idx.to_number();
+                        let item = if i >= 0.0 && i.fract() == 0.0 {
+                            arr.borrow().get(i as usize).cloned().unwrap_or(JsValue::Undefined)
+                        } else {
+                            JsValue::Undefined
+                        };
+                        // Allow chaining after subscript: arr[i].prop
+                        return chain_with_scope(lexer, item, scope, dom);
+                    }
                 }
                 // Function call: `foo(...)`
                 if lexer.peek_token() == Token::LParen {
@@ -1656,10 +2197,9 @@ fn eval_primary_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
             inner
         }
-        // Array literal — skip and return Undefined (no array support yet)
+        // Array literal — parse elements into a JsValue::Array
         Token::LBracket => {
-            skip_balanced(lexer, Token::LBracket, Token::RBracket);
-            JsValue::Undefined
+            eval_array_literal(lexer, scope, dom)
         }
         // Object literal — skip and return Undefined
         Token::LBrace => {
