@@ -55,6 +55,10 @@ pub enum SimpleSelector {
     AttrContains(String, String),
     /// A CSS pseudo-class, e.g. `:hover`, `:nth-child(2n+1)`.
     Pseudo(PseudoClass),
+    /// A CSS pseudo-element, e.g. `::before`, `::after`, `::-webkit-scrollbar`.
+    /// Pseudo-elements never match real DOM elements; any compound selector
+    /// containing one should be treated as non-matching.
+    PseudoElement(String),
 }
 
 /// A CSS selector, potentially combining simple selectors with combinators.
@@ -111,6 +115,7 @@ impl Selector {
                         | SimpleSelector::Pseudo(_) => classes += 1,
                         SimpleSelector::Tag(_) => tags += 1,
                         SimpleSelector::Universal => {}
+                        SimpleSelector::PseudoElement(_) => {} // pseudo-elements don't contribute specificity
                     }
                 }
                 Specificity(ids, classes, tags)
@@ -233,7 +238,11 @@ pub fn parse_nth(s: &str) -> (i32, i32) {
         let b: i32 = if after.is_empty() {
             0
         } else {
-            after.parse().unwrap_or(0)
+            // Strip optional leading whitespace and a '+' sign so that
+            // values like "2n + 1" (with spaces around the operator) parse
+            // correctly.  Negative offsets like "3n - 2" already work because
+            // the '-' is part of the integer literal.
+            after.trim().trim_start_matches('+').trim().parse().unwrap_or(0)
         };
 
         (a, b)
@@ -345,10 +354,19 @@ pub fn parse_selector(s: &str) -> Option<Selector> {
                 i += 1;
             }
             c => {
-                if saw_whitespace && !current_token.trim().is_empty() && pending_combinator.is_none() {
-                    parts.push((None, current_token.trim().to_string()));
+                if saw_whitespace && !current_token.trim().is_empty() {
+                    // Whitespace between two tokens is a descendant combinator,
+                    // UNLESS a stronger explicit combinator (>, +, ~) is already
+                    // pending.  In that case keep the explicit combinator and
+                    // just flush the current token.
+                    let combo = if pending_combinator.is_none() {
+                        Some(CombinatorKind::Descendant)
+                    } else {
+                        pending_combinator.take()
+                    };
+                    parts.push((combo, current_token.trim().to_string()));
                     current_token.clear();
-                    pending_combinator = Some(CombinatorKind::Descendant);
+                    pending_combinator = None;
                 }
                 saw_whitespace = false;
                 current_token.push(c);
@@ -409,6 +427,8 @@ pub fn parse_compound_selector(token: &str) -> Option<Selector> {
             SimpleSelector::Class(c)   => Some(Selector::Class(c.clone())),
             SimpleSelector::Id(id)     => Some(Selector::Id(id.clone())),
             SimpleSelector::Universal  => Some(Selector::Universal),
+            // A lone pseudo-element (e.g. `::before`) becomes a Compound so it
+            // is stored but never matches any real DOM element.
             _                          => Some(Selector::Compound(components)),
         };
     }
@@ -452,8 +472,14 @@ pub fn split_simple_selectors(token: &str) -> Vec<SimpleSelector> {
             ':' => {
                 i += 1;
                 if i < len && chars[i] == ':' {
+                    // Pseudo-element (::before, ::after, ::-webkit-scrollbar, etc.)
+                    // These never match real DOM elements.  Record the name so the
+                    // compound selector is known to be a pseudo-element rule and will
+                    // never be applied to any DOM node.
                     i += 1;
-                    take_ident(&chars, &mut i);
+                    let name = take_ident(&chars, &mut i);
+                    // Skip optional argument like ::-webkit-scrollbar-thumb (no parens usually,
+                    // but consume any () arg defensively)
                     if i < len && chars[i] == '(' {
                         i += 1;
                         let mut depth = 1usize;
@@ -463,6 +489,7 @@ pub fn split_simple_selectors(token: &str) -> Vec<SimpleSelector> {
                             i += 1;
                         }
                     }
+                    result.push(SimpleSelector::PseudoElement(name));
                     continue;
                 }
                 let name = take_ident_hyphenated(&chars, &mut i);

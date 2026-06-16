@@ -2,7 +2,7 @@ mod color;
 mod length;
 pub(crate) mod inline;
 mod ua;
-mod stylesheet;
+pub mod stylesheet;
 pub mod cascade;
 
 // Public surface

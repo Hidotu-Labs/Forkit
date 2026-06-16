@@ -1,7 +1,6 @@
 use crate::dom::node::{Node, Element, Display};
 use crate::render::layout::state::{LayoutState, LINE_SPACING, BLOCK_MARGIN};
 use crate::render::font::FontCache;
-use crate::render::layout::paint::measure_text;
 
 pub fn advance_text_invisible(
     ls:    &mut LayoutState,
@@ -10,10 +9,7 @@ pub fn advance_text_invisible(
     s:     &crate::dom::node::Style,
 ) {
     if text.trim().is_empty() { return; }
-    let (tw, th) = fonts.get(s.font_size, s.bold, s.italic)
-        .and_then(|f| f.size_of(text.trim()).ok())
-        .map(|(w, h)| (w as i32, h as i32))
-        .unwrap_or((text.len() as i32 * 8, s.font_size as i32));
+    let (tw, th) = fonts.size_of_cached(text.trim(), s.font_size, s.bold, s.italic, s.font_family.clone());
     ls.cursor_x += tw;
     if th > ls.line_height { ls.line_height = th; }
 }
@@ -28,7 +24,7 @@ pub fn measure_inline_block_children(fonts: &mut FontCache, children: &[Node], _
                 } else {
                     t.text.trim()
                 };
-                let (w, _) = measure_text(fonts, text, &t.style);
+                let (w, _) = fonts.size_of_cached(text, t.style.font_size, t.style.bold, t.style.italic, t.style.font_family.clone());
                 total += w;
             }
             Node::Element(el) => {
@@ -50,7 +46,7 @@ pub fn measure_block_content_width(fonts: &mut FontCache, children: &[Node], fon
             Node::Text(t) => {
                 let text = t.text.trim();
                 if text.is_empty() { continue; }
-                let (w, _) = measure_text(fonts, text, &t.style);
+                let (w, _) = fonts.size_of_cached(text, t.style.font_size, t.style.bold, t.style.italic, t.style.font_family.clone());
                 if w > max_w { max_w = w; }
             }
             Node::Element(el) => {
@@ -139,10 +135,7 @@ pub fn measure_children_recursive(
                     if *cx <= margin_left + indent {
                         continue;
                     }
-                    let (sw, _) = fonts.get(font_size, t.style.bold, t.style.italic)
-                        .and_then(|f| f.size_of(" ").ok())
-                        .map(|(w, h)| (w as i32, h as i32))
-                        .unwrap_or((8, font_size as i32));
+                    let sw = fonts.size_of_cached(" ", font_size, t.style.bold, t.style.italic, t.style.font_family.clone()).0;
                     if *cx + sw > max_w && *cx > margin_left + indent {
                         let line_h = (font_size as f32 * t.style.line_height_mul) as i32;
                         *cy += (*lh).max(line_h) + LINE_SPACING;
@@ -161,10 +154,7 @@ pub fn measure_children_recursive(
                     } else {
                         format!("{} {}", line, word)
                     };
-                    let (tw, _) = fonts.get(font_size, t.style.bold, t.style.italic)
-                        .and_then(|f| f.size_of(&test).ok())
-                        .map(|(w, h)| (w as i32, h as i32))
-                        .unwrap_or((test.len() as i32 * 8, font_size as i32));
+                    let tw = fonts.size_of_cached(&test, font_size, t.style.bold, t.style.italic, t.style.font_family.clone()).0;
                     if tw > max_w - *cx && !line.is_empty() {
                         let line_h = (font_size as f32 * t.style.line_height_mul) as i32;
                         *cy += (*lh).max(line_h) + LINE_SPACING;
@@ -176,16 +166,14 @@ pub fn measure_children_recursive(
                     }
                 }
                 if !line.is_empty() {
-                    let (_, th) = fonts.get(font_size, t.style.bold, t.style.italic)
-                        .and_then(|f| f.size_of(&line).ok())
-                        .map(|(w, h)| (w as i32, h as i32))
-                        .unwrap_or((0, font_size as i32));
+                    let th = fonts.size_of_cached(&line, font_size, t.style.bold, t.style.italic, t.style.font_family.clone()).1;
                     if th > *lh { *lh = th; }
                 }
             }
             Node::Element(child_el) => {
                 if child_el.style.display == Display::Hidden { continue; }
                 if child_el.style.position == crate::dom::node::Position::Absolute { continue; }
+                if child_el.style.position == crate::dom::node::Position::Fixed { continue; }
                 let child_tag = child_el.tag.as_str();
                 let child_font_size = if let Some(raw) = &child_el.style.font_size_raw {
                     let ctx = crate::dom::css::LengthContext {

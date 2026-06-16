@@ -167,7 +167,46 @@ pub fn paint_image(
         if let Ok(mut tex) = tc.create_texture_from_surface(&surface) {
             let _ = tex.set_blend_mode(sdl2::render::BlendMode::Blend);
             let _ = tex.set_alpha_mod(svg_alpha);
-            let _ = canvas.copy(&tex, None, sdl2::rect::Rect::new(img_x, screen_y, dw as u32, dh as u32));
+
+            // Resolve the effective border-radius for this image.
+            // - border_radius_raw > 0: a deferred percentage, resolve against actual size.
+            // - border_radius != [0,0,0,0]: an absolute px radius (e.g. 600px → circular).
+            let radii: [u16; 4] = if style.border_radius_raw > 0 {
+                // Percentage radius: resolve against min(dw, dh).
+                let r = ((dw.min(dh) as f32 * style.border_radius_raw as f32 / 100.0) as i32)
+                    .clamp(0, u16::MAX as i32) as u16;
+                [r; 4]
+            } else {
+                // Absolute px radius: clamp each corner to half of min dimension.
+                let max_r = (dw.min(dh) / 2).clamp(0, u16::MAX as i32) as u16;
+                [
+                    style.border_radius[0].min(max_r),
+                    style.border_radius[1].min(max_r),
+                    style.border_radius[2].min(max_r),
+                    style.border_radius[3].min(max_r),
+                ]
+            };
+
+            if radii != [0, 0, 0, 0] {
+                // Clip image to rounded rectangle using scanline mask.
+                use crate::render::layout::paint::get_rounded_rect_row_range_pub;
+                for row in 0..dh {
+                    let py = screen_y + row;
+                    if py < 0 || py >= ls.ctx.viewport_height { continue; }
+                    let (cl, cr) = get_rounded_rect_row_range_pub(row, dh, &radii);
+                    let src_w = (dw - cl - cr).max(0);
+                    if src_w <= 0 { continue; }
+                    let src_y_nat = row * nat_h / dh.max(1);
+                    let src_x_nat = cl * nat_w / dw.max(1);
+                    let src_w_nat = (src_w * nat_w / dw.max(1)).max(1);
+                    let src_h_nat = (nat_h / dh.max(1)).max(1);
+                    let src_rect = sdl2::rect::Rect::new(src_x_nat, src_y_nat, src_w_nat as u32, src_h_nat as u32);
+                    let dst_rect = sdl2::rect::Rect::new(img_x + cl, py, src_w as u32, 1);
+                    let _ = canvas.copy(&tex, src_rect, dst_rect);
+                }
+            } else {
+                let _ = canvas.copy(&tex, None, sdl2::rect::Rect::new(img_x, screen_y, dw as u32, dh as u32));
+            }
         }
     }
 

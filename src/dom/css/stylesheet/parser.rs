@@ -25,6 +25,42 @@ pub struct FontFaceRule {
 pub struct StyleSheet {
     pub rules:      Vec<Rule>,
     pub font_faces: Vec<FontFaceRule>,
+    /// Rule index for fast cascade lookup.
+    /// Maps a subject key (lowercase tag name, ".classname", "#id", or "*") to
+    /// the indices of rules in `self.rules` whose subject selector could match
+    /// an element with that key.  Built once after parsing.
+    pub(crate) index: std::collections::HashMap<String, Vec<usize>>,
+}
+
+/// Returns the subject key for a selector as an owned String.
+pub(crate) fn selector_subject_key_owned(sel: &Selector) -> String {
+    match sel {
+        Selector::Tag(t) => t.to_ascii_lowercase(),
+        Selector::Class(c) => format!(".{}", c),
+        Selector::Id(id)   => format!("#{}", id),
+        Selector::Universal => "*".to_owned(),
+        Selector::Compound(parts) => {
+            // Extract the most specific narrow key from the compound parts.
+            // Priority: id > class > tag > universal/attr/pseudo
+            let mut tag_key: Option<String>   = None;
+            let mut class_key: Option<String> = None;
+            let mut id_key: Option<String>    = None;
+            for ss in parts {
+                match ss {
+                    SimpleSelector::Id(id)    => { id_key = Some(format!("#{id}")); break; }
+                    SimpleSelector::Class(c)  => { if class_key.is_none() { class_key = Some(format!(".{c}")); } }
+                    SimpleSelector::Tag(t)    => { if tag_key.is_none() { tag_key = Some(t.to_ascii_lowercase()); } }
+                    _ => {}
+                }
+            }
+            id_key.or(class_key).or(tag_key).unwrap_or_else(|| "*".to_owned())
+        }
+        // Combinators: subject is the right-hand side selector.
+        Selector::Descendant(_, b)
+        | Selector::Child(_, b)
+        | Selector::AdjacentSibling(_, b)
+        | Selector::GeneralSibling(_, b) => selector_subject_key_owned(b),
+    }
 }
 
 impl StyleSheet {
@@ -158,7 +194,53 @@ impl StyleSheet {
             rules.push(Rule { selectors, declarations });
         }
 
-        StyleSheet { rules, font_faces }
+        // Build the rule index: map subject key → rule indices.
+        let mut index: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            // A rule can have multiple selectors (comma-separated). Insert the rule
+            // under every unique subject key among its selectors so we never miss it.
+            let mut keys_seen = std::collections::HashSet::new();
+            for sel in &rule.selectors {
+                let key = selector_subject_key_owned(sel);
+                if keys_seen.insert(key.clone()) {
+                    index.entry(key).or_default().push(rule_idx);
+                }
+            }
+        }
+
+        StyleSheet { rules, font_faces, index }
+    }
+
+    /// Return the rule indices that could potentially match an element with
+    /// the given tag, id, and space-separated class list.
+    /// Merges: tag bucket + each class bucket + id bucket + universal bucket.
+    /// The returned vec may contain duplicates if a rule has selectors in
+    /// multiple buckets — callers must de-duplicate or use a seen-set.
+    pub(crate) fn candidate_rule_indices(
+        &self,
+        tag:        &str,
+        id:         &str,
+        class_name: &str,
+    ) -> Vec<usize> {
+        let mut out = Vec::new();
+        let tag_lc = tag.to_ascii_lowercase();
+
+        // Tag bucket
+        if let Some(v) = self.index.get(&tag_lc) { out.extend_from_slice(v); }
+        // Class buckets — one per whitespace-separated token
+        for cls in class_name.split_ascii_whitespace() {
+            let k = format!(".{cls}");
+            if let Some(v) = self.index.get(&k) { out.extend_from_slice(v); }
+        }
+        // Id bucket
+        if !id.is_empty() {
+            let k = format!("#{id}");
+            if let Some(v) = self.index.get(&k) { out.extend_from_slice(v); }
+        }
+        // Universal / combinator / attr / pseudo bucket
+        if let Some(v) = self.index.get("*") { out.extend_from_slice(v); }
+
+        out
     }
 }
 

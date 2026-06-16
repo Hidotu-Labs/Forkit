@@ -1,6 +1,7 @@
 use sdl2::ttf::{Font, Sdl2TtfContext};
 use crate::dom::node::FontFamily;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -22,14 +23,22 @@ pub struct FontCache<'ttf> {
     cache:    HashMap<FontKey, Font<'ttf, 'static>>,
     /// Custom `@font-face` registry: Maps (name, bold, italic) -> local path or URL
     registry: HashMap<(String, bool, bool), String>,
+    /// Per-font glyph coverage cache: maps FontKey -> set of covered Unicode scalar values.
+    /// Populated lazily on first use; avoids O(chars) `find_glyph` calls per frame.
+    glyph_coverage: HashMap<FontKey, HashSet<char>>,
+    /// Text measurement cache: maps (text, FontKey) -> (width, height).
+    /// Avoids repeated `font.size_of()` calls for the same string/font combo.
+    measure_cache: HashMap<(String, FontKey), (i32, i32)>,
 }
 
 impl<'ttf> FontCache<'ttf> {
     pub fn new(ttf: &'ttf Sdl2TtfContext) -> Self {
         FontCache {
             ttf,
-            cache:    HashMap::new(),
-            registry: HashMap::new(),
+            cache:          HashMap::new(),
+            registry:       HashMap::new(),
+            glyph_coverage: HashMap::new(),
+            measure_cache:  HashMap::new(),
         }
     }
 
@@ -45,6 +54,117 @@ impl<'ttf> FontCache<'ttf> {
                 _ => true,
             }
         });
+        // Also evict glyph coverage for the same family.
+        self.glyph_coverage.retain(|key, _| {
+            match &key.family {
+                FontFamily::Custom(n) if n.to_ascii_lowercase() == name.to_ascii_lowercase() => {
+                    key.bold != bold || key.italic != italic
+                }
+                _ => true,
+            }
+        });
+        // And measurement cache.
+        self.measure_cache.retain(|(_, key), _| {
+            match &key.family {
+                FontFamily::Custom(n) if n.to_ascii_lowercase() == name.to_ascii_lowercase() => {
+                    key.bold != bold || key.italic != italic
+                }
+                _ => true,
+            }
+        });
+    }
+
+    /// Return `true` if the font identified by `key` covers `ch`.
+    /// Results are memoised — `find_glyph` is only called the first time
+    /// a character is encountered for a given font.
+    pub fn font_has_glyph(&mut self, size: u16, bold: bool, italic: bool, family: FontFamily, ch: char) -> bool {
+        let size = size.clamp(8, 96);
+        let key = FontKey { size, bold, italic, family: family.clone() };
+        // We need to ensure the font is loaded first.
+        let _ = self.get_family(size, bold, italic, family);
+        if !self.glyph_coverage.contains_key(&key) {
+            self.glyph_coverage.insert(key.clone(), HashSet::new());
+        }
+        if let Some(coverage) = self.glyph_coverage.get(&key) {
+            if coverage.contains(&ch) {
+                return true;
+            }
+        }
+        // Not yet cached — call find_glyph and store result.
+        let has = self.cache.get(&key)
+            .map(|f| f.find_glyph(ch).is_some())
+            .unwrap_or(false);
+        if has {
+            self.glyph_coverage.entry(key).or_default().insert(ch);
+        }
+        has
+    }
+
+    /// Return `true` if the fallback symbols font covers `ch`.
+    pub fn fallback_has_glyph(&mut self, size: u16, ch: char) -> bool {
+        let size = size.clamp(8, 96);
+        let key = FontKey { size, bold: false, italic: false, family: FontFamily::Custom("__fallback__".into()) };
+        let _ = self.get_fallback(size);
+        if !self.glyph_coverage.contains_key(&key) {
+            self.glyph_coverage.insert(key.clone(), HashSet::new());
+        }
+        if let Some(coverage) = self.glyph_coverage.get(&key) {
+            if coverage.contains(&ch) { return true; }
+        }
+        let has = self.cache.get(&key)
+            .map(|f| f.find_glyph(ch).is_some())
+            .unwrap_or(false);
+        if has {
+            self.glyph_coverage.entry(key).or_default().insert(ch);
+        }
+        has
+    }
+
+    /// Return `true` if the math fallback font covers `ch`.
+    pub fn math_has_glyph(&mut self, size: u16, ch: char) -> bool {
+        let size = size.clamp(8, 96);
+        let key = FontKey { size, bold: false, italic: false, family: FontFamily::Custom("__math__".into()) };
+        let _ = self.get_math_fallback(size);
+        if !self.glyph_coverage.contains_key(&key) {
+            self.glyph_coverage.insert(key.clone(), HashSet::new());
+        }
+        if let Some(coverage) = self.glyph_coverage.get(&key) {
+            if coverage.contains(&ch) { return true; }
+        }
+        let has = self.cache.get(&key)
+            .map(|f| f.find_glyph(ch).is_some())
+            .unwrap_or(false);
+        if has {
+            self.glyph_coverage.entry(key).or_default().insert(ch);
+        }
+        has
+    }
+
+    /// Measure `text` using the given font, with results memoised per (text, FontKey).
+    /// Returns `(width, height)` or a fallback estimate.
+    pub fn size_of_cached(&mut self, text: &str, size: u16, bold: bool, italic: bool, family: FontFamily) -> (i32, i32) {
+        let size = size.clamp(8, 96);
+        let key = FontKey { size, bold, italic, family: family.clone() };
+        let cache_key = (text.to_owned(), key.clone());
+        if let Some(&cached) = self.measure_cache.get(&cache_key) {
+            return cached;
+        }
+        let result = self.get_family(size, bold, italic, family)
+            .and_then(|f| f.size_of(text).ok())
+            .map(|(w, h)| (w as i32, h as i32))
+            .unwrap_or((text.len() as i32 * (size as i32 / 2).max(4), size as i32));
+        // Only cache reasonably short strings to bound memory use.
+        if text.len() <= 256 {
+            self.measure_cache.insert(cache_key, result);
+        }
+        result
+    }
+
+    /// Measure a single character, with caching.
+    pub fn char_width_cached(&mut self, ch: char, size: u16, bold: bool, italic: bool, family: FontFamily) -> i32 {
+        let mut buf = [0u8; 4];
+        let s = ch.encode_utf8(&mut buf);
+        self.size_of_cached(s, size, bold, italic, family).0
     }
 
     pub fn get(&mut self, size: u16, bold: bool, italic: bool) -> Option<&Font<'ttf, 'static>> {

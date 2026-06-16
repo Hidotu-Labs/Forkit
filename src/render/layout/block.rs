@@ -49,6 +49,13 @@ pub fn layout_element(
         return;
     }
 
+    // position: fixed — rendered relative to the viewport (like absolute but
+    // anchored to viewport coords rather than any positioned ancestor).
+    if el.style.position == crate::dom::node::Position::Fixed && !ls.in_absolute_pass {
+        layout_fixed_element(ls, canvas, tc, fonts, images, base_url, el, max_w);
+        return;
+    }
+
     let tag = el.tag.as_str();
     let s   = &el.style;
 
@@ -68,20 +75,49 @@ pub fn layout_element(
 
     if matches!(tag, "#document" | "html" | "body") {
         if s.bg_color.is_some() {
-            paint_block_bg(ls, canvas, s, 0, 0, max_w, ls.ctx.viewport_height);
+            // For body/html: cover the full scrollable content area so the
+            // background colour is visible beyond the initial viewport.
+            let bg_h = ls.content_height.max(ls.ctx.viewport_height * 4);
+            paint_block_bg(ls, canvas, s, 0, 0, max_w, bg_h);
         }
         if s.bg_gradient.is_some() {
-            paint_block_bg_gradient(ls, canvas, s, 0, 0, max_w, ls.ctx.viewport_height);
+            let bg_h = ls.content_height.max(ls.ctx.viewport_height * 4);
+            paint_block_bg_gradient(ls, canvas, s, 0, 0, max_w, bg_h);
         }
         if s.bg_image_url.is_some() {
-            paint_block_bg_image(ls, canvas, tc, images, base_url, s,
-                                 0, 0, max_w, ls.ctx.viewport_height);
+            if s.bg_attachment_fixed {
+                // background-attachment: fixed — image is painted relative to the
+                // viewport, not the document. Re-draw it covering the current
+                // scroll window so it appears stationary as the user scrolls.
+                let scroll_y   = ls.ctx.scroll_y;
+                let viewport_h = ls.ctx.viewport_height;
+                paint_block_bg_image(ls, canvas, tc, images, base_url, s,
+                                     0, scroll_y, max_w, viewport_h);
+            } else {
+                // Normal attachment: cover the full content area.
+                let bg_h = ls.content_height.max(ls.ctx.viewport_height * 4);
+                paint_block_bg_image(ls, canvas, tc, images, base_url, s,
+                                     0, 0, max_w, bg_h);
+            }
         }
 
         if tag == "#document" {
             for child in &el.children {
                 ls.layout_node(canvas, tc, fonts, images, base_url, child, max_w);
             }
+            return;
+        }
+
+        // If the body / html element is a flex container, let the full flex
+        // layout engine handle child placement (align-items: center etc.).
+        if s.display == crate::dom::node::Display::Flex {
+            // Background already painted above (full height). Reset cursor to
+            // the body's content origin before handing off to the flex engine.
+            ls.margin_left = s.padding.left;
+            ls.cursor_x    = s.padding.left;
+            ls.cursor_y    = (s.margin.top + s.padding.top).max(0);
+            ls.indent      = 0;
+            flex::layout_flex(ls, canvas, tc, fonts, images, base_url, el, max_w);
             return;
         }
 
@@ -360,10 +396,22 @@ pub fn layout_element(
     };
 
     let block_x = contain_left + ml;
-    let block_w = box_w.min(contain_right - block_x - s.margin.right).max(0);
+    // When an explicit width was requested, honour it even if it exceeds the
+    // current containing-block width (e.g. a 1000px container inside a smaller
+    // flex parent).  Only clamp to contain_right when no explicit width is set.
+    let block_w = if resolved_width.is_some() {
+        box_w.max(0)
+    } else {
+        box_w.min(contain_right - block_x - s.margin.right).max(0)
+    };
 
     if s.display == Display::Flex {
         flex::layout_flex(ls, canvas, tc, fonts, images, base_url, el, max_w);
+        return;
+    }
+
+    if s.display == Display::Grid {
+        super::grid::layout_grid(ls, canvas, tc, fonts, images, base_url, el, max_w);
         return;
     }
 
@@ -463,6 +511,7 @@ pub fn layout_element(
         for child in &el.children {
             if let Node::Element(e) = child {
                 if e.style.position == crate::dom::node::Position::Absolute { continue; }
+                if e.style.position == crate::dom::node::Position::Fixed    { continue; }
             }
             ls.layout_node(canvas, tc, fonts, images, base_url, child, children_max_w);
         }
@@ -507,34 +556,38 @@ pub fn layout_element(
         ls.cursor_y += s.padding.top;
         ls.cursor_x += s.padding.left;
 
+        // Measure once and reuse for all background / shadow paint calls
+        // that need to know the element's height before children are laid out.
+        let needs_pre_measure = s.box_shadow.is_some()
+            || s.bg_color.is_some()
+            || s.bg_gradient.is_some()
+            || s.bg_image_url.is_some();
+        let pre_block_h: Option<i32> = if needs_pre_measure {
+            let mut h = measure_block_children(ls, fonts, el, block_x + block_w, s);
+            if let Some(fh) = resolved_height     { h = fh; }
+            if let Some(mn) = resolved_min_height { h = h.max(mn); }
+            if let Some(mx) = resolved_max_height { h = h.min(mx); }
+            Some(h)
+        } else {
+            None
+        };
+
         if let Some(ref shadow) = s.box_shadow {
-            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
-            if let Some(h)  = resolved_height     { block_h = h; }
-            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
-            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
+            let block_h = pre_block_h.unwrap_or(0);
             paint_box_shadow(canvas, shadow, block_x, start_y, block_w, block_h,
                              ls.ctx.scroll_y, ls.ctx.viewport_height);
         }
 
         if s.bg_color.is_some() {
-            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
-            if let Some(h)  = resolved_height     { block_h = h; }
-            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
-            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
+            let block_h = pre_block_h.unwrap_or(0);
             paint_block_bg(ls, canvas, s, block_x, start_y, block_w, block_h);
         }
         if s.bg_gradient.is_some() {
-            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
-            if let Some(h)  = resolved_height     { block_h = h; }
-            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
-            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
+            let block_h = pre_block_h.unwrap_or(0);
             paint_block_bg_gradient(ls, canvas, s, block_x, start_y, block_w, block_h);
         }
         if s.bg_image_url.is_some() {
-            let mut block_h = measure_block_children(ls, fonts, el, block_x + block_w, s);
-            if let Some(h)  = resolved_height     { block_h = h; }
-            if let Some(mn) = resolved_min_height { block_h = block_h.max(mn); }
-            if let Some(mx) = resolved_max_height { block_h = block_h.min(mx); }
+            let block_h = pre_block_h.unwrap_or(0);
             paint_block_bg_image(ls, canvas, tc, images, base_url, s,
                                  block_x, start_y, block_w, block_h);
         }
@@ -602,6 +655,7 @@ pub fn layout_element(
     for child in &el.children {
         if let Node::Element(e) = child {
             if e.style.position == crate::dom::node::Position::Absolute { continue; }
+            if e.style.position == crate::dom::node::Position::Fixed    { continue; }
         }
         if is_header_major {
             if let crate::dom::node::Node::Element(child_el) = child {
@@ -996,7 +1050,7 @@ pub fn layout_absolute_element(
 
     // Position the cursor so that the inner layout (which adds mar.top/left and BLOCK_MARGIN)
     // lands exactly at our calculated (x, y).
-    let is_block = s.display_block || s.display == crate::dom::node::Display::Flex;
+    let is_block = s.display_block || s.display == crate::dom::node::Display::Flex || s.display == crate::dom::node::Display::Grid;
     if is_block {
         ls.cursor_x = x - s.margin.left;
         ls.cursor_y = y - s.margin.top - crate::render::layout::state::BLOCK_MARGIN;
@@ -1018,5 +1072,103 @@ pub fn layout_absolute_element(
     ls.cursor_y = saved_y;
     ls.margin_left = saved_ml;
     ls.indent = saved_ind;
+    ls.line_height = saved_lh;
+}
+
+/// Lay out a `position: fixed` element.
+///
+/// Fixed elements are positioned relative to the viewport (not the document),
+/// so top/left/right/bottom are resolved against the current viewport dimensions.
+/// The element is rendered at `scroll_y + top` so it appears at a fixed position
+/// on screen regardless of scroll position.
+pub fn layout_fixed_element(
+    ls:       &mut LayoutState,
+    canvas:   &mut Canvas<Window>,
+    tc:       &TextureCreator<WindowContext>,
+    fonts:    &mut FontCache,
+    images:   &mut ImageCache,
+    base_url: &str,
+    el:       &Element,
+    max_w:    i32,
+) {
+    let s = &el.style;
+    let vw = ls.ctx.viewport_width;
+    let vh = ls.ctx.viewport_height;
+
+    // Containing block for fixed = viewport
+    let ctx_x = 0;
+    let ctx_y = ls.ctx.scroll_y;   // document-space top of the viewport
+    let ctx_w = vw;
+    let ctx_h = vh;
+
+    let font_size = s.font_size;
+
+    // Measure size
+    let box_w = resolve_size(s.size.width, s.size.width_raw.as_deref(), ctx_w, vw, vh, font_size);
+    let box_h = resolve_size(s.size.height, s.size.height_raw.as_deref(), ctx_h, vw, vh, font_size);
+
+    let content_w = box_w.unwrap_or_else(|| {
+        measure_block_content_width(fonts, &el.children, font_size).min(ctx_w)
+    });
+
+    let content_h = box_h.unwrap_or_else(|| {
+        let saved_x = ls.cursor_x; let saved_y = ls.cursor_y;
+        let saved_ml = ls.margin_left; let saved_ind = ls.indent; let saved_lh = ls.line_height;
+        ls.cursor_x = 0; ls.cursor_y = 0;
+        ls.margin_left = 0; ls.indent = 0; ls.line_height = font_size as i32;
+        let h = measure_block_children(ls, fonts, el, content_w, s);
+        ls.cursor_x = saved_x; ls.cursor_y = saved_y;
+        ls.margin_left = saved_ml; ls.indent = saved_ind; ls.line_height = saved_lh;
+        h
+    });
+
+    let border_w = (s.borders.left.width + s.borders.right.width) as i32;
+    let border_h = (s.borders.top.width + s.borders.bottom.width) as i32;
+    let total_w = content_w + s.padding.left + s.padding.right + border_w;
+    let total_h = content_h + s.padding.top + s.padding.bottom + border_h;
+
+    // Resolve position relative to viewport, then convert to document space
+    let x = if let Some(l) = resolve_pos(s.left, s.left_raw.as_deref(), ctx_w, vw, vh, font_size) {
+        ctx_x + l
+    } else if let Some(r) = resolve_pos(s.right, s.right_raw.as_deref(), ctx_w, vw, vh, font_size) {
+        ctx_x + ctx_w - r - total_w
+    } else {
+        ctx_x
+    };
+
+    let y = if let Some(t) = resolve_pos(s.top, s.top_raw.as_deref(), ctx_h, vw, vh, font_size) {
+        ctx_y + t
+    } else if let Some(b) = resolve_pos(s.bottom, s.bottom_raw.as_deref(), ctx_h, vw, vh, font_size) {
+        ctx_y + ctx_h - b - total_h
+    } else {
+        ctx_y
+    };
+
+    let saved_x  = ls.cursor_x;  let saved_y  = ls.cursor_y;
+    let saved_ml = ls.margin_left; let saved_ind = ls.indent; let saved_lh = ls.line_height;
+
+    let is_block = s.display_block
+        || s.display == crate::dom::node::Display::Flex
+        || s.display == crate::dom::node::Display::Grid;
+    if is_block {
+        ls.cursor_x = x - s.margin.left;
+        ls.cursor_y = y - s.margin.top - crate::render::layout::state::BLOCK_MARGIN;
+    } else {
+        ls.cursor_x = x;
+        ls.cursor_y = y;
+    }
+    ls.margin_left = ls.cursor_x;
+    ls.indent      = 0;
+
+    let inner_max_w = x + total_w + s.margin.right;
+
+    ls.in_absolute_pass = true;
+    layout_element(ls, canvas, tc, fonts, images, base_url, el, inner_max_w);
+    ls.in_absolute_pass = false;
+
+    ls.cursor_x    = saved_x;
+    ls.cursor_y    = saved_y;
+    ls.margin_left = saved_ml;
+    ls.indent      = saved_ind;
     ls.line_height = saved_lh;
 }

@@ -15,6 +15,7 @@ pub enum Display {
     Block,
     InlineBlock,
     Flex,
+    Grid,
     Hidden,
 }
 
@@ -114,6 +115,98 @@ impl AlignItems {
         }
     }
 }
+/// A single CSS grid track (column or row) sizing value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GridTrackSize {
+    /// Fixed pixel size.
+    Px(i32),
+    /// Fraction of free space.
+    Fr(f32),
+    /// Percentage of the container.
+    Percent(f32),
+    /// `auto` — shrink to content.
+    Auto,
+    /// `min-content` / `max-content` (both treated as auto for now).
+    MinContent,
+    MaxContent,
+    /// `minmax(min, max)` — resolved to min value for simplicity.
+    Minmax(Box<GridTrackSize>, Box<GridTrackSize>),
+}
+
+impl Default for GridTrackSize {
+    fn default() -> Self { GridTrackSize::Auto }
+}
+
+/// CSS `grid-auto-flow`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GridAutoFlow {
+    #[default] Row,
+    Column,
+    RowDense,
+    ColumnDense,
+}
+
+impl GridAutoFlow {
+    pub fn from_css(val: &str) -> Self {
+        let lv = val.to_ascii_lowercase();
+        let dense = lv.contains("dense");
+        if lv.contains("column") {
+            if dense { GridAutoFlow::ColumnDense } else { GridAutoFlow::Column }
+        } else {
+            if dense { GridAutoFlow::RowDense } else { GridAutoFlow::Row }
+        }
+    }
+    pub fn is_column(self) -> bool {
+        matches!(self, GridAutoFlow::Column | GridAutoFlow::ColumnDense)
+    }
+}
+
+/// CSS `justify-items` / `justify-self`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JustifyItems {
+    #[default] Stretch,
+    Start,
+    End,
+    Center,
+}
+
+impl JustifyItems {
+    pub fn from_css(val: &str) -> Self {
+        match val.to_ascii_lowercase().as_str() {
+            "start" | "flex-start" => JustifyItems::Start,
+            "end"   | "flex-end"   => JustifyItems::End,
+            "center"               => JustifyItems::Center,
+            _                      => JustifyItems::Stretch,
+        }
+    }
+}
+
+/// CSS `align-content` / `justify-content` for grid
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlignContent {
+    #[default] Stretch,
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+impl AlignContent {
+    pub fn from_css(val: &str) -> Self {
+        match val.to_ascii_lowercase().as_str() {
+            "start" | "flex-start" => AlignContent::Start,
+            "end"   | "flex-end"   => AlignContent::End,
+            "center"               => AlignContent::Center,
+            "space-between"        => AlignContent::SpaceBetween,
+            "space-around"         => AlignContent::SpaceAround,
+            "space-evenly"         => AlignContent::SpaceEvenly,
+            _                      => AlignContent::Stretch,
+        }
+    }
+}
+
 /// CSS `text-transform`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextTransform { #[default] None, Uppercase, Lowercase, Capitalize }
@@ -328,6 +421,7 @@ pub struct Style {
     pub bg_size:             BgSize,
     pub bg_repeat:           BgRepeat,
     pub bg_position:         BgPosition,
+    pub bg_attachment_fixed: bool,   // true when background-attachment: fixed
     pub display:             Display,
     pub display_block:       bool,   // kept for compat — mirrors display==Block
     pub visibility:          Visibility,
@@ -340,6 +434,11 @@ pub struct Style {
     pub color_alpha:         u8,   // alpha for `color` (255 = fully opaque)
     pub bg_alpha:            u8,   // alpha for `bg_color` (255 = fully opaque)
     pub border_radius:       [u16; 4],   // [top-left, top-right, bottom-right, bottom-left] in px
+    /// When `border-radius` is a percentage (e.g. `50%`), the px value can't be
+    /// computed until layout time when the element's actual dimensions are known.
+    /// Store the percentage (0–100) here; 0 means no deferred percentage radius.
+    /// Individual corners all get the same value for simplicity (handles `50%` circles).
+    pub border_radius_raw:   u8,        // percentage 0–100; 0 = not a percentage
 
     // --- flexbox ---
     pub flex_direction:      FlexDirection,
@@ -350,6 +449,34 @@ pub struct Style {
     pub flex_shrink:         f32,
     pub flex_basis:          Option<i32>,
     pub gap:                 i32,
+
+    // --- css grid ---
+    /// Parsed `grid-template-columns` track sizes.
+    pub grid_template_columns: Vec<GridTrackSize>,
+    /// Parsed `grid-template-rows` track sizes.
+    pub grid_template_rows:    Vec<GridTrackSize>,
+    /// `column-gap` (also set by the `gap` shorthand's second value).
+    pub column_gap:            i32,
+    /// `row-gap` (also set by the `gap` shorthand's first value).
+    pub row_gap:               i32,
+    /// `grid-auto-flow`
+    pub grid_auto_flow:        GridAutoFlow,
+    /// `grid-auto-rows` — size for implicitly created rows.
+    pub grid_auto_rows:        GridTrackSize,
+    /// `grid-auto-columns` — size for implicitly created columns.
+    pub grid_auto_columns:     GridTrackSize,
+    /// `align-content` for grid containers.
+    pub align_content:         AlignContent,
+    /// `justify-items` — default alignment for all grid items along inline axis.
+    pub justify_items:         JustifyItems,
+    /// Per-item: `grid-column-start` (1-based, 0 = auto).
+    pub grid_column_start:     i32,
+    /// Per-item: `grid-column-end` (1-based exclusive, 0 = auto).
+    pub grid_column_end:       i32,
+    /// Per-item: `grid-row-start` (1-based, 0 = auto).
+    pub grid_row_start:        i32,
+    /// Per-item: `grid-row-end` (1-based exclusive, 0 = auto).
+    pub grid_row_end:          i32,
 
     // --- list ---
     pub list_style_type:     ListStyleType,
@@ -413,6 +540,7 @@ impl Default for Style {
             bg_size:           BgSize::Auto,
             bg_repeat:         BgRepeat::Repeat,
             bg_position:       BgPosition::default(),
+            bg_attachment_fixed: false,
             display:           Display::Inline,
             display_block:     false,
             visibility:        Visibility::Visible,
@@ -425,6 +553,7 @@ impl Default for Style {
             color_alpha:       255,
             bg_alpha:          255,
             border_radius:     [0, 0, 0, 0],
+            border_radius_raw: 0,
 
             list_style_type:   ListStyleType::Disc,
             href:              None,
@@ -443,6 +572,20 @@ impl Default for Style {
             flex_shrink:       1.0,
             flex_basis:        None,
             gap:               0,
+
+            grid_template_columns: Vec::new(),
+            grid_template_rows:    Vec::new(),
+            column_gap:            0,
+            row_gap:               0,
+            grid_auto_flow:        GridAutoFlow::Row,
+            grid_auto_rows:        GridTrackSize::Auto,
+            grid_auto_columns:     GridTrackSize::Auto,
+            align_content:         AlignContent::Stretch,
+            justify_items:         JustifyItems::Stretch,
+            grid_column_start:     0,
+            grid_column_end:       0,
+            grid_row_start:        0,
+            grid_row_end:          0,
 
             position:          Position::Static,
             top:               None,

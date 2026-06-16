@@ -2611,6 +2611,704 @@
 
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>28. CSS Grid — Basic Tracks</h2>
+  <style>
+    /* ── Grid helpers ── */
+    .grid-container {
+      background-color: #f0f4ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 6px;
+    }
+    .gi {
+      background-color: #0f3460;
+      color: #ffffff;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 13px;
+      text-align: center;
+    }
+    .gi-accent  { background-color: #e94560; }
+    .gi-green   { background-color: #009944; }
+    .gi-orange  { background-color: #ff9900; }
+    .gi-purple  { background-color: #7c3aed; }
+    .gi-teal    { background-color: #0891b2; }
+    .gi-pink    { background-color: #db2777; }
+    .gi-lime    { background-color: #65a30d; }
+    .gi-slate   { background-color: #475569; }
+  </style>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">grid-template-columns: repeat(3, 1fr) — three equal columns</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+          <div class="gi">One</div>
+          <div class="gi gi-accent">Two</div>
+          <div class="gi gi-green">Three</div>
+          <div class="gi gi-orange">Four</div>
+          <div class="gi gi-purple">Five</div>
+          <div class="gi gi-teal">Six</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-template-columns: repeat(4, 1fr) — four equal columns, 8 items</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+          <div class="gi">A</div>
+          <div class="gi gi-accent">B</div>
+          <div class="gi gi-green">C</div>
+          <div class="gi gi-orange">D</div>
+          <div class="gi gi-purple">E</div>
+          <div class="gi gi-teal">F</div>
+          <div class="gi gi-pink">G</div>
+          <div class="gi gi-lime">H</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Mixed columns: 120px 1fr 2fr — fixed + two fractional tracks</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: 120px 1fr 2fr; gap: 8px;">
+          <div class="gi">120px</div>
+          <div class="gi gi-accent">1fr</div>
+          <div class="gi gi-green">2fr (double)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-template-columns: 80px auto 80px — outer fixed, middle auto</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: 80px auto 80px; gap: 8px;">
+          <div class="gi">80px</div>
+          <div class="gi gi-accent">auto (fills remaining)</div>
+          <div class="gi gi-green">80px</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Percentage tracks: 25% 50% 25%</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: 25% 50% 25%; gap: 8px;">
+          <div class="gi">25%</div>
+          <div class="gi gi-accent">50%</div>
+          <div class="gi gi-green">25%</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">minmax(100px, 1fr) — minimum 100px, grows to fill</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: minmax(100px, 1fr) minmax(100px, 1fr) minmax(100px, 1fr); gap: 8px;">
+          <div class="gi">minmax</div>
+          <div class="gi gi-accent">minmax</div>
+          <div class="gi gi-green">minmax</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>29. CSS Grid — Row Tracks</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">grid-template-rows: 60px 100px 60px — explicit row heights</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: 1fr 1fr; grid-template-rows: 60px 100px 60px; gap: 8px;">
+          <div class="gi">R1 C1 (60px)</div>
+          <div class="gi gi-accent">R1 C2</div>
+          <div class="gi gi-green">R2 C1 (100px)</div>
+          <div class="gi gi-orange">R2 C2</div>
+          <div class="gi gi-purple">R3 C1 (60px)</div>
+          <div class="gi gi-teal">R3 C2</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-auto-rows: 80px — implicit rows all 80px tall</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 80px; gap: 8px;">
+          <div class="gi">A</div>
+          <div class="gi gi-accent">B</div>
+          <div class="gi gi-green">C</div>
+          <div class="gi gi-orange">D</div>
+          <div class="gi gi-purple">E</div>
+          <div class="gi gi-teal">F</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">row-gap: 20px / column-gap: 4px — asymmetric gutters</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); row-gap: 20px; column-gap: 4px;">
+          <div class="gi">1</div>
+          <div class="gi gi-accent">2</div>
+          <div class="gi gi-green">3</div>
+          <div class="gi gi-orange">4</div>
+          <div class="gi gi-purple">5</div>
+          <div class="gi gi-teal">6</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>30. CSS Grid — Item Placement</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">grid-column: 1 / 3 — spans two columns</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+          <div class="gi" style="grid-column: 1 / 3;">Spans cols 1–2</div>
+          <div class="gi gi-accent">Col 3</div>
+          <div class="gi gi-green">Col 1</div>
+          <div class="gi gi-orange">Col 2</div>
+          <div class="gi gi-purple">Col 3</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-column: 1 / -1 — spans full row (all columns)</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+          <div class="gi gi-slate" style="grid-column: 1 / -1; font-weight: bold;">Full-width header row</div>
+          <div class="gi">A</div>
+          <div class="gi gi-accent">B</div>
+          <div class="gi gi-green">C</div>
+          <div class="gi gi-orange">D</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-row: 1 / 3 — spans two rows</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 60px; gap: 8px;">
+          <div class="gi gi-purple" style="grid-row: 1 / 3;">Row span 1–2</div>
+          <div class="gi gi-accent">R1 C2</div>
+          <div class="gi gi-green">R1 C3</div>
+          <div class="gi gi-orange">R2 C2</div>
+          <div class="gi gi-teal">R2 C3</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-area: 1 / 2 / 3 / 4 — row 1–2, col 2–3</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 60px; gap: 8px;">
+          <div class="gi">R1 C1</div>
+          <div class="gi gi-pink" style="grid-area: 1 / 2 / 3 / 4;">area 1/2–3/4</div>
+          <div class="gi gi-green">R2 C1</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Explicit placement mixing auto and manual — sparse grid</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+          <div class="gi">auto</div>
+          <div class="gi gi-accent" style="grid-column: 3;">placed col 3</div>
+          <div class="gi gi-green">auto</div>
+          <div class="gi gi-orange" style="grid-column: 2;">placed col 2</div>
+          <div class="gi gi-purple">auto</div>
+          <div class="gi gi-teal">auto</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>31. CSS Grid — Alignment</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">justify-content: center — columns centered in container</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: 80px 80px 80px; justify-content: center; gap: 8px;">
+          <div class="gi">A</div>
+          <div class="gi gi-accent">B</div>
+          <div class="gi gi-green">C</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">justify-content: space-between — columns spread to edges</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: 80px 80px 80px; justify-content: space-between; gap: 0;">
+          <div class="gi">Left</div>
+          <div class="gi gi-accent">Mid</div>
+          <div class="gi gi-green">Right</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">align-content: center — rows centered vertically (fixed height container)</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 50px; align-content: center; height: 200px; gap: 8px;">
+          <div class="gi">A</div>
+          <div class="gi gi-accent">B</div>
+          <div class="gi gi-green">C</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">align-items: center — items centered inside their cells</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 80px; align-items: center; gap: 8px;">
+          <div class="gi" style="height: 30px; line-height: 30px;">short</div>
+          <div class="gi gi-accent" style="height: 50px; line-height: 50px;">medium</div>
+          <div class="gi gi-green" style="height: 70px; line-height: 70px;">tall</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">justify-items: center — items centered horizontally within cells</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); justify-items: center; gap: 8px;">
+          <div class="gi" style="width: 50px;">A</div>
+          <div class="gi gi-accent" style="width: 60px;">B</div>
+          <div class="gi gi-green" style="width: 40px;">C</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>32. CSS Grid — auto-flow &amp; repeat()</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">grid-auto-flow: column — items fill columns first</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-rows: repeat(3, 50px); grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px;">
+          <div class="gi">1</div>
+          <div class="gi gi-accent">2</div>
+          <div class="gi gi-green">3</div>
+          <div class="gi gi-orange">4</div>
+          <div class="gi gi-purple">5</div>
+          <div class="gi gi-teal">6</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">repeat(2, 100px 1fr) — pattern repetition: 100px 1fr 100px 1fr</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template-columns: repeat(2, 100px 1fr); gap: 8px;">
+          <div class="gi">100px</div>
+          <div class="gi gi-accent">1fr</div>
+          <div class="gi gi-green">100px</div>
+          <div class="gi gi-orange">1fr</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">grid-template: rows / columns shorthand — 80px 80px / 1fr 1fr 1fr</div>
+      <div class="test-result">
+        <div class="grid-container" style="display:grid; grid-template: 80px 80px / 1fr 1fr 1fr; gap: 8px;">
+          <div class="gi">R1 C1</div>
+          <div class="gi gi-accent">R1 C2</div>
+          <div class="gi gi-green">R1 C3</div>
+          <div class="gi gi-orange">R2 C1</div>
+          <div class="gi gi-purple">R2 C2</div>
+          <div class="gi gi-teal">R2 C3</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>33. CSS Grid — Real-World Patterns</h2>
+  <div class="card">
+
+    <div class="test ok">
+      <div class="test-label">Holy grail layout — header / sidebar + main + aside / footer</div>
+      <div class="test-result">
+        <div style="display:grid; grid-template-columns: 100px 1fr 100px; grid-template-rows: auto 120px auto; gap: 6px;">
+          <div class="gi gi-slate" style="grid-column: 1 / -1; padding: 10px; font-weight:bold;">Header</div>
+          <div class="gi gi-teal" style="padding: 10px; font-size:12px;">Sidebar</div>
+          <div style="background:#f0f4ff; border:1px solid #c7d2fe; border-radius:4px; padding:10px; font-size:12px; color:#374151;">
+            Main content area — the center column grows to fill remaining space.
+          </div>
+          <div class="gi gi-purple" style="padding: 10px; font-size:12px;">Aside</div>
+          <div class="gi" style="grid-column: 1 / -1; padding: 8px; font-size:12px; background:#1e293b;">Footer</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Photo gallery — repeat(4, 1fr) with grid-auto-rows: 80px</div>
+      <div class="test-result">
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 80px; gap: 6px;">
+          <div style="background: linear-gradient(135deg, #0f3460, #3b82f6); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #e94560, #f97316); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #009944, #34d399); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #7c3aed, #a78bfa); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #0891b2, #06b6d4); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #db2777, #f472b6); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #65a30d, #a3e635); border-radius:4px;"></div>
+          <div style="background: linear-gradient(135deg, #b45309, #fbbf24); border-radius:4px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Feature card grid — 3 cols, each with icon + title + text</div>
+      <div class="test-result">
+        <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+          <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px;">
+            <div style="font-size:18px; margin-bottom:4px;">⚡</div>
+            <div style="font-weight:bold; color:#1d4ed8; font-size:13px; margin-bottom:4px;">Fast</div>
+            <div style="font-size:12px; color:#374151;">Rendered in native Rust with SDL2.</div>
+          </div>
+          <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px;">
+            <div style="font-size:18px; margin-bottom:4px;">🔒</div>
+            <div style="font-weight:bold; color:#15803d; font-size:13px; margin-bottom:4px;">Safe</div>
+            <div style="font-size:12px; color:#374151;">Memory-safe by construction.</div>
+          </div>
+          <div style="background:#fdf4ff; border:1px solid #e9d5ff; border-radius:8px; padding:12px;">
+            <div style="font-size:18px; margin-bottom:4px;">🎨</div>
+            <div style="font-weight:bold; color:#7c3aed; font-size:13px; margin-bottom:4px;">Styled</div>
+            <div style="font-size:12px; color:#374151;">CSS3 Grid, Flex, calc, var() and more.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Dashboard stats — 2×2 grid with large numbers</div>
+      <div class="test-result">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div style="background:#eff6ff; border-radius:8px; padding:14px; border:1px solid #bfdbfe;">
+            <div style="font-size:28px; font-weight:bold; color:#1d4ed8;">4,821</div>
+            <div style="font-size:12px; color:#64748b; margin-top:2px;">Page Views</div>
+          </div>
+          <div style="background:#f0fdf4; border-radius:8px; padding:14px; border:1px solid #bbf7d0;">
+            <div style="font-size:28px; font-weight:bold; color:#15803d;">312</div>
+            <div style="font-size:12px; color:#64748b; margin-top:2px;">Unique Visitors</div>
+          </div>
+          <div style="background:#fef9c3; border-radius:8px; padding:14px; border:1px solid #fde047;">
+            <div style="font-size:28px; font-weight:bold; color:#a16207;">98%</div>
+            <div style="font-size:12px; color:#64748b; margin-top:2px;">Uptime</div>
+          </div>
+          <div style="background:#fdf4ff; border-radius:8px; padding:14px; border:1px solid #e9d5ff;">
+            <div style="font-size:28px; font-weight:bold; color:#7c3aed;">1.2s</div>
+            <div style="font-size:12px; color:#64748b; margin-top:2px;">Avg Load</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Nested grid inside flex — cards in a flex row, each card uses inner grid</div>
+      <div class="test-result">
+        <div style="display:flex; gap:10px;">
+          <div style="flex:1; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px;">
+            <div style="font-weight:bold; font-size:13px; color:#0f3460; margin-bottom:8px;">Team A</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <div style="background:#dbeafe; border-radius:4px; padding:6px; font-size:11px; color:#1d4ed8;">Alice</div>
+              <div style="background:#dbeafe; border-radius:4px; padding:6px; font-size:11px; color:#1d4ed8;">Bob</div>
+              <div style="background:#dbeafe; border-radius:4px; padding:6px; font-size:11px; color:#1d4ed8;">Carol</div>
+              <div style="background:#dbeafe; border-radius:4px; padding:6px; font-size:11px; color:#1d4ed8;">Dave</div>
+            </div>
+          </div>
+          <div style="flex:1; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px;">
+            <div style="font-weight:bold; font-size:13px; color:#15803d; margin-bottom:8px;">Team B</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <div style="background:#d1fae5; border-radius:4px; padding:6px; font-size:11px; color:#065f46;">Eve</div>
+              <div style="background:#d1fae5; border-radius:4px; padding:6px; font-size:11px; color:#065f46;">Frank</div>
+              <div style="background:#d1fae5; border-radius:4px; padding:6px; font-size:11px; color:#065f46;">Grace</div>
+              <div style="background:#d1fae5; border-radius:4px; padding:6px; font-size:11px; color:#065f46;">Hank</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="test ok">
+      <div class="test-label">Asymmetric magazine layout — large feature + 2 sidebar items</div>
+      <div class="test-result">
+        <div style="display:grid; grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; gap: 8px; height: 160px;">
+          <div style="grid-row: 1 / 3; background: linear-gradient(135deg, #0f3460, #7c3aed); border-radius:6px; padding:14px; display:flex; align-items:flex-end;">
+            <div>
+              <div style="color:white; font-weight:bold; font-size:15px; margin-bottom:4px;">Feature Story</div>
+              <div style="color:#c7d2fe; font-size:12px;">Spans both rows on the left</div>
+            </div>
+          </div>
+          <div style="background:#fef9c3; border-radius:6px; padding:10px; border:1px solid #fde047;">
+            <div style="font-weight:bold; font-size:12px; color:#a16207;">Story 2</div>
+            <div style="font-size:11px; color:#374151; margin-top:2px;">Short blurb</div>
+          </div>
+          <div style="background:#f0fdf4; border-radius:6px; padding:10px; border:1px solid #bbf7d0;">
+            <div style="font-weight:bold; font-size:12px; color:#15803d;">Story 3</div>
+            <div style="font-size:11px; color:#374151; margin-top:2px;">Short blurb</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <h2>28. Scoped CSS Custom Properties (var() — Non-Root)</h2>
+  <!--
+    These tests exercise the enhanced var() implementation that supports
+    custom properties declared on any element, not just :root.
+
+    Each sub-section targets a different part of the spec:
+      a) Scoped override — component redefines a var for its subtree
+      b) Inherited vars  — child picks up parent's custom var
+      c) Chained vars    — var referencing another var
+      d) Inline var decl — --name defined directly in style=""
+      e) Fallback chain  — nested fallbacks
+  -->
+  <style>
+    /* ── Shared palette from :root ─────────────────────── */
+    :root {
+      --base-color:  #0f3460;
+      --base-bg:     #eff6ff;
+      --base-radius: 6px;
+      --base-pad:    10px;
+    }
+
+    /* ── Component: scoped override ───────────────────── */
+    .scope-danger {
+      --base-color: #dc2626;  /* shadows :root's --base-color inside this subtree */
+      --base-bg:    #fef2f2;
+    }
+
+    .scope-success {
+      --base-color: #15803d;
+      --base-bg:    #f0fdf4;
+    }
+
+    .scope-warning {
+      --base-color: #d97706;
+      --base-bg:    #fffbeb;
+    }
+
+    /* Uses the scoped vars wherever it appears */
+    .scoped-badge {
+      color:            var(--base-color);
+      background-color: var(--base-bg);
+      border:           1px solid var(--base-color);
+      border-radius:    var(--base-radius);
+      padding:          4px var(--base-pad);
+      font-size:        13px;
+      display:          inline-block;
+      margin-right:     6px;
+    }
+
+    /* ── Chained vars ─────────────────────────────────── */
+    .chain-theme {
+      --hue:      210;
+      --sat:      80%;
+      --light:    40%;
+      /* --text-col references other vars — this is var-in-var */
+      --chain-border: 2px solid var(--base-color);
+    }
+
+    .chain-display {
+      border:        var(--chain-border, 1px solid #ccc);
+      padding:       var(--base-pad);
+      border-radius: var(--base-radius);
+      font-size:     14px;
+      color:         var(--base-color);
+      background:    var(--base-bg);
+    }
+
+    /* ── Deep inheritance ─────────────────────────────── */
+    .deep-root {
+      --deep-color: #7c3aed;
+      --deep-size:  16px;
+      padding:      8px;
+      background:   #f5f3ff;
+      border-radius: 6px;
+    }
+
+    .deep-level2 {
+      padding:    6px;
+      background: #ede9fe;
+      border-radius: 4px;
+      margin-top: 4px;
+    }
+
+    .deep-level3 {
+      padding:    4px;
+      background: #ddd6fe;
+      border-radius: 4px;
+      margin-top: 4px;
+      font-size:  var(--deep-size);   /* defined on grandparent */
+      color:      var(--deep-color);  /* defined on grandparent */
+    }
+
+    /* ── Fallback chains ──────────────────────────────── */
+    .fallback-chain {
+      /* --missing1 is undefined, falls back to --base-color
+         --base-color IS defined (on :root), so this resolves */
+      color: var(--missing1, var(--base-color));
+      /* --missing2 is undefined, --missing3 is also undefined → uses #ff9900 */
+      background-color: var(--missing2, var(--missing3, #fff7ed));
+      padding: var(--base-pad);
+      border-radius: var(--base-radius);
+      border: 1px solid var(--base-color);
+      font-size: 13px;
+    }
+  </style>
+  <div class="card">
+
+    <!-- 28-a: Scoped override shadows :root value -->
+    <div class="test ok">
+      <div class="test-label">28-a · Scoped override — same .scoped-badge class, different context color/bg via parent</div>
+      <div class="test-result">
+        <!-- No scope override → uses :root --base-color (#0f3460) -->
+        <span class="scoped-badge">Default (navy)</span>
+
+        <!-- .scope-danger redefines --base-color/#base-bg for its subtree -->
+        <span class="scope-danger"><span class="scoped-badge">Danger (red)</span></span>
+
+        <span class="scope-success"><span class="scoped-badge">Success (green)</span></span>
+
+        <span class="scope-warning"><span class="scoped-badge">Warning (amber)</span></span>
+      </div>
+    </div>
+
+    <!-- 28-b: Child element inherits parent's custom property -->
+    <div class="test ok">
+      <div class="test-label">28-b · Inherited var — child uses --deep-color and --deep-size set on grandparent</div>
+      <div class="test-result">
+        <div class="deep-root">
+          Grandparent defines --deep-color: purple, --deep-size: 16px
+          <div class="deep-level2">
+            Level-2 child (neutral bg, no var usage yet)
+            <div class="deep-level3">
+              Level-3: font-size and color come from inherited vars — should be 16px purple text
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 28-c: Chained vars — var referencing another var -->
+    <div class="test ok">
+      <div class="test-label">28-c · Chained var — .chain-border uses var(--base-color) inside its value</div>
+      <div class="test-result">
+        <div class="chain-theme">
+          <div class="chain-display">
+            This box's border is set via <code>--chain-border: 2px solid var(--base-color)</code>.
+            Color and background also come from scoped vars.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 28-d: var() declared in inline style="" -->
+    <div class="test ok">
+      <div class="test-label">28-d · Inline var declaration — style="--local-c:#e94560; color:var(--local-c)"</div>
+      <div class="test-result">
+        <div style="--local-c: #e94560; color: var(--local-c); font-size: 15px; font-weight: bold;">
+          This text color comes from an inline-declared custom property
+        </div>
+        <div style="--local-bg: #fef9c3; --local-border: #f59e0b;
+                    background-color: var(--local-bg);
+                    border: 2px solid var(--local-border);
+                    padding: 8px; border-radius: 4px; margin-top: 6px; font-size: 13px;">
+          Background and border both from inline custom properties
+        </div>
+      </div>
+    </div>
+
+    <!-- 28-e: Nested fallback chain -->
+    <div class="test ok">
+      <div class="test-label">28-e · Fallback chain — var(--missing1, var(--base-color)) resolves to navy; nested missing → #fff7ed bg</div>
+      <div class="test-result">
+        <div class="fallback-chain">
+          color: var(--missing1, var(--base-color)) → navy (#0f3460) because --missing1 is undefined but --base-color is.<br>
+          bg: var(--missing2, var(--missing3, #fff7ed)) → #fff7ed because both --missing2 and --missing3 are undefined.
+        </div>
+      </div>
+    </div>
+
+    <!-- 28-f: Scoped var inside a flex container -->
+    <div class="test ok">
+      <div class="test-label">28-f · Scoped var in flex items — each card defines its own --card-accent</div>
+      <div class="test-result">
+        <div style="display: flex; gap: 10px;">
+          <div style="--card-accent: #1d4ed8; flex: 1; border-top: 4px solid var(--card-accent);
+                      background: #f8fafc; border-radius: 0 0 6px 6px; padding: 10px;">
+            <div style="color: var(--card-accent); font-weight: bold; font-size: 13px;">Blue Card</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">--card-accent: #1d4ed8</div>
+          </div>
+          <div style="--card-accent: #15803d; flex: 1; border-top: 4px solid var(--card-accent);
+                      background: #f8fafc; border-radius: 0 0 6px 6px; padding: 10px;">
+            <div style="color: var(--card-accent); font-weight: bold; font-size: 13px;">Green Card</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">--card-accent: #15803d</div>
+          </div>
+          <div style="--card-accent: #9d174d; flex: 1; border-top: 4px solid var(--card-accent);
+                      background: #f8fafc; border-radius: 0 0 6px 6px; padding: 10px;">
+            <div style="color: var(--card-accent); font-weight: bold; font-size: 13px;">Pink Card</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">--card-accent: #9d174d</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 28-g: var() with no fallback and undefined var → property should be absent (transparent/default) -->
+    <div class="test ok">
+      <div class="test-label">28-g · Undefined var, no fallback — color:var(--totally-absent) → should be default black (no crash)</div>
+      <div class="test-result">
+        <div style="color: var(--totally-absent); font-size: 14px;">
+          This text has an undefined var with no fallback — should fall back to default text color gracefully
+        </div>
+      </div>
+    </div>
+
+    <!-- 28-h: :root-scoped var overridden for a subtree, then restored at sibling -->
+    <div class="test ok">
+      <div class="test-label">28-h · Scope isolation — override inside one div does not bleed into sibling</div>
+      <div class="test-result">
+        <div style="display: flex; gap: 12px; align-items: flex-start;">
+          <!-- Left: override --base-color to red inside this div -->
+          <div style="--base-color: #dc2626; flex: 1; padding: 8px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;">
+            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 4px;">OVERRIDE SCOPE</div>
+            <span class="scoped-badge">Should be red</span>
+          </div>
+          <!-- Right: no override — should still be navy from :root -->
+          <div style="flex: 1; padding: 8px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;">
+            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 4px;">NO OVERRIDE</div>
+            <span class="scoped-badge">Should be navy</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
 </body>
 
 </html>

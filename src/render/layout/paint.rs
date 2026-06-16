@@ -134,21 +134,30 @@ pub fn measure_text(fonts: &mut FontCache, text: &str, style: &Style) -> (i32, i
     let mut max_h   = 0i32;
 
     for (segment, run_font) in &runs {
-        let font = match run_font {
-            RunFont::Symbols => fonts.get_fallback(size),
-            RunFont::Math    => fonts.get_math_fallback(size),
-            RunFont::Primary => fonts.get_family(size, bold, italic, family.clone()),
-        };
-        if let Some(font) = font {
-            if let Ok((w, h)) = font.size_of(segment.as_str()) {
-                total_w += w as i32;
-                max_h    = max_h.max(h as i32);
+        let (sw, sh) = match run_font {
+            RunFont::Symbols => {
+                let size2 = size.clamp(8, 96);
+                fonts.get_fallback(size2)
+                    .and_then(|f| f.size_of(segment.as_str()).ok())
+                    .map(|(w, h)| (w as i32, h as i32))
+                    .unwrap_or((0, 0))
             }
-        }
+            RunFont::Math => {
+                let size2 = size.clamp(8, 96);
+                fonts.get_math_fallback(size2)
+                    .and_then(|f| f.size_of(segment.as_str()).ok())
+                    .map(|(w, h)| (w as i32, h as i32))
+                    .unwrap_or((0, 0))
+            }
+            RunFont::Primary => {
+                fonts.size_of_cached(segment, size, bold, italic, family.clone())
+            }
+        };
+        total_w += sw;
+        max_h    = max_h.max(sh);
     }
 
     if max_h == 0 {
-        // fallback height estimate
         max_h = size as i32;
     }
     (total_w, max_h)
@@ -175,28 +184,22 @@ fn build_font_runs(
     let mut runs: Vec<(String, RunFont)> = Vec::new();
 
     for ch in text.chars() {
-        let primary_has = fonts
-            .get_family(size, bold, italic, family.clone())
-            .map(|f| f.find_glyph(ch).is_some())
-            .unwrap_or(false);
-
-        let run_font = if primary_has {
+        // Fast path: ASCII printable characters are almost always in the primary font.
+        let run_font = if (ch as u32) < 0x80 {
             RunFont::Primary
         } else {
-            // Check symbols font first (arrows, dingbats, misc symbols)
-            let symbols_has = fonts
-                .get_fallback(size)
-                .map(|f| f.find_glyph(ch).is_some())
-                .unwrap_or(false);
-            if symbols_has {
-                RunFont::Symbols
+            let primary_has = fonts.font_has_glyph(size, bold, italic, family.clone(), ch);
+            if primary_has {
+                RunFont::Primary
             } else {
-                // Try math font (∑ ∞ ≠ ≤ ≥ etc.)
-                let math_has = fonts
-                    .get_math_fallback(size)
-                    .map(|f| f.find_glyph(ch).is_some())
-                    .unwrap_or(false);
-                if math_has { RunFont::Math } else { RunFont::Primary }
+                // Check symbols font first (arrows, dingbats, misc symbols)
+                if fonts.fallback_has_glyph(size, ch) {
+                    RunFont::Symbols
+                } else if fonts.math_has_glyph(size, ch) {
+                    RunFont::Math
+                } else {
+                    RunFont::Primary
+                }
             }
         };
 

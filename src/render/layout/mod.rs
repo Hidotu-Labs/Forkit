@@ -3,6 +3,7 @@ pub mod block;
 pub mod inline;
 pub mod table;
 pub mod flex;
+pub mod grid;
 pub mod paint;
 
 pub use state::LayoutState;

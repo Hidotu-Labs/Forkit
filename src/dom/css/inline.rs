@@ -2,6 +2,7 @@ use crate::dom::node::{
     Style, TextAlign, ListStyleType, Display, Visibility, TextTransform, Overflow,
     Border, BorderStyle, Borders, FontFamily, WordBreak, BoxShadow, BgSize, BgRepeat, BgPosition,
     LinearGradient, GradientStop, FlexDirection, FlexWrap, JustifyContent, AlignItems,
+    GridTrackSize, GridAutoFlow, JustifyItems, AlignContent,
 };
 use super::color::parse_color_alpha;
 use super::length::{parse_length, parse_length_ctx, parse_box_spacing, LengthContext};
@@ -103,6 +104,13 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
 
             // Handle background-image url() inside the shorthand
             if !is_color_only_prop && lower_val.contains("url(") {
+                // Reset image/color state before parsing the new shorthand so a
+                // stale bg_alpha (e.g. left at 0 from a prior "background: none")
+                // does not suppress the background image from painting.
+                s.bg_color     = None;
+                s.bg_alpha     = 255;
+                s.bg_image_url = None;
+                s.bg_gradient  = None;
                 if let Some(url) = extract_css_url(val) {
                     s.bg_image_url = Some(url);
                 }
@@ -217,6 +225,9 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 "repeat-y"        => BgRepeat::RepeatY,
                 _                 => BgRepeat::Repeat,
             };
+        }
+        "background-attachment" => {
+            s.bg_attachment_fixed = val.trim().eq_ignore_ascii_case("fixed");
         }
         "background-position" => {
             let tokens: Vec<&str> = val.split_whitespace().collect();
@@ -339,7 +350,9 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 "none"         => { s.display = Display::Hidden;      s.display_block = false; }
                 "flex" | "inline-flex" => {
                                    s.display = Display::Flex;          s.display_block = true; }
-                "block" | "grid" | "list-item" | "table" => {
+                "grid" | "inline-grid" => {
+                                   s.display = Display::Grid;          s.display_block = true; }
+                "block" | "list-item" | "table" => {
                                    s.display = Display::Block;         s.display_block = true; }
                 "inline-block" => { s.display = Display::InlineBlock; s.display_block = false; }
                 _              => { s.display = Display::Inline;      s.display_block = false; }
@@ -468,6 +481,22 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
                 viewport_width:  800,
                 viewport_height: 600,
             };
+            // Check if this is a single percentage value (e.g. "50%") — the
+            // most common case for circular elements.  Store the raw % in
+            // border_radius_raw so layout code can resolve it against the
+            // actual element size.
+            let trimmed = val.trim();
+            if trimmed.ends_with('%') && !trimmed.contains(' ') {
+                if let Ok(pct) = trimmed.trim_end_matches('%').trim().parse::<f32>() {
+                    let pct_u8 = pct.clamp(0.0, 100.0) as u8;
+                    s.border_radius_raw = pct_u8;
+                    // Also store a large px value as fallback for non-image elements
+                    // (they may use their width/height to approximate).
+                    s.border_radius = [9999, 9999, 9999, 9999];
+                    return;
+                }
+            }
+            s.border_radius_raw = 0; // not a deferred percentage
             let tokens: Vec<&str> = val.split_whitespace().collect();
             let parsed: Vec<u16> = tokens.iter()
                 .filter_map(|t| parse_length_ctx(t, &ctx))
@@ -769,14 +798,96 @@ pub(crate) fn apply_property(prop: &str, val: &str, base: u16, s: &mut Style) {
             }
         }
         "gap" | "row-gap" | "column-gap" => {
-            // Simplified: treat gap as uniform spacing between flex items
+            // gap shorthand sets both row-gap and column-gap (and the legacy flex gap).
             if prop == "gap" {
-                // gap can be two values: row-gap column-gap
-                let first = val.split_whitespace().next().unwrap_or(val);
-                s.gap = parse_length(first, base, 0).unwrap_or(0).max(0);
+                let parts: Vec<&str> = val.split_whitespace().collect();
+                let row_g = parse_length(parts.first().copied().unwrap_or("0"), base, 0).unwrap_or(0).max(0);
+                let col_g = if parts.len() >= 2 {
+                    parse_length(parts[1], base, 0).unwrap_or(0).max(0)
+                } else {
+                    row_g
+                };
+                s.row_gap    = row_g;
+                s.column_gap = col_g;
+                // keep legacy flex gap as row_gap
+                s.gap = row_g;
+            } else if prop == "row-gap" {
+                let v = parse_length(val, base, 0).unwrap_or(0).max(0);
+                s.row_gap = v;
+                s.gap     = v;
             } else {
-                s.gap = parse_length(val, base, 0).unwrap_or(0).max(0);
+                s.column_gap = parse_length(val, base, 0).unwrap_or(0).max(0);
             }
+        }
+
+        // ---- CSS Grid container properties ----
+        "grid-template-columns" => {
+            s.grid_template_columns = parse_grid_track_list(val, base);
+        }
+        "grid-template-rows" => {
+            s.grid_template_rows = parse_grid_track_list(val, base);
+        }
+        "grid-template" => {
+            // Simplified: treat as grid-template-rows / grid-template-columns
+            // separated by '/', or just columns if no slash.
+            if let Some(slash) = val.find('/') {
+                s.grid_template_rows    = parse_grid_track_list(val[..slash].trim(), base);
+                s.grid_template_columns = parse_grid_track_list(val[slash+1..].trim(), base);
+            } else {
+                s.grid_template_columns = parse_grid_track_list(val, base);
+            }
+        }
+        "grid-auto-flow" => {
+            s.grid_auto_flow = GridAutoFlow::from_css(val);
+        }
+        "grid-auto-rows" => {
+            if let Some(track) = parse_single_track(val, base) {
+                s.grid_auto_rows = track;
+            }
+        }
+        "grid-auto-columns" => {
+            if let Some(track) = parse_single_track(val, base) {
+                s.grid_auto_columns = track;
+            }
+        }
+        "justify-items" => {
+            s.justify_items = JustifyItems::from_css(val);
+        }
+        "align-content" => {
+            s.align_content = AlignContent::from_css(val);
+        }
+
+        // ---- CSS Grid item placement properties ----
+        "grid-column-start" => {
+            s.grid_column_start = parse_grid_line(val);
+        }
+        "grid-column-end" => {
+            s.grid_column_end = parse_grid_line(val);
+        }
+        "grid-row-start" => {
+            s.grid_row_start = parse_grid_line(val);
+        }
+        "grid-row-end" => {
+            s.grid_row_end = parse_grid_line(val);
+        }
+        "grid-column" => {
+            // "start / end"  or just "start"
+            let (start, end) = parse_grid_line_pair(val);
+            s.grid_column_start = start;
+            s.grid_column_end   = end;
+        }
+        "grid-row" => {
+            let (start, end) = parse_grid_line_pair(val);
+            s.grid_row_start = start;
+            s.grid_row_end   = end;
+        }
+        "grid-area" => {
+            // "row-start / col-start / row-end / col-end"  (all optional)
+            let parts: Vec<&str> = val.split('/').map(str::trim).collect();
+            if parts.len() >= 1 { s.grid_row_start    = parse_grid_line(parts[0]); }
+            if parts.len() >= 2 { s.grid_column_start = parse_grid_line(parts[1]); }
+            if parts.len() >= 3 { s.grid_row_end      = parse_grid_line(parts[2]); }
+            if parts.len() >= 4 { s.grid_column_end   = parse_grid_line(parts[3]); }
         }
 
         _ => {} // unrecognised property — silently ignore
@@ -1217,4 +1328,162 @@ pub(crate) fn extract_css_urls(val: &str) -> Vec<String> {
         if i >= bytes.len() { break; }
     }
     urls
+}
+
+// ---------------------------------------------------------------------------
+// CSS Grid helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a CSS `grid-template-columns` / `grid-template-rows` track list.
+///
+/// Supports: `px`, `fr`, `%`, `auto`, `min-content`, `max-content`,
+/// `repeat(<count>, <track>)`, `minmax(<min>, <max>)`.
+pub(crate) fn parse_grid_track_list(val: &str, base: u16) -> Vec<GridTrackSize> {
+    let mut tracks = Vec::new();
+    let tokens = tokenise_track_list(val);
+    for tok in &tokens {
+        let t = tok.trim();
+        if t.is_empty() { continue; }
+        let tl = t.to_ascii_lowercase();
+        if tl.starts_with("repeat(") && tl.ends_with(')') {
+            // repeat(<count-or-keyword>, <track-list>)
+            let inner = t[7..t.len()-1].trim();
+            let comma = find_top_comma(inner);
+            let (count_str, rest) = if let Some(c) = comma {
+                (&inner[..c], &inner[c+1..])
+            } else {
+                continue;
+            };
+            let count_str = count_str.trim().to_ascii_lowercase();
+            // auto-fill / auto-fit treated as 1 repetition for simplicity
+            let count: usize = if count_str == "auto-fill" || count_str == "auto-fit" {
+                1
+            } else {
+                count_str.parse().unwrap_or(1)
+            };
+            let inner_tracks = parse_grid_track_list(rest.trim(), base);
+            for _ in 0..count {
+                tracks.extend_from_slice(&inner_tracks);
+            }
+        } else {
+            if let Some(track) = parse_single_track(t, base) {
+                tracks.push(track);
+            }
+        }
+    }
+    tracks
+}
+
+/// Parse a single CSS grid track sizing keyword/value.
+pub(crate) fn parse_single_track(val: &str, base: u16) -> Option<GridTrackSize> {
+    let t = val.trim();
+    let tl = t.to_ascii_lowercase();
+    match tl.as_str() {
+        "auto"         => Some(GridTrackSize::Auto),
+        "min-content"  => Some(GridTrackSize::MinContent),
+        "max-content"  => Some(GridTrackSize::MaxContent),
+        _ if tl.starts_with("minmax(") && tl.ends_with(')') => {
+            let inner = t[7..t.len()-1].trim();
+            let comma = find_top_comma(inner)?;
+            let min = parse_single_track(inner[..comma].trim(), base)
+                .unwrap_or(GridTrackSize::Auto);
+            let max = parse_single_track(inner[comma+1..].trim(), base)
+                .unwrap_or(GridTrackSize::Auto);
+            Some(GridTrackSize::Minmax(Box::new(min), Box::new(max)))
+        }
+        _ if tl.ends_with("fr") => {
+            tl.trim_end_matches("fr").trim().parse::<f32>().ok().map(GridTrackSize::Fr)
+        }
+        _ if tl.ends_with('%') => {
+            tl.trim_end_matches('%').trim().parse::<f32>().ok().map(GridTrackSize::Percent)
+        }
+        _ => {
+            // px / em / rem / etc.
+            parse_length(t, base, 0).map(GridTrackSize::Px)
+        }
+    }
+}
+
+/// Parse a `grid-column-start` / `grid-row-start` line value.
+/// Returns the 1-based integer, or 0 for `auto` / `span N`.
+pub(crate) fn parse_grid_line(val: &str) -> i32 {
+    let t = val.trim().to_ascii_lowercase();
+    if t == "auto" { return 0; }
+    // "span N" — store as negative to indicate span (negated line count)
+    if let Some(rest) = t.strip_prefix("span") {
+        let n: i32 = rest.trim().parse().unwrap_or(1);
+        return -n; // negative = span
+    }
+    t.parse().unwrap_or(0)
+}
+
+/// Parse a `grid-column` / `grid-row` shorthand: `"start / end"` or just `"start"`.
+fn parse_grid_line_pair(val: &str) -> (i32, i32) {
+    if let Some(slash) = val.find('/') {
+        (parse_grid_line(val[..slash].trim()), parse_grid_line(val[slash+1..].trim()))
+    } else {
+        let start = parse_grid_line(val);
+        // If start is a positive integer, end = start + 1; otherwise auto.
+        let end = if start > 0 { start + 1 } else { 0 };
+        (start, end)
+    }
+}
+
+/// Tokenise a grid track list, keeping parenthesised groups intact.
+fn tokenise_track_list(val: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    for ch in val.chars() {
+        match ch {
+            '(' => { depth += 1; cur.push(ch); }
+            ')' => {
+                if depth > 0 { depth -= 1; }
+                cur.push(ch);
+                if depth == 0 {
+                    let t = cur.trim().to_string();
+                    if !t.is_empty() { tokens.push(t); }
+                    cur.clear();
+                }
+            }
+            ' ' | '\t' | '\n' if depth == 0 => {
+                let t = cur.trim().to_string();
+                if !t.is_empty() { tokens.push(t); }
+                cur.clear();
+            }
+            // Skip named-line brackets like [line-name]
+            '[' if depth == 0 => {
+                while !cur.is_empty() || ch == '[' {
+                    // flush current token first
+                    let t = cur.trim().to_string();
+                    if !t.is_empty() { tokens.push(t); }
+                    cur.clear();
+                    break;
+                }
+                // skip until ']'
+                depth = 1; // reuse depth as bracket depth
+            }
+            ']' if depth == 1 => {
+                depth = 0; // end named line
+            }
+            _ => { cur.push(ch); }
+        }
+    }
+    let t = cur.trim().to_string();
+    if !t.is_empty() { tokens.push(t); }
+    tokens
+}
+
+/// Find position of the first top-level comma in `s`.
+fn find_top_comma(s: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }

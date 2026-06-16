@@ -95,11 +95,13 @@ pub fn apply_cascade_with_state(root: &mut Node, sheets: &[StyleSheet], state: &
     // ── Collect CSS custom properties from :root ──────────────────────────
     // Any declaration whose property name starts with `--` on the :root
     // element is a custom property.  We gather them here so `var()` can be
-    // resolved for every element in the tree.
-    let css_vars = collect_root_vars(root, sheets);
+    // resolved for every element in the tree.  Scoped vars declared on other
+    // elements are merged in during the tree walk (they shadow root vars for
+    // that subtree, matching CSS custom property inheritance rules).
+    let root_vars = collect_root_vars(root, sheets);
 
     let parent_style = Style::default();
-    cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None, &css_vars);
+    cascade_node_inner(root, sheets, &[], &parent_style, 1.0, state, None, &root_vars);
 }
 
 /// Walk the DOM and reset every element's `style` field to UA defaults +
@@ -111,15 +113,13 @@ fn reset_styles(node: &mut Node) {
             t.style = Style::default();
         }
         Node::Element(el) => {
-            // Reset to a clean Style, then re-apply UA tag defaults and inline
-            // style so structural defaults (display:block, font sizes, etc.)
-            // are preserved while author rules from previous frames are gone.
+            // Reset to a clean Style, then re-apply UA tag defaults.
+            // Do NOT apply inline styles here — cascade_node_inner step 4 does
+            // that after author rules, so inline styles correctly override them.
+            // Applying inline styles here caused them to be overwritten by any
+            // author rule that ran in step 3.
             el.style = Style::default();
             super::ua::apply_tag_defaults(el);
-            if !el.style_attr.is_empty() {
-                let inline = el.style_attr.clone();
-                super::inline::apply_inline(&inline, &mut el.style);
-            }
             for child in &mut el.children {
                 reset_styles(child);
             }
@@ -133,21 +133,25 @@ fn reset_styles(node: &mut Node) {
 fn collect_root_vars(root: &Node, sheets: &[StyleSheet]) -> std::collections::HashMap<String, String> {
     let mut vars = std::collections::HashMap::new();
 
-    // We need the root element to test :root matching (ancestors = []).
     let root_el = match root {
         Node::Element(el) => el,
         _ => return vars,
     };
 
     for sheet in sheets {
-        for rule in &sheet.rules {
+        // Use the index to find only rules that could match :root (tag "html",
+        // id "", class "" → hits tag bucket + universal bucket).
+        let mut seen = std::collections::HashSet::new();
+        let candidates = sheet.candidate_rule_indices(&root_el.tag, &root_el.id, &root_el.class_name);
+        for rule_idx in candidates {
+            if !seen.insert(rule_idx) { continue; }
+            let rule = &sheet.rules[rule_idx];
             let matches_root = rule.selectors.iter().any(|sel| {
                 matches_full(root_el, sel, &[], &PseudoState::none(), None)
             });
             if matches_root {
                 for (prop, val) in &rule.declarations {
                     if prop.starts_with("--") {
-                        // Store without the `--` prefix for easy lookup.
                         vars.insert(prop.clone(), val.clone());
                     }
                 }
@@ -229,14 +233,16 @@ fn find_comma_outside_parens(s: &str) -> Option<usize> {
 }
 
 fn cascade_node_inner(
-    node:             &mut Node,
-    sheets:           &[StyleSheet],
-    ancestors:        &[&Element],
-    parent_style:     &Style,
+    node:              &mut Node,
+    sheets:            &[StyleSheet],
+    ancestors:         &[&Element],
+    parent_style:      &Style,
     inherited_opacity: f32,
-    state:            &PseudoState,
-    sib:              Option<&SiblingCtx<'_>>,
-    css_vars:         &std::collections::HashMap<String, String>,
+    state:             &PseudoState,
+    sib:               Option<&SiblingCtx<'_>>,
+    // The inherited CSS custom-property map from the parent scope.
+    // CSS custom properties inherit down the tree just like `color` does.
+    parent_vars:       &std::collections::HashMap<String, String>,
 ) {
     match node {
         Node::Text(t) => {
@@ -244,16 +250,33 @@ fn cascade_node_inner(
         }
         Node::Element(el) => {
             // ── 1. Collect matching rules ─────────────────────────────────
+            // Use the per-sheet rule index to avoid testing every rule in every
+            // sheet.  For each sheet we pull only the candidate rule indices
+            // (those whose subject key could match this element's tag/class/id),
+            // then run the full selector match only on that smaller set.
             let mut matched: Vec<(usize, usize, Specificity, &[(String, String)])> = Vec::new();
+            // We need a per-sheet deduplicated candidate list.
+            let mut seen_idx = std::collections::HashSet::new();
             for (sheet_idx, sheet) in sheets.iter().enumerate() {
-                for (rule_idx, rule) in sheet.rules.iter().enumerate() {
-                    if rule.selectors.iter().any(|sel| matches_full(el, sel, ancestors, state, sib)) {
-                        let spec = rule.selectors
-                            .iter()
-                            .filter(|sel| matches_full(el, sel, ancestors, state, sib))
-                            .map(|sel| sel.specificity())
-                            .max()
-                            .unwrap_or(Specificity(0, 0, 0));
+                seen_idx.clear();
+                let candidates = sheet.candidate_rule_indices(
+                    &el.tag, &el.id, &el.class_name,
+                );
+                for rule_idx in candidates {
+                    if !seen_idx.insert(rule_idx) { continue; }
+                    let rule = &sheet.rules[rule_idx];
+                    // Compute max specificity among matching selectors in a single pass.
+                    let mut best: Option<Specificity> = None;
+                    for sel in &rule.selectors {
+                        if matches_full(el, sel, ancestors, state, sib) {
+                            let sp = sel.specificity();
+                            best = Some(match best {
+                                None => sp,
+                                Some(b) => b.max(sp),
+                            });
+                        }
+                    }
+                    if let Some(spec) = best {
                         matched.push((sheet_idx, rule_idx, spec, &rule.declarations));
                     }
                 }
@@ -262,19 +285,67 @@ fn cascade_node_inner(
             // ── 2. Sort by (specificity, source_order) so last write wins ─
             matched.sort_by_key(|(si, ri, spec, _)| (*spec, *si, *ri));
 
+            // ── 2b. Build this element's scoped custom-property map ────────
+            // CSS custom properties inherit: start from the parent map and
+            // then overlay any `--name` declarations that match this element.
+            // This means a component can define its own `--color` that shadows
+            // the :root value for its entire subtree, while falling back to the
+            // parent scope for vars it doesn't define itself.
+            //
+            // We also resolve custom-property values against the *current*
+            // (parent + own) map so vars can reference other vars:
+            //   .card { --gap: var(--spacing-md); }
+            let css_vars: std::collections::HashMap<String, String> = {
+                // Check whether any matching rule has a custom property before
+                // cloning the parent map — avoids the clone when nothing changes.
+                let has_own_vars = matched.iter().any(|(_, _, _, decls)| {
+                    decls.iter().any(|(p, _)| p.starts_with("--"))
+                });
+                // Also check the inline style attribute
+                let inline_has_vars = el.style_attr.contains("--");
+
+                if has_own_vars || inline_has_vars {
+                    let mut map = parent_vars.clone();
+
+                    // Collect `--name: value` from matched rules (already sorted
+                    // by specificity so later entries win, which is correct).
+                    for (_, _, _, decls) in &matched {
+                        for (prop, val) in *decls {
+                            if prop.starts_with("--") {
+                                // Resolve any var() inside the value using the map
+                                // as built so far (allows chaining).
+                                let resolved = resolve_vars(val.trim(), &map);
+                                map.insert(prop.clone(), resolved);
+                            }
+                        }
+                    }
+
+                    // Also pick up `--name: value` from the inline style attribute.
+                    if inline_has_vars {
+                        collect_inline_vars(&el.style_attr, &mut map);
+                    }
+
+                    map
+                } else {
+                    // Nothing new — reuse the parent map without cloning.
+                    // We borrow it for the rest of this scope via a Cow-like
+                    // trick: just alias the reference.
+                    parent_vars.clone()
+                }
+            };
+
             // ── 3. Inherit, then apply sheet rules ────────────────────────
             inherit_from(&mut el.style, parent_style);
 
             let base_font = el.style.font_size;
             for (_, _, _, decls) in &matched {
                 for (prop, val) in *decls {
-                    // Skip custom property declarations (--name) — they are
-                    // consumed by collect_root_vars, not applied to Style.
+                    // Skip custom property declarations — already handled above.
                     if prop.starts_with("--") {
                         continue;
                     }
                     // Resolve any var() references before applying.
-                    let resolved_val = resolve_vars(val.trim(), css_vars);
+                    let resolved_val = resolve_vars(val.trim(), &css_vars);
                     let val = resolved_val.trim();
                     let prop_lc = prop.to_ascii_lowercase();
                     if val.eq_ignore_ascii_case("inherit") {
@@ -290,7 +361,7 @@ fn cascade_node_inner(
             // ── 4. Inline style overrides everything ──────────────────────
             if !el.style_attr.is_empty() {
                 let inline_attr = if el.style_attr.contains("var(") {
-                    resolve_vars(&el.style_attr, css_vars)
+                    resolve_vars(&el.style_attr, &css_vars)
                 } else {
                     el.style_attr.clone()
                 };
@@ -335,8 +406,35 @@ fn cascade_node_inner(
                     effective_opacity,
                     state,
                     Some(&sibling_ctx),
-                    css_vars,
+                    &css_vars,
                 );
+            }
+        }
+    }
+}
+
+/// Parse `--name: value` pairs out of a raw inline style string and insert
+/// them (resolved against the existing map) into `vars`.
+///
+/// This is intentionally simple: we split on `;`, look for declarations whose
+/// property name starts with `--`, and skip everything else.  The values are
+/// resolved against the map as it exists at call time so that:
+///   `style="--gap: var(--spacing-md); color: var(--gap)"`
+/// works when `--spacing-md` is already in the map.
+fn collect_inline_vars(
+    style_attr: &str,
+    vars: &mut std::collections::HashMap<String, String>,
+) {
+    for decl in style_attr.split(';') {
+        let decl = decl.trim();
+        if decl.is_empty() { continue; }
+        // Find the first colon — everything before is the property name.
+        if let Some(colon) = decl.find(':') {
+            let prop = decl[..colon].trim();
+            if prop.starts_with("--") {
+                let val = decl[colon + 1..].trim();
+                let resolved = resolve_vars(val, vars);
+                vars.insert(prop.to_owned(), resolved);
             }
         }
     }
@@ -495,6 +593,12 @@ fn matches_simple_with_ctx(
         }
         SimpleSelector::Pseudo(pc) => {
             matches_pseudo(el, pc, ancestors, state, sib)
+        }
+        SimpleSelector::PseudoElement(_) => {
+            // Pseudo-elements (::before, ::-webkit-scrollbar, etc.) never
+            // match real DOM elements.  Any compound selector containing one
+            // is a pseudo-element rule and must not apply to any node.
+            false
         }
     }
 }
@@ -1271,5 +1375,57 @@ mod tests {
         assert!( nth_matches(2, 0, 2));
         assert!(!nth_matches(2, 0, 3));
         assert!( nth_matches(2, 0, 4));
+    }
+
+    /// Regression: .Projects-Table tbody td { color: white } must cascade to <td>.
+    #[test]
+    fn cascade_descendant_class_tag_tag() {
+        // table.Projects-Table > tbody > tr > td
+        let td_el = make_el("td", "", "");
+        let tr_el = Element {
+            tag: "tr".into(), id: String::new(), class_name: String::new(),
+            style_attr: String::new(), attrs_raw: String::new(),
+            style: Style::default(),
+            children: vec![Node::Element(td_el)],
+        };
+        let tbody_el = Element {
+            tag: "tbody".into(), id: String::new(), class_name: String::new(),
+            style_attr: String::new(), attrs_raw: String::new(),
+            style: Style::default(),
+            children: vec![Node::Element(tr_el)],
+        };
+        let table_el = Element {
+            tag: "table".into(), id: String::new(),
+            class_name: "Projects-Table".into(),
+            style_attr: String::new(), attrs_raw: String::new(),
+            style: Style::default(),
+            children: vec![Node::Element(tbody_el)],
+        };
+        let mut root = Node::Element(table_el);
+        let sheet = StyleSheet::parse(".Projects-Table tbody td { color: white; }");
+        apply_cascade(&mut root, &[sheet]);
+        if let Node::Element(tbl) = &root {
+            if let Some(Node::Element(tb)) = tbl.children.first() {
+                if let Some(Node::Element(row)) = tb.children.first() {
+                    if let Some(Node::Element(cell)) = row.children.first() {
+                        assert_eq!(cell.style.color, [255, 255, 255],
+                            ".Projects-Table tbody td color should be white");
+                    } else { panic!("no td"); }
+                } else { panic!("no tr"); }
+            } else { panic!("no tbody"); }
+        }
+    }
+
+    /// Regression: .Music-Prev { color: white } must cascade to <button class="Music-Prev">.
+    #[test]
+    fn cascade_class_on_button() {
+        let btn = make_el("button", "", "Music-Prev");
+        let mut root = Node::Element(btn);
+        let sheet = StyleSheet::parse(".Music-Prev { color: white; }");
+        apply_cascade(&mut root, &[sheet]);
+        if let Node::Element(el) = &root {
+            assert_eq!(el.style.color, [255, 255, 255],
+                ".Music-Prev button color should be white");
+        }
     }
 }

@@ -59,7 +59,20 @@ pub fn paint_form_control(
     let (mut ctrl_w, ctrl_h) = if matches!(input_type.as_str(), "checkbox" | "radio") {
         (16, 16)
     } else if input_type == "range" {
-        (160, 20)
+        // If an explicit width was set via CSS, use it; otherwise fill available space
+        // so that `flex: 1` / `width: 100%` range inputs stretch correctly.
+        let w = if let Some(explicit_w) = s.size.width {
+            explicit_w
+        } else {
+            let ml = s.margin.left;
+            let mr = s.margin.right;
+            let avail = (max_w - ls.cursor_x - ml - mr).max(20);
+            // Respect min-width if set, fall back to a sensible default minimum.
+            let min_w = s.size.min_width.unwrap_or(80);
+            avail.max(min_w)
+        };
+        let h = s.size.height.unwrap_or(20).max(20);
+        (w, h)
     } else if input_type == "color" {
         (50, 28)
     } else {
@@ -73,6 +86,13 @@ pub fn paint_form_control(
             let ml = s.margin.left;
             let mr = s.margin.right;
             ctrl_w = (max_w - ls.margin_left - ls.indent - ml - mr).max(40);
+        } else if s.flex_grow > 0.0 {
+            // Inside a flex container with flex-grow: fill the space allocated by the
+            // parent flex layout (max_w is set to the flex-allocated right boundary).
+            let ml = s.margin.left;
+            let mr = s.margin.right;
+            let avail = (max_w - ls.cursor_x - ml - mr).max(40);
+            ctrl_w = avail;
         } else {
             if tag == "button" {
                 let mut total_w = 0;
@@ -287,7 +307,9 @@ pub fn paint_form_control(
     } else if is_placeholder {
         [160, 160, 160]
     } else {
-        [30, 30, 30]
+        // Use the cascaded CSS color if it was explicitly set (non-default),
+        // otherwise fall back to a dark neutral that works on light backgrounds.
+        if s.color != [0, 0, 0] { s.color } else { [30, 30, 30] }
     };
 
     let text_style = Style {
