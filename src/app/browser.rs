@@ -15,7 +15,9 @@ use crate::render::audio::AudioEngine;
 use crate::ui::searchbar::{SearchBar, BAR_HEIGHT};
 use crate::ui::tabbar::{TabBar, TAB_BAR_HEIGHT};
 use crate::ui::console;
+use crate::ui::history_panel::HistoryPanel;
 use crate::window::window::{AppWindow, DEFAULT_H};
+use super::history::HistoryStore;
 
 use super::loader::{load_dom, PageMeta, ConsoleEntry};
 
@@ -587,6 +589,12 @@ pub struct Browser<'ttf> {
     pub console_close_btn: Option<sdl2::rect::Rect>,
     /// Screen rect of the resize handle (updated each frame while open).
     pub console_resize_rect: Option<sdl2::rect::Rect>,
+    /// Persistent browsing history store (loaded from disk at startup).
+    pub history_store: HistoryStore,
+    /// Whether the history dropdown panel is currently shown.
+    pub history_open: bool,
+    /// Window-absolute coordinates of the top-left corner of the history panel.
+    pub history_anchor: (i32, i32),
 }
 
 impl<'ttf> Browser<'ttf> {
@@ -607,6 +615,10 @@ impl<'ttf> Browser<'ttf> {
 
         let bar_url = tab.current_url().to_owned();
 
+        // Load persistent history; record the initial page visit.
+        let mut history_store = HistoryStore::load();
+        history_store.push(&bar_url, &tab.page_title);
+
         Ok(Browser {
             window,
             fonts:          fonts_cache,
@@ -623,6 +635,9 @@ impl<'ttf> Browser<'ttf> {
             console_resize_hot:  false,
             console_close_btn:   None,
             console_resize_rect: None,
+            history_store,
+            history_open:   false,
+            history_anchor: (0, 0),
         })
     }
 
@@ -710,6 +725,10 @@ impl<'ttf> Browser<'ttf> {
             // Keep the address bar in sync with the active tab if it just finished loading.
             self.sync_bar();
             self.need_draw = true;
+            // Record the visit in the persistent history store.
+            let url   = self.tabs[self.active].current_url().to_owned();
+            let title = self.tabs[self.active].page_title.clone();
+            self.history_store.push(&url, &title);
         }
         changed
     }
@@ -753,6 +772,21 @@ impl<'ttf> Browser<'ttf> {
 
     pub fn can_back(&self)    -> bool { self.tab().can_back() }
     pub fn can_forward(&self) -> bool { self.tab().can_forward() }
+
+    /// Open the history dropdown anchored below the address bar.
+    pub fn toggle_history(&mut self, anchor_x: i32, anchor_y: i32) {
+        self.history_open   = !self.history_open;
+        self.history_anchor = (anchor_x, anchor_y);
+        self.need_draw      = true;
+    }
+
+    /// Close the history dropdown.
+    pub fn close_history(&mut self) {
+        if self.history_open {
+            self.history_open = false;
+            self.need_draw    = true;
+        }
+    }
 
     /// Build a `PseudoState` from the current browser state.
     /// Used to apply dynamic pseudo-classes before each draw.
@@ -1160,6 +1194,22 @@ impl<'ttf> Browser<'ttf> {
             can_forward,
         );
         self.window.canvas.set_viewport(None);
+
+        // ---- history dropdown panel ----
+        if self.history_open {
+            let recent: Vec<&crate::app::history::HistoryEntry> =
+                self.history_store.recent(crate::ui::history_panel::MAX_VISIBLE);
+            let (hx, hy) = self.history_anchor;
+            HistoryPanel::draw(
+                &mut self.window.canvas,
+                &tc,
+                &mut self.fonts,
+                &recent,
+                hx,
+                hy,
+                win_w,
+            );
+        }
 
         self.window.canvas.present();
         self.need_draw = false;

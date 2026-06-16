@@ -9,7 +9,7 @@ pub const BLOCK_TAGS: &[&str] = &[
     "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
     "form", "fieldset", "legend",
     "address", "dialog",
-    "video", "audio", "canvas",
+    "video", "audio", "canvas", "svg",
 ];
 
 pub fn apply_display(el: &mut Element) {

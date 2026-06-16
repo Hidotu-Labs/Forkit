@@ -8,14 +8,14 @@ use crate::render::font::FontCache;
 /// Height of the address-bar chrome in pixels.
 pub const BAR_HEIGHT: i32 = 36;
 
-const BAR_PAD:   i32 = 5;
+pub const BAR_PAD:   i32 = 5;
 const BTN_W:     i32 = 32;
 const BTN_H:     i32 = BAR_HEIGHT - BAR_PAD * 2;
 const FONT_SIZE: u16 = 15;
 
 /// Regions within the bar — used for hit-testing clicks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BarRegion { Back, Forward, Input, None }
+pub enum BarRegion { Back, Forward, History, Input, None }
 
 pub struct SearchBar {
     pub url:     String,
@@ -80,8 +80,12 @@ impl SearchBar {
         let fwd_x = BAR_PAD * 2 + BTN_W;
         draw_nav_button(canvas, fonts, tc, false, fwd_x, BAR_PAD, BTN_W, BTN_H, can_forward);
 
+        // History button (right edge of the bar)
+        let hist_x = win_w - BAR_PAD - BTN_W;
+        draw_history_button(canvas, fonts, tc, hist_x, BAR_PAD, BTN_W, BTN_H);
+
         let input_x = BAR_PAD * 3 + BTN_W * 2;
-        let input_w = (win_w - input_x - BAR_PAD) as u32;
+        let input_w = (hist_x - input_x - BAR_PAD).max(0) as u32;
         let input_h = BTN_H as u32;
 
         let fill = if self.focused { Color::WHITE } else { Color::RGB(248, 248, 248) };
@@ -129,12 +133,14 @@ impl SearchBar {
         let back_x  = BAR_PAD;
         let fwd_x   = BAR_PAD * 2 + BTN_W;
         let input_x = BAR_PAD * 3 + BTN_W * 2;
-        let input_w = win_w - input_x - BAR_PAD;
+        let hist_x  = win_w - BAR_PAD - BTN_W;   // history button at the right edge
+        let input_w = hist_x - input_x - BAR_PAD;
 
         if mx >= back_x  && mx < back_x  + BTN_W            { BarRegion::Back    }
         else if mx >= fwd_x   && mx < fwd_x   + BTN_W       { BarRegion::Forward }
-        else if mx >= input_x && mx < input_x + input_w      { BarRegion::Input   }
-        else                                                  { BarRegion::None    }
+        else if mx >= hist_x  && mx < hist_x  + BTN_W       { BarRegion::History }
+        else if mx >= input_x && mx < input_x + input_w     { BarRegion::Input   }
+        else                                                 { BarRegion::None    }
     }
 }
 
@@ -225,5 +231,67 @@ fn draw_arrow(
             let _ = canvas.fill_rect(Rect::new(base_x, cy + dy, w, 1));
         }
         let _ = canvas.fill_rect(Rect::new(arrow_left, cy - stem_h / 2, stem_len as u32, stem_h as u32));
+    }
+}
+
+/// Draw the history clock button (⏱ icon rendered as a simple clock face).
+fn draw_history_button(
+    canvas: &mut Canvas<Window>,
+    _fonts: &mut FontCache,
+    _tc:    &TextureCreator<WindowContext>,
+    x: i32, y: i32, w: i32, h: i32,
+) {
+    // Button background
+    canvas.set_draw_color(Color::RGB(220, 220, 220));
+    let _ = canvas.fill_rect(Rect::new(x, y, w as u32, h as u32));
+    canvas.set_draw_color(Color::RGB(190, 190, 190));
+    let _ = canvas.draw_rect(Rect::new(x, y, w as u32, h as u32));
+
+    // Draw a simple clock face using scan-line circles
+    let cx = x + w / 2;
+    let cy = y + h / 2;
+    let r  = (w.min(h) / 2 - 4).max(3);
+
+    // Clock circle outline
+    canvas.set_draw_color(Color::RGB(60, 60, 80));
+    draw_circle_outline(canvas, cx, cy, r);
+
+    // Hour hand (pointing to ~10 o'clock: upper-left)
+    let hx = cx + (-r as f32 * 0.45_f32) as i32;
+    let hy = cy + (-r as f32 * 0.45_f32) as i32;
+    let _ = canvas.draw_line(
+        sdl2::rect::Point::new(cx, cy),
+        sdl2::rect::Point::new(hx, hy),
+    );
+
+    // Minute hand (pointing to ~12 o'clock: straight up)
+    let mx2 = cx;
+    let my2 = cy - (r as f32 * 0.7_f32) as i32;
+    let _ = canvas.draw_line(
+        sdl2::rect::Point::new(cx, cy),
+        sdl2::rect::Point::new(mx2, my2),
+    );
+}
+
+/// Draw a circle outline using the midpoint circle algorithm.
+fn draw_circle_outline(canvas: &mut Canvas<Window>, cx: i32, cy: i32, r: i32) {
+    let mut x = r;
+    let mut y = 0_i32;
+    let mut err = 0_i32;
+
+    while x >= y {
+        let pts = [
+            ( x,  y), (-x,  y), ( x, -y), (-x, -y),
+            ( y,  x), (-y,  x), ( y, -x), (-y, -x),
+        ];
+        for (dx, dy) in pts {
+            let _ = canvas.draw_point(sdl2::rect::Point::new(cx + dx, cy + dy));
+        }
+        y += 1;
+        err += 1 + 2 * y;
+        if 2 * (err - x) + 1 > 0 {
+            x -= 1;
+            err += 1 - 2 * x;
+        }
     }
 }

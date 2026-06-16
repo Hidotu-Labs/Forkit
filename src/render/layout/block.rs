@@ -182,6 +182,86 @@ pub fn layout_element(
         return;
     }
 
+    if tag == "svg" {
+        // Inline SVG: the builder stored the raw SVG markup as a single Text child.
+        // Extract it, pre-process via the existing SVG pipeline, and render as a texture.
+        let svg_markup: Option<String> = el.children.iter().find_map(|child| {
+            if let crate::dom::node::Node::Text(t) = child {
+                let trimmed = t.text.trim();
+                if trimmed.starts_with('<') { Some(trimmed.to_owned()) } else { None }
+            } else {
+                None
+            }
+        });
+
+        if let Some(markup) = svg_markup {
+            // Break to its own line (block element).
+            if ls.cursor_x > ls.margin_left + ls.indent {
+                ls.cursor_y += ls.line_height + LINE_SPACING;
+                ls.cursor_x  = ls.margin_left + ls.indent;
+            }
+            ls.cursor_y += BLOCK_MARGIN;
+
+            use sdl2::image::ImageRWops;
+            let (processed, svg_alpha) =
+                crate::render::image::preprocess_svg(markup.as_bytes());
+
+            let rwops = sdl2::rwops::RWops::from_bytes(&processed).ok();
+            let surface = rwops.and_then(|r| r.load_typed("SVG").ok());
+
+            if let Some(surface) = surface {
+                let nat_w = surface.width() as i32;
+                let nat_h = surface.height() as i32;
+
+                // Resolve display dimensions: explicit CSS size, then viewBox natural size,
+                // then cap to available width.
+                let avail_w = (max_w - ls.cursor_x).max(1);
+                let (dw, dh) = match (s.size.width, s.size.height) {
+                    (Some(w), Some(h)) => (w, h),
+                    (Some(w), None)    => {
+                        let h = if nat_w > 0 { w * nat_h / nat_w } else { nat_h };
+                        (w, h)
+                    }
+                    (None, Some(h))    => {
+                        let w = if nat_h > 0 { h * nat_w / nat_h } else { nat_w };
+                        (w, h)
+                    }
+                    (None, None) => {
+                        if nat_w > avail_w {
+                            let h = if nat_w > 0 { avail_w * nat_h / nat_w } else { nat_h };
+                            (avail_w, h)
+                        } else {
+                            (nat_w, nat_h)
+                        }
+                    }
+                };
+
+                if dw > 0 && dh > 0 {
+                    let x       = ls.cursor_x;
+                    let y       = ls.cursor_y;
+                    let ry      = y - ls.ctx.scroll_y;
+
+                    if ry + dh > 0 && ry < ls.ctx.viewport_height {
+                        if let Ok(mut tex) = tc.create_texture_from_surface(&surface) {
+                            let _ = tex.set_blend_mode(sdl2::render::BlendMode::Blend);
+                            let _ = tex.set_alpha_mod(svg_alpha);
+                            let _ = canvas.copy(
+                                &tex,
+                                None,
+                                sdl2::rect::Rect::new(x, ry, dw as u32, dh as u32),
+                            );
+                        }
+                    }
+
+                    ls.cursor_y   += dh + BLOCK_MARGIN;
+                    ls.cursor_x    = ls.margin_left;
+                    ls.line_height = 16;
+                }
+            }
+        }
+        return;
+    }
+
     if tag == "hr" {
         if ls.cursor_x > ls.margin_left + ls.indent {
             ls.newline(font_size, s.line_height_mul);

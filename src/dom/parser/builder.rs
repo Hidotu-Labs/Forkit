@@ -120,6 +120,22 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
                 let inline = el.style_attr.clone();
                 apply_inline(&inline, &mut el.style);
 
+                // Inline SVG: capture the raw markup as a single Text child so
+                // the renderer can hand it directly to the SVG image pipeline.
+                // We do NOT descend into SVG children — this prevents SVG-internal
+                // <style> blocks and <title> elements from polluting the page.
+                if tag == "svg" && tok.kind != TokKind::SelfClose {
+                    let inner = lexer.read_raw_until("svg");
+                    // Re-wrap with the opening <svg ...> tag so nanosvg sees a valid document.
+                    let svg_markup = format!("<svg {}>{}</svg>", tok.attrs, inner);
+                    el.children.push(Node::Text(TextNode {
+                        text:  svg_markup,
+                        style: el.style.clone(),
+                    }));
+                    stack.last_mut().unwrap().children.push(Node::Element(el));
+                    continue;
+                }
+
                 if is_raw_text(tag) && tok.kind != TokKind::SelfClose {
                     let raw = lexer.read_raw_until(tag);
                     el.children.push(Node::Text(TextNode {
