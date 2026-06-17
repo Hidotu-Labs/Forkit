@@ -24,38 +24,6 @@ pub fn handle_event(browser: &mut Browser, event: Event) -> bool {
             let content_w = win_w - console_w;
             let content_h = (win_h - chrome_h).max(0);
 
-            // History dropdown hit-test (must happen before anything else so
-            // clicks inside the panel don't fall through to page content).
-            if browser.history_open {
-                use crate::ui::history_panel::{HistoryPanel, PanelEvent};
-                let (hx, hy) = browser.history_anchor;
-                let recent: Vec<&crate::app::history::HistoryEntry> =
-                    browser.history_store.recent(crate::ui::history_panel::MAX_VISIBLE);
-                let ev = HistoryPanel::hit_test(&recent, x, y, hx, hy, win_w);
-                match ev {
-                    PanelEvent::Navigate(url) => {
-                        browser.history_open = false;
-                        browser.navigate(&url);
-                    }
-                    PanelEvent::Clear => {
-                        browser.history_store.clear();
-                        browser.history_open = false;
-                        browser.need_draw = true;
-                    }
-                    PanelEvent::DismissOutside => {
-                        browser.history_open = false;
-                        browser.need_draw    = true;
-                        // Don't return — let the click fall through to whatever is below.
-                    }
-                    PanelEvent::None => {
-                        // Click inside panel but not on a row — absorb it.
-                        return false;
-                    }
-                }
-                if browser.history_open {
-                    return false;
-                }
-            }
 
             // Console × close button
             if let Some(btn) = browser.console_close_btn {
@@ -89,25 +57,15 @@ pub fn handle_event(browser: &mut Browser, event: Event) -> bool {
                 browser.need_draw = true;
                 match region {
                     BarRegion::Back    => {
-                        browser.close_history();
                         browser.go_back();
                     }
                     BarRegion::Forward => {
-                        browser.close_history();
                         browser.go_forward();
                     }
                     BarRegion::History => {
-                        let (win_w, _) = browser.window.canvas.output_size()
-                            .map(|(w, h)| (w as i32, h as i32))
-                            .unwrap_or((1024, 768));
-                        // Anchor the panel at the right edge of the address bar
-                        let anchor_x = win_w - crate::ui::searchbar::BAR_PAD - 380;
-                        let anchor_y = crate::ui::tabbar::TAB_BAR_HEIGHT
-                            + crate::ui::searchbar::BAR_HEIGHT;
-                        browser.toggle_history(anchor_x.max(0), anchor_y);
+                        browser.navigate("forkit://history");
                     }
                     BarRegion::Input   => {
-                        browser.close_history();
                     }
                     BarRegion::None    => {}
                 }

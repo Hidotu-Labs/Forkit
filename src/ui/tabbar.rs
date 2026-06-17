@@ -7,15 +7,26 @@ use sdl2::image::ImageRWops;
 use crate::render::font::FontCache;
 use crate::render::image::sniff_image_type;
 
-pub const TAB_BAR_HEIGHT: i32 = 28;
+pub const TAB_BAR_HEIGHT: i32 = 36;
 
-const TAB_MIN_W:  i32 = 80;
-const TAB_MAX_W:  i32 = 180;
-const TAB_PAD:    i32 = 8;
-const CLOSE_W:    i32 = 20;
+const TAB_MIN_W:  i32 = 90;
+const TAB_MAX_W:  i32 = 200;
+const TAB_PAD:    i32 = 10;
+const CLOSE_W:    i32 = 18;
 const FONT_SIZE:  u16 = 13;
-const NEW_BTN_W:  i32 = 32;
+const NEW_BTN_W:  i32 = 36;
 const FAVICON_SZ: i32 = 16;
+
+// Light chrome palette
+const CHROME_BG:     (u8,u8,u8) = (240, 240, 245);
+const TAB_ACTIVE_BG: (u8,u8,u8) = (255, 255, 255);
+const TAB_IDLE_BG:   (u8,u8,u8) = (230, 230, 235);
+const ACCENT:        (u8,u8,u8) = (0,   120, 215);  // blue accent line
+const SEP_COL:       (u8,u8,u8) = (210, 210, 220);
+const TEXT_ACTIVE:   (u8,u8,u8) = (30,  30,  40 );
+const TEXT_IDLE:     (u8,u8,u8) = (100, 100, 120);
+const CLOSE_COL:     (u8,u8,u8) = (110, 110, 130);
+const PLUS_COL:      (u8,u8,u8) = (100, 100, 120);
 
 const SPINNER_STEPS: usize = 8;
 const SPINNER_MS: u128 = 100;
@@ -78,7 +89,9 @@ impl TabBar {
             .unwrap_or(0);
         let spinner_frame = ((now_ms / SPINNER_MS) as usize) % SPINNER_STEPS;
 
-        canvas.set_draw_color(Color::RGB(200, 200, 205));
+        // Background strip
+        let (cr, cg, cb) = CHROME_BG;
+        canvas.set_draw_color(Color::RGB(cr, cg, cb));
         let _ = canvas.fill_rect(Rect::new(0, 0, win_w as u32, TAB_BAR_HEIGHT as u32));
 
         let n     = titles.len().max(1);
@@ -89,24 +102,31 @@ impl TabBar {
             let is_active = i == active;
             let is_loading = loading_states.get(i).copied().unwrap_or(false);
 
-            let bg = if is_active { Color::RGB(245, 245, 248) } else { Color::RGB(220, 220, 225) };
-            canvas.set_draw_color(bg);
+            // Tab background
+            let (br, bg_c, bb) = if is_active { TAB_ACTIVE_BG } else { TAB_IDLE_BG };
+            canvas.set_draw_color(Color::RGB(br, bg_c, bb));
             let _ = canvas.fill_rect(Rect::new(tx, 0, tab_w as u32, TAB_BAR_HEIGHT as u32));
 
+            // Right-edge separator between inactive tabs
             if !is_active {
-                canvas.set_draw_color(Color::RGB(180, 180, 185));
-                let _ = canvas.fill_rect(Rect::new(tx + tab_w - 1, 3, 1, (TAB_BAR_HEIGHT - 6) as u32));
+                let (sr, sg, sb) = SEP_COL;
+                canvas.set_draw_color(Color::RGB(sr, sg, sb));
+                let _ = canvas.fill_rect(Rect::new(tx + tab_w - 1, 6, 1, (TAB_BAR_HEIGHT - 12) as u32));
             }
 
+            // Active tab accent underline (2px vivid blue)
             if is_active {
-                canvas.set_draw_color(Color::RGB(245, 245, 248));
-                let _ = canvas.fill_rect(Rect::new(tx, TAB_BAR_HEIGHT - 1, tab_w as u32, 1));
+                let (ar, ag, ab) = ACCENT;
+                canvas.set_draw_color(Color::RGB(ar, ag, ab));
+                let _ = canvas.fill_rect(Rect::new(tx + 2, TAB_BAR_HEIGHT - 2, (tab_w - 4) as u32, 2));
             }
 
+            // Close button
             let close_x = tx + tab_w - TAB_PAD - CLOSE_W;
             let close_y = (TAB_BAR_HEIGHT - CLOSE_W) / 2;
             draw_close_btn(canvas, fonts, tc, close_x, close_y, CLOSE_W);
 
+            // Favicon / spinner
             let icon_drawn_w = if is_loading {
                 let cx = tx + TAB_PAD + FAVICON_SZ / 2;
                 let cy = TAB_BAR_HEIGHT / 2;
@@ -118,22 +138,26 @@ impl TabBar {
                 0
             };
 
-            let icon_gap    = if icon_drawn_w > 0 { icon_drawn_w + 4 } else { 0 };
+            // Title
+            let icon_gap      = if icon_drawn_w > 0 { icon_drawn_w + 5 } else { 0 };
             let display_title = if is_loading { "Loading...".to_owned() } else { title.clone() };
-            let text_x      = tx + TAB_PAD + icon_gap;
-            let text_max_w  = (close_x - text_x - 4).max(0);
+            let text_x        = tx + TAB_PAD + icon_gap;
+            let text_max_w    = (close_x - text_x - 4).max(0);
             if text_max_w > 0 {
-                let text_col = if is_active { Color::RGB(20, 20, 20) } else { Color::RGB(70, 70, 70) };
-                draw_tab_text(canvas, fonts, tc, &display_title, text_x, 0, text_max_w, TAB_BAR_HEIGHT, text_col);
+                let (tr, tg, tb) = if is_active { TEXT_ACTIVE } else { TEXT_IDLE };
+                draw_tab_text(canvas, fonts, tc, &display_title, text_x, 0, text_max_w, TAB_BAR_HEIGHT, Color::RGB(tr, tg, tb));
             }
         }
 
+        // '+' new-tab button
         let new_x = titles.len() as i32 * tab_w;
         if new_x + NEW_BTN_W <= win_w {
             draw_plus_btn(canvas, new_x, 0, NEW_BTN_W, TAB_BAR_HEIGHT);
         }
 
-        canvas.set_draw_color(Color::RGB(180, 180, 185));
+        // Bottom border (accent line width, subtle)
+        let (sr, sg, sb) = SEP_COL;
+        canvas.set_draw_color(Color::RGB(sr, sg, sb));
         let _ = canvas.fill_rect(Rect::new(0, TAB_BAR_HEIGHT - 1, win_w as u32, 1));
     }
 }
@@ -166,12 +190,22 @@ fn draw_tab_text(
 }
 
 fn draw_plus_btn(canvas: &mut Canvas<Window>, bx: i32, by: i32, bw: i32, bh: i32) {
-    let cx   = bx + bw / 2;
-    let cy   = by + bh / 2;
-    let half = bw / 5;
-    let thick = 2.max(bh / 8);
-
-    canvas.set_draw_color(Color::RGB(60, 60, 60));
+    // Pill-shaped area hint (just a subtle hover-state circle fill)
+    let cx    = bx + bw / 2;
+    let cy    = by + bh / 2;
+    let r     = (bw.min(bh) / 2 - 4).max(4);
+    // Draw a faint circle background
+    let (pr, pg, pb) = (220, 220, 230);
+    canvas.set_draw_color(Color::RGB(pr, pg, pb));
+    for dy in -r..=r {
+        let half_w = ((r*r - dy*dy) as f64).sqrt() as i32;
+        let _ = canvas.fill_rect(Rect::new(cx - half_w, cy + dy, (half_w * 2) as u32, 1));
+    }
+    // Cross arms
+    let half  = r / 2;
+    let thick = 2_i32;
+    let (pr, pg, pb) = PLUS_COL;
+    canvas.set_draw_color(Color::RGB(pr, pg, pb));
     let _ = canvas.fill_rect(Rect::new(cx - half, cy - thick / 2, (half * 2) as u32, thick as u32));
     let _ = canvas.fill_rect(Rect::new(cx - thick / 2, cy - half, thick as u32, (half * 2) as u32));
 }
@@ -182,18 +216,26 @@ fn draw_close_btn(
     _tc:    &TextureCreator<WindowContext>,
     x: i32, y: i32, size: i32,
 ) {
-    let pad = size / 4;
+    // Subtle dark circle hover background
+    let cx    = x + size / 2;
+    let cy    = y + size / 2;
+    let r     = size / 2 - 1;
+    canvas.set_draw_color(Color::RGB(225, 225, 235));
+    for dy in -r..=r {
+        let half_w = ((r*r - dy*dy) as f64).sqrt() as i32;
+        let _ = canvas.fill_rect(Rect::new(cx - half_w, cy + dy, (half_w * 2) as u32, 1));
+    }
+    // Cross
+    let pad = size / 4 + 1;
     let x1  = x + pad;
     let y1  = y + pad;
     let x2  = x + size - pad;
     let y2  = y + size - pad;
-
-    canvas.set_draw_color(Color::RGB(90, 90, 90));
-    for d in -1..=1_i32 {
+    let (cr, cg, cb) = CLOSE_COL;
+    canvas.set_draw_color(Color::RGB(cr, cg, cb));
+    for d in 0..=1_i32 {
         let _ = canvas.draw_line(sdl2::rect::Point::new(x1 + d, y1), sdl2::rect::Point::new(x2 + d, y2));
-        let _ = canvas.draw_line(sdl2::rect::Point::new(x1, y1 + d), sdl2::rect::Point::new(x2, y2 + d));
         let _ = canvas.draw_line(sdl2::rect::Point::new(x2 + d, y1), sdl2::rect::Point::new(x1 + d, y2));
-        let _ = canvas.draw_line(sdl2::rect::Point::new(x2, y1 + d), sdl2::rect::Point::new(x1, y2 + d));
     }
 }
 
@@ -207,11 +249,11 @@ fn draw_spinner(canvas: &mut Canvas<Window>, cx: i32, cy: i32, r: i32, frame: us
 
         let dist = (dots + frame - i) % dots;
         let color = match dist {
-            0 => Color::RGB(60, 120, 220),
-            1 => Color::RGB(90, 150, 230),
-            2 => Color::RGB(140, 180, 235),
-            3 => Color::RGB(185, 205, 240),
-            _ => Color::RGB(210, 215, 225),
+            0 => Color::RGB(0, 100, 200),
+            1 => Color::RGB(60, 140, 220),
+            2 => Color::RGB(120, 180, 235),
+            3 => Color::RGB(180, 205, 240),
+            _ => Color::RGB(220, 225, 235),
         };
 
         canvas.set_draw_color(color);

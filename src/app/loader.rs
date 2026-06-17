@@ -154,7 +154,42 @@ fn md5_hash(s: &str) -> u64 {
 
 fn fetch_html(source: &str) -> Option<(String, String)> {
     if source == "about:blank" || source == "about:newtab" {
-        return Some((source.to_owned(), "<html><body></body></html>".to_owned()));
+        return Some((source.to_owned(), "<html><body style=\"background:white\"></body></html>".to_owned()));
+    }
+
+    if source == "forkit://history" {
+        let store = crate::app::history::HistoryStore::load();
+        let mut html = String::from("<html><head><title>History</title>\
+            <style>\
+                body { font-family: sans-serif; background: #f8f8fb; color: #333; margin: 0; padding: 40px; }\
+                .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }\
+                h1 { margin-top: 0; color: #222; font-weight: 600; font-size: 24px; display: flex; justify-content: space-between; align-items: center; }\
+                .entry { border-bottom: 1px solid #eee; padding: 16px 0; display: flex; flex-direction: column; gap: 4px; }\
+                .entry:last-child { border-bottom: none; }\
+                .entry-title { font-weight: 500; color: #000; text-decoration: none; font-size: 16px; }\
+                .entry-title:hover { text-decoration: underline; color: #0078d7; }\
+                .entry-url { color: #0066cc; font-size: 13px; text-decoration: none; word-break: break-all; }\
+                .entry-meta { color: #888; font-size: 11px; margin-top: 4px; }\
+                .clear-btn { background: #e8eaed; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; color: #444; font-size: 13px; font-weight: 500; transition: background 0.2s; }\
+                .clear-btn:hover { background: #dadce0; }\
+            </style></head><body><div class=\"container\">");
+        
+        html.push_str("<h1>History</h1>");
+        
+        if store.entries.is_empty() {
+            html.push_str("<p style=\"color:#888;text-align:center;padding:40px 0;\">No history yet.</p>");
+        } else {
+            for entry in store.entries.iter().rev() {
+                let display_title = if entry.title.is_empty() { &entry.url } else { &entry.title };
+                html.push_str("<div class=\"entry\">");
+                html.push_str(&format!("<a class=\"entry-title\" href=\"{}\">{}</a>", entry.url, display_title));
+                html.push_str(&format!("<a class=\"entry-url\" href=\"{}\">{}</a>", entry.url, entry.url));
+                html.push_str("</div>");
+            }
+        }
+        
+        html.push_str("</div></body></html>");
+        return Some((source.to_owned(), html));
     }
 
     if source.starts_with("http://") || source.starts_with("https://") {

@@ -15,18 +15,17 @@ use crate::render::audio::AudioEngine;
 use crate::ui::searchbar::{SearchBar, BAR_HEIGHT};
 use crate::ui::tabbar::{TabBar, TAB_BAR_HEIGHT};
 use crate::ui::console;
-use crate::ui::history_panel::HistoryPanel;
 use crate::window::window::{AppWindow, DEFAULT_H};
 use super::history::HistoryStore;
 
 use super::loader::{load_dom, PageMeta, ConsoleEntry};
 
 // Scrollbar appearance constants
-pub const SCROLLBAR_W:         i32 = 12;
-const SCROLLBAR_MIN_THUMB: i32 = 24;
-const SCROLLBAR_TRACK_COLOR: (u8, u8, u8) = (220, 220, 220);
-const SCROLLBAR_THUMB_COLOR: (u8, u8, u8) = (160, 160, 160);
-const SCROLLBAR_THUMB_HOVER: (u8, u8, u8) = (120, 120, 120);
+pub const SCROLLBAR_W:         i32 = 8;
+const SCROLLBAR_MIN_THUMB: i32 = 28;
+const SCROLLBAR_TRACK_COLOR: (u8, u8, u8) = (240, 240, 245);
+const SCROLLBAR_THUMB_COLOR: (u8, u8, u8) = (200, 200, 210);
+const SCROLLBAR_THUMB_HOVER: (u8, u8, u8) = (160, 160, 175);
 
 // ---------------------------------------------------------------------------
 // History (per-tab)
@@ -591,10 +590,6 @@ pub struct Browser<'ttf> {
     pub console_resize_rect: Option<sdl2::rect::Rect>,
     /// Persistent browsing history store (loaded from disk at startup).
     pub history_store: HistoryStore,
-    /// Whether the history dropdown panel is currently shown.
-    pub history_open: bool,
-    /// Window-absolute coordinates of the top-left corner of the history panel.
-    pub history_anchor: (i32, i32),
 }
 
 impl<'ttf> Browser<'ttf> {
@@ -636,8 +631,6 @@ impl<'ttf> Browser<'ttf> {
             console_close_btn:   None,
             console_resize_rect: None,
             history_store,
-            history_open:   false,
-            history_anchor: (0, 0),
         })
     }
 
@@ -772,21 +765,6 @@ impl<'ttf> Browser<'ttf> {
 
     pub fn can_back(&self)    -> bool { self.tab().can_back() }
     pub fn can_forward(&self) -> bool { self.tab().can_forward() }
-
-    /// Open the history dropdown anchored below the address bar.
-    pub fn toggle_history(&mut self, anchor_x: i32, anchor_y: i32) {
-        self.history_open   = !self.history_open;
-        self.history_anchor = (anchor_x, anchor_y);
-        self.need_draw      = true;
-    }
-
-    /// Close the history dropdown.
-    pub fn close_history(&mut self) {
-        if self.history_open {
-            self.history_open = false;
-            self.need_draw    = true;
-        }
-    }
 
     /// Build a `PseudoState` from the current browser state.
     /// Used to apply dynamic pseudo-classes before each draw.
@@ -1111,21 +1089,43 @@ impl<'ttf> Browser<'ttf> {
         {
             let sx = content_w - SCROLLBAR_W;
 
+            // Track (very subtle, nearly invisible)
             let (tr, tg, tb) = SCROLLBAR_TRACK_COLOR;
             self.window.canvas.set_draw_color(Color::RGB(tr, tg, tb));
             let _ = self.window.canvas.fill_rect(Rect::new(
                 sx, chrome_h + track_y, SCROLLBAR_W as u32, track_h as u32,
             ));
 
+            // Thumb — pill-shaped (filled circle + rect)
             let dragging = self.scrollbar_drag.is_some();
             let (cr, cg, cb) = if dragging { SCROLLBAR_THUMB_HOVER } else { SCROLLBAR_THUMB_COLOR };
-            self.window.canvas.set_draw_color(Color::RGB(cr, cg, cb));
-            let _ = self.window.canvas.fill_rect(Rect::new(
-                sx + 2,
-                chrome_h + track_y + thumb_y,
-                (SCROLLBAR_W - 4) as u32,
-                thumb_h as u32,
-            ));
+            let tc_color = Color::RGB(cr, cg, cb);
+            let thumb_x   = sx + 1;
+            let thumb_abs_y = chrome_h + track_y + thumb_y;
+            let thumb_inner_w = SCROLLBAR_W - 2;
+            let r = thumb_inner_w / 2;
+            self.window.canvas.set_draw_color(tc_color);
+            // Top cap
+            for dy in -r..=r {
+                let half_w = ((r*r - dy*dy) as f64).sqrt() as i32;
+                let _ = self.window.canvas.fill_rect(Rect::new(
+                    thumb_x + r - half_w, thumb_abs_y + r + dy, (half_w * 2) as u32, 1
+                ));
+            }
+            // Body (between caps)
+            if thumb_h > r * 2 {
+                let _ = self.window.canvas.fill_rect(Rect::new(
+                    thumb_x, thumb_abs_y + r, thumb_inner_w as u32, (thumb_h - r * 2) as u32,
+                ));
+            }
+            // Bottom cap
+            let bot_cy = thumb_abs_y + thumb_h - r;
+            for dy in -r..=r {
+                let half_w = ((r*r - dy*dy) as f64).sqrt() as i32;
+                let _ = self.window.canvas.fill_rect(Rect::new(
+                    thumb_x + r - half_w, bot_cy + dy, (half_w * 2) as u32, 1
+                ));
+            }
         }
 
         // ---- console panel ----
@@ -1195,21 +1195,6 @@ impl<'ttf> Browser<'ttf> {
         );
         self.window.canvas.set_viewport(None);
 
-        // ---- history dropdown panel ----
-        if self.history_open {
-            let recent: Vec<&crate::app::history::HistoryEntry> =
-                self.history_store.recent(crate::ui::history_panel::MAX_VISIBLE);
-            let (hx, hy) = self.history_anchor;
-            HistoryPanel::draw(
-                &mut self.window.canvas,
-                &tc,
-                &mut self.fonts,
-                &recent,
-                hx,
-                hy,
-                win_w,
-            );
-        }
 
         self.window.canvas.present();
         self.need_draw = false;

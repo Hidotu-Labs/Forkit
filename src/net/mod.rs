@@ -172,7 +172,8 @@ pub fn resolve_url(input: &str, base: &str) -> String {
 
     // Already fully qualified
     if input.starts_with("http://") || input.starts_with("https://")
-        || input.starts_with("file://")
+        || input.starts_with("file://") || input.starts_with("forkit://")
+        || input.starts_with("about:")
     {
         return input.to_owned();
     }
