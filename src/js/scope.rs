@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 /// Variable store for script execution.
 ///
 /// Maintains a stack of frames so that block-scoped `let`/`const` bindings
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use crate::js::types::JsValue;
 use crate::js::console::ConsoleEntry;
 
+#[derive(Clone)]
 pub struct Scope {
     /// Stack of frames; the last entry is the innermost (current) scope.
     /// There is always at least one frame (the global frame).

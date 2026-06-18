@@ -827,6 +827,17 @@ pub fn layout_element(
 
         paint_block_border(ls, canvas, s, block_x, start_y, block_w, block_h);
         ls.boxes.push(LayoutBox { x: block_x, y: start_y, w: block_w, h: block_h });
+        
+        for (etype, _) in &el.event_listeners {
+            ls.event_areas.push(crate::render::layout::state::EventArea {
+                x: block_x,
+                y: start_y,
+                w: block_w,
+                h: block_h,
+                element_ptr: el as *const Element as usize,
+                event_type: etype.clone(),
+            });
+        }
 
         let is_positioned = s.position != crate::dom::node::Position::Static;
         if is_positioned {

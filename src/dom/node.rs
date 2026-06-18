@@ -629,6 +629,9 @@ pub struct Element {
     pub attrs_raw:  String,
     pub style:      Style,
     pub children:   Vec<Node>,
+    /// JavaScript event listeners registered via `addEventListener`.
+    /// Stores the event type (e.g. "click") and the function definition.
+    pub event_listeners: Vec<(String, crate::js::types::JsFunction)>,
 }
 
 #[derive(Debug)]

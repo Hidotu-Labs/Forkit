@@ -27,7 +27,7 @@
 ///   el.appendChild(child)
 ///   el.remove()
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 use crate::dom::node::{Node, Element, TextNode, Style};
 use crate::dom::parser::get_attr;
 
@@ -57,6 +57,10 @@ pub enum DomMutation {
     AppendChild     { path: Vec<usize>, child_tag: String, child_text: String },
     /// Remove the element from its parent.
     Remove          { path: Vec<usize> },
+    /// Add an event listener.
+    AddEventListener { path: Vec<usize>, event_type: String, callback: crate::js::types::JsFunction },
+    /// Set a timer to execute a callback after `delay_ms`.
+    SetTimeout { callback: crate::js::types::JsFunction, delay_ms: u32 },
 }
 
 // ---------------------------------------------------------------------------
@@ -122,26 +126,26 @@ pub struct JsDom<'a> {
     pub title:  String,
     /// Pending mutations collected during JS execution.
     /// Applied to the live DOM after all scripts finish via `take_mutations()`.
-    pub mutations: RefCell<Vec<DomMutation>>,
+    pub mutations: Mutex<Vec<DomMutation>>,
 }
 
 impl<'a> JsDom<'a> {
     pub fn new(root: &'a Node) -> Self {
-        JsDom { root, title: String::new(), mutations: RefCell::new(Vec::new()) }
+        JsDom { root, title: String::new(), mutations: Mutex::new(Vec::new()) }
     }
 
     pub fn with_title(root: &'a Node, title: String) -> Self {
-        JsDom { root, title, mutations: RefCell::new(Vec::new()) }
+        JsDom { root, title, mutations: Mutex::new(Vec::new()) }
     }
 
     /// Consume and return all pending mutations.
     pub fn take_mutations(&self) -> Vec<DomMutation> {
-        self.mutations.borrow_mut().drain(..).collect()
+        self.mutations.lock().unwrap().drain(..).collect()
     }
 
     /// Queue a write mutation.
     pub fn push_mutation(&self, m: DomMutation) {
-        self.mutations.borrow_mut().push(m);
+        self.mutations.lock().unwrap().push(m);
     }
 
     /// document.getElementById(id)  — returns first match or None
@@ -197,6 +201,22 @@ impl<'a> JsDom<'a> {
         }
     }
 
+    /// document.addEventListener(type, callback)
+    pub fn add_event_listener(&self, path: Vec<usize>, event_type: &str, callback: crate::js::types::JsFunction) {
+        self.push_mutation(DomMutation::AddEventListener {
+            path,
+            event_type: event_type.to_owned(),
+            callback,
+        });
+    }
+
+    pub fn set_timeout(&self, callback: crate::js::types::JsFunction, delay_ms: u32) {
+        self.push_mutation(DomMutation::SetTimeout {
+            callback,
+            delay_ms,
+        });
+    }
+
     /// document.title — from the pre-extracted page title
     pub fn title(&self) -> String {
         if !self.title.is_empty() {
@@ -221,7 +241,7 @@ pub fn apply_mutations(root: &mut Node, mutations: Vec<DomMutation>) {
     }
 }
 
-fn apply_one(root: &mut Node, mutation: DomMutation) {
+pub fn apply_one(root: &mut Node, mutation: DomMutation) {
     match mutation {
         DomMutation::SetTextContent { path, value } => {
             if path.is_empty() { return; } // detached element — no-op
@@ -301,6 +321,7 @@ fn apply_one(root: &mut Node, mutation: DomMutation) {
                     attrs_raw:  String::new(),
                     style:      Style::default(),
                     children:   Vec::new(),
+                    event_listeners: Vec::new(),
                 };
                 crate::dom::css::apply_tag_defaults(&mut child_el);
                 if !child_text.is_empty() {
@@ -322,6 +343,13 @@ fn apply_one(root: &mut Node, mutation: DomMutation) {
                 }
             }
         }
+        DomMutation::AddEventListener { path, event_type, callback } => {
+            if path.is_empty() { return; }
+            if let Some(el) = navigate_mut(root, &path) {
+                el.event_listeners.push((event_type, callback));
+            }
+        }
+        DomMutation::SetTimeout { .. } => {}
     }
 }
 

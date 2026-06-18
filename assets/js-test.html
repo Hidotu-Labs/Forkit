@@ -404,6 +404,23 @@
     <div class="row write" id="arr-in-fn">arr-in-fn not yet run</div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>22a. Event Listeners — addEventListener</h2>
+  <div class="card">
+    <div class="label">el.addEventListener("click", callback)</div>
+    <div id="evt-click-btn" class="row info" style="cursor: pointer; user-select: none; border: 2px solid #0064c8; text-align: center; font-weight: bold;">
+      CLICK ME TO TEST
+    </div>
+    <div id="evt-result" class="row info">Result will appear here</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>22b. Timers — setTimeout</h2>
+  <div class="card">
+    <div class="label">setTimeout(callback, delay_ms)</div>
+    <div id="timer-result" class="row info">Waiting 2 seconds...</div>
+  </div>
+
   <script>
     // ════════════════════════════════════════════════════════
     // 17a — Variables & arithmetic
@@ -1358,7 +1375,40 @@
     }
 
     console.warn("Array tests complete");
-  </script>
 
+    // ════════════════════════════════════════════════════════
+    // 22a — Event Listeners
+    // ════════════════════════════════════════════════════════
+    console.log("--- 22a: addEventListener ---");
+    let clickBtn = document.getElementById("evt-click-btn");
+    let clickResult = document.getElementById("evt-result");
+    let clickCount = 0;
+
+    if (clickBtn && clickResult) {
+        clickBtn.addEventListener("click", function() {
+            clickCount++;
+            clickResult.textContent = "PASS: Button clicked " + clickCount + " times!";
+            clickResult.className = "row pass";
+            clickBtn.style.backgroundColor = "#e8f5e9";
+            console.log("Button click handler executed! count=" + clickCount);
+        });
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 22b — Timers
+    // ════════════════════════════════════════════════════════
+    console.log("--- 22b: setTimeout ---");
+    let timerResult = document.getElementById("timer-result");
+    if (timerResult) {
+        console.log("Setting timeout for 2000ms...");
+        setTimeout(function() {
+            console.log("Timer callback executing!");
+            timerResult.textContent = "PASS: Timer executed after delay!";
+            timerResult.className = "row pass";
+        }, 2000);
+    }
+
+    console.warn("All initial JS tests complete");
+  </script>
 </body>
 </html>

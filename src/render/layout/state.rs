@@ -128,6 +128,24 @@ impl DetailsArea {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EventArea {
+    pub x:           i32,
+    pub y:           i32,
+    pub w:           i32,
+    pub h:           i32,
+    pub element_ptr: usize,
+    pub event_type:  String,
+}
+
+impl EventArea {
+    pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
+        let ay = self.y - scroll_y;
+        px >= self.x && px < self.x + self.w
+            && py >= ay && py < ay + self.h
+    }
+}
+
 /// Hit-testable region for an `<audio>` player rendered on the page.
 #[derive(Debug, Clone)]
 pub struct AudioArea {
@@ -217,6 +235,7 @@ pub struct LayoutState<'ctx> {
     pub button_areas: Vec<ButtonArea>,
     pub details_areas: Vec<DetailsArea>,
     pub audio_areas: Vec<AudioArea>,
+    pub event_areas: Vec<EventArea>,
     /// Playback state for audio elements, keyed by per-page audio index.
     /// Set by the browser before each layout pass via `set_audio_state`.
     pub audio_playback: std::collections::HashMap<usize, AudioPlayback>,
@@ -258,6 +277,7 @@ impl<'ctx> LayoutState<'ctx> {
             button_areas:  Vec::new(),
             details_areas: Vec::new(),
             audio_areas:   Vec::new(),
+            event_areas:   Vec::new(),
             audio_playback: std::collections::HashMap::new(),
             audio_count:   0,
             input_count:   0,

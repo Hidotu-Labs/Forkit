@@ -19,7 +19,7 @@ pub struct PageMeta {
     pub viewport_initial_scale: f32,
 }
 
-pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<(String, bool, bool, String)>, Vec<ConsoleEntry>)> {
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<(String, bool, bool, String)>, Vec<ConsoleEntry>, crate::js::scope::Scope, Vec<super::browser::JsTimer>)> {
     let (final_url, html) = fetch_html(source)?;
 
     // --- Parse <meta charset>, <meta viewport>, <base href> from the HTML ----
@@ -86,18 +86,30 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>
 
     let mut console_entries: Vec<ConsoleEntry> = Vec::new();
     let js_dom = js::JsDom::with_title(&dom, meta.title.clone());
+    let mut js_scope = js::scope::Scope::new();
     for (_label, src) in extract_scripts(&html, &effective_base) {
-        for entry in js::execute_with_dom(&src, &js_dom) {
+        for entry in js::interpreter::execute_with_dom_and_scope(&src, &js_dom, &mut js_scope) {
             console_entries.push(entry);
         }
     }
+    let mut initial_timers = Vec::new();
     let mutations = js_dom.take_mutations();
     if !mutations.is_empty() {
-        js::apply_mutations(&mut dom, mutations);
+        for muta in mutations {
+            match muta {
+                js::DomMutation::SetTimeout { callback, delay_ms } => {
+                    initial_timers.push(super::browser::JsTimer {
+                        fire_at:  std::time::Instant::now() + std::time::Duration::from_millis(delay_ms as u64),
+                        callback,
+                    });
+                }
+                _ => js::apply_one(&mut dom, muta),
+            }
+        }
         crate::dom::css::apply_cascade(&mut dom, &sheets);
     }
 
-    Some((final_url, dom, meta, sheets, downloaded_fonts, console_entries))
+    Some((final_url, dom, meta, sheets, downloaded_fonts, console_entries, js_scope, initial_timers))
 }
 
 /// If the HTML head declares a single-byte charset that differs from UTF-8,

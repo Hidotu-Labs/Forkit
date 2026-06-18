@@ -13,7 +13,7 @@ use crate::js::lexer::{Lexer, Token};
 // Loose equality (==) — simplified JS semantics
 // ---------------------------------------------------------------------------
 use crate::js::types::JsValue;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub fn js_loose_eq(a: &JsValue, b: &JsValue) -> bool {
     match (a, b) {
@@ -24,8 +24,8 @@ pub fn js_loose_eq(a: &JsValue, b: &JsValue) -> bool {
         (JsValue::Bool(x),   JsValue::Bool(y))   => x == y,
         (JsValue::Number(x), JsValue::Number(y)) => x == y,
         (JsValue::Str(x),    JsValue::Str(y))    => x == y,
-        // Two arrays are only equal if they are the exact same Rc (reference equality).
-        (JsValue::Array(x),  JsValue::Array(y))  => Rc::ptr_eq(x, y),
+        // Two arrays are only equal if they are the exact same Arc (reference equality).
+        (JsValue::Array(x),  JsValue::Array(y))  => Arc::ptr_eq(x, y),
         _ => a.to_number() == b.to_number(),
     }
 }

@@ -1,7 +1,6 @@
 /// Core JS value type and coercions.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// A stored function definition (named or anonymous).
 #[derive(Debug, Clone)]
@@ -23,9 +22,8 @@ pub enum JsValue {
     Number(f64),
     Str(String),
     Function(Box<JsFunction>),
-    /// A JS array — shared via Rc<RefCell<>> so mutations are visible through
-    /// all variable bindings that hold a reference to the same array.
-    Array(Rc<RefCell<Vec<JsValue>>>),
+    /// A JS array — shared via Arc<Mutex<>> so it is Send.
+    Array(Arc<Mutex<Vec<JsValue>>>),
 }
 
 impl JsValue {
@@ -48,7 +46,7 @@ impl JsValue {
             }
             JsValue::Str(s) => s.clone(),
             JsValue::Array(arr) => {
-                let items = arr.borrow();
+                let items = arr.lock().unwrap();
                 items.iter().map(|v| v.to_display()).collect::<Vec<_>>().join(",")
             }
         }
@@ -82,6 +80,6 @@ impl JsValue {
 
     /// Convenience: return a new empty array value.
     pub fn new_array() -> Self {
-        JsValue::Array(Rc::new(RefCell::new(Vec::new())))
+        JsValue::Array(Arc::new(Mutex::new(Vec::new())))
     }
 }

@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 /// Statement runner — drives the top-level execution loop.
 
 use crate::js::lexer::{Lexer, Token};
@@ -11,13 +12,34 @@ use crate::js::dom::{JsDom, JsElement};
 // ---------------------------------------------------------------------------
 
 /// Execute JS without any DOM access (original behaviour).
+/// Execute JS without any DOM access (original behaviour).
 pub fn execute(src: &str) -> Vec<ConsoleEntry> {
-    execute_inner(src, None)
+    let mut scope = Scope::new();
+    execute_inner_with_scope(src, None, &mut scope)
 }
 
 /// Execute JS with read access to the parsed DOM.
 pub fn execute_with_dom<'a>(src: &str, dom: &'a JsDom<'a>) -> Vec<ConsoleEntry> {
-    execute_inner(src, Some(dom))
+    let mut scope = Scope::new();
+    execute_inner_with_scope(src, Some(dom), &mut scope)
+}
+
+/// Execute JS with read access to the parsed DOM and a persistent scope.
+pub fn execute_with_dom_and_scope<'a>(src: &str, dom: &'a JsDom<'a>, scope: &mut Scope) -> Vec<ConsoleEntry> {
+    execute_inner_with_scope(src, Some(dom), scope)
+}
+
+/// Execute a specific JS function with arguments.
+pub fn execute_function(
+    func: &crate::js::types::JsFunction,
+    args: Vec<JsValue>,
+    dom:  &JsDom<'_>,
+    scope: &mut Scope,
+) -> Vec<ConsoleEntry> {
+    let mut entries = Vec::new();
+    // call_function is internal but we want to expose it via this wrapper.
+    let _ = call_function(func, args, &mut entries, Some(dom), scope, 0);
+    entries
 }
 
 /// Pre-scan the source for top-level `function name(params){body}` declarations
@@ -44,13 +66,12 @@ fn hoist_functions(src: &str, scope: &mut Scope) {
     }
 }
 
-fn execute_inner(src: &str, dom: Option<&JsDom<'_>>) -> Vec<ConsoleEntry> {
+fn execute_inner_with_scope(src: &str, dom: Option<&JsDom<'_>>, scope: &mut Scope) -> Vec<ConsoleEntry> {
     let mut entries = Vec::new();
     let mut lexer   = Lexer::new(src);
-    let mut scope   = Scope::new();
     // Hoist all top-level function declarations so they are available before
     // the line they appear on (standard JS hoisting behaviour).
-    hoist_functions(src, &mut scope);
+    hoist_functions(src, scope);
     loop {
         // Skip bare semicolons and lone closing braces (end of unknown blocks).
         loop {
@@ -62,7 +83,7 @@ fn execute_inner(src: &str, dom: Option<&JsDom<'_>>) -> Vec<ConsoleEntry> {
         if lexer.peek_token() == Token::Eof { break; }
 
         let pos_before = lexer.pos;
-        let _ = run_statement(&mut lexer, &mut scope, &mut entries, dom);
+        let _ = run_statement(&mut lexer, scope, &mut entries, dom);
 
         // Safety: if run_statement consumed nothing, forcibly advance one token
         // to prevent an infinite loop on any token we don't handle.
@@ -86,6 +107,18 @@ fn run_statement(
     dom:     Option<&JsDom<'_>>,
 ) -> Signal {
     match lexer.peek_token() {
+        Token::Ident(ref id) if id == "console" => {
+            handle_console(lexer, scope, entries, dom);
+            return Signal::None;
+        }
+        Token::Ident(ref id) if id == "document" => {
+            handle_document_stmt(lexer, scope, entries, dom);
+            return Signal::None;
+        }
+        Token::Ident(ref id) if id == "setTimeout" => {
+            handle_set_timeout(lexer, scope, entries, dom);
+            return Signal::None;
+        }
         // ── Variable declaration: let / const / var ──────────────────────────
         Token::Ident(ref id) if matches!(id.as_str(), "var" | "let" | "const") => {
             lexer.next_token(); // consume keyword
@@ -283,7 +316,7 @@ fn run_statement(
                             let i = idx_val.to_number();
                             if i >= 0.0 && i.fract() == 0.0 {
                                 let i = i as usize;
-                                let mut v = arr.borrow_mut();
+                                let mut v = arr.lock().unwrap();
                                 if i >= v.len() { v.resize(i + 1, JsValue::Undefined); }
                                 v[i] = rhs;
                             }
@@ -574,7 +607,7 @@ fn run_for(
                     if lexer.peek_token() == Token::RParen { lexer.next_token(); }
 
                     let items: Vec<JsValue> = match iterable {
-                        JsValue::Array(arr) => arr.borrow().clone(),
+                        JsValue::Array(arr) => arr.lock().unwrap().clone(),
                         _ => Vec::new(),
                     };
 
@@ -1064,6 +1097,36 @@ fn handle_console(
 }
 
 // ---------------------------------------------------------------------------
+// setTimeout(callback, delay)
+// ---------------------------------------------------------------------------
+
+fn handle_set_timeout(
+    lexer:   &mut Lexer,
+    scope:   &mut Scope,
+    _entries: &mut Vec<ConsoleEntry>,
+    dom:     Option<&JsDom<'_>>,
+) {
+    lexer.next_token(); // consume `setTimeout`
+    if lexer.next_token() != Token::LParen { return; }
+
+    let callback = eval_expr_with_dom(lexer, scope, dom);
+    let mut delay = 0u32;
+
+    if lexer.peek_token() == Token::Comma {
+        lexer.next_token(); // consume ,
+        delay = eval_expr_with_dom(lexer, scope, dom).to_number() as u32;
+    }
+
+    while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+    if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+    if lexer.peek_token() == Token::Semi   { lexer.next_token(); }
+
+    if let (JsValue::Function(func), Some(d)) = (callback, dom) {
+        d.set_timeout(*func, delay);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // document.* statement (bare, result discarded)
 // ---------------------------------------------------------------------------
 
@@ -1341,6 +1404,25 @@ fn handle_element_write(
             }
             true
         }
+        // ── el.addEventListener(type, callback) ──────────────────────────────
+        "addEventListener" if lexer.peek_token() == Token::LParen => {
+            lexer.next_token();
+            let event_type = read_arg_str(lexer, scope, dom);
+            let callback = if lexer.peek_token() == Token::Comma {
+                lexer.next_token();
+                eval_expr_with_dom(lexer, scope, dom)
+            } else { JsValue::Null };
+            
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+
+            if let (JsValue::Function(func), Some(d)) = (callback, dom) {
+                if !detached {
+                    d.add_event_listener(el.path.clone(), &event_type, *func);
+                }
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -1585,19 +1667,19 @@ fn eval_array_literal(
         }
     }
     if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
-    JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(items)))
+    JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(items)))
 }
 
 /// Evaluate an array method call on `arr` — lexer is at the token *after* the
 /// method name has been consumed.  Returns the result value.
 fn eval_array_method(
     lexer: &mut Lexer,
-    arr:   &std::rc::Rc<std::cell::RefCell<Vec<JsValue>>>,
+    arr:   &std::sync::Arc<std::sync::Mutex<Vec<JsValue>>>,
     prop:  &str,
 ) -> JsValue {
     // Property (no call): arr.length
     if prop == "length" && lexer.peek_token() != Token::LParen {
-        return JsValue::Number(arr.borrow().len() as f64);
+        return JsValue::Number(arr.lock().unwrap().len() as f64);
     }
 
     // Methods all require `(`
@@ -1613,7 +1695,7 @@ fn eval_array_method(
         "length" => {
             // length called as method — skip parens and return length
             skip_call_args(lexer);
-            JsValue::Number(arr.borrow().len() as f64)
+            JsValue::Number(arr.lock().unwrap().len() as f64)
         }
         "push" => {
             // Collect raw arg tokens — we can't easily re-eval without scope here.
@@ -1624,16 +1706,16 @@ fn eval_array_method(
             // Actually: we CAN'T eval args without scope. So this is a no-op.
             // The statement-level arr.push() is handled in the Ident branch.
             skip_call_args(lexer);
-            JsValue::Number(arr.borrow().len() as f64)
+            JsValue::Number(arr.lock().unwrap().len() as f64)
         }
         "pop" => {
             skip_call_args(lexer);
-            arr.borrow_mut().pop().unwrap_or(JsValue::Undefined)
+            arr.lock().unwrap().pop().unwrap_or(JsValue::Undefined)
         }
         "join" => {
             skip_call_args(lexer);
             let sep = ",";
-            let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(sep);
+            let s = arr.lock().unwrap().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(sep);
             JsValue::Str(s)
         }
         "indexOf" | "includes" | "slice" => {
@@ -1654,11 +1736,11 @@ fn eval_array_method_full(
     lexer: &mut Lexer,
     scope: &mut Scope,
     dom:   Option<&JsDom<'_>>,
-    arr:   &std::rc::Rc<std::cell::RefCell<Vec<JsValue>>>,
+    arr:   &std::sync::Arc<std::sync::Mutex<Vec<JsValue>>>,
     prop:  &str,
 ) -> JsValue {
     if prop == "length" && lexer.peek_token() != Token::LParen {
-        return JsValue::Number(arr.borrow().len() as f64);
+        return JsValue::Number(arr.lock().unwrap().len() as f64);
     }
     if lexer.peek_token() != Token::LParen {
         return JsValue::Undefined;
@@ -1666,18 +1748,18 @@ fn eval_array_method_full(
     match prop {
         "length" => {
             skip_call_args(lexer);
-            JsValue::Number(arr.borrow().len() as f64)
+            JsValue::Number(arr.lock().unwrap().len() as f64)
         }
         "push" => {
             lexer.next_token(); // consume `(`
-            let mut new_len = arr.borrow().len();
+            let mut new_len = arr.lock().unwrap().len();
             loop {
                 match lexer.peek_token() {
                     Token::RParen | Token::Eof => break,
                     _ => {
                         let v = eval_expr_with_dom(lexer, scope, dom);
-                        arr.borrow_mut().push(v);
-                        new_len = arr.borrow().len();
+                        arr.lock().unwrap().push(v);
+                        new_len = arr.lock().unwrap().len();
                         if lexer.peek_token() == Token::Comma { lexer.next_token(); }
                     }
                 }
@@ -1687,11 +1769,11 @@ fn eval_array_method_full(
         }
         "pop" => {
             skip_call_args(lexer);
-            arr.borrow_mut().pop().unwrap_or(JsValue::Undefined)
+            arr.lock().unwrap().pop().unwrap_or(JsValue::Undefined)
         }
         "shift" => {
             skip_call_args(lexer);
-            let mut v = arr.borrow_mut();
+            let mut v = arr.lock().unwrap();
             if v.is_empty() { JsValue::Undefined } else { v.remove(0) }
         }
         "unshift" => {
@@ -1707,7 +1789,7 @@ fn eval_array_method_full(
                 }
             }
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
-            let mut v = arr.borrow_mut();
+            let mut v = arr.lock().unwrap();
             for item in items.into_iter().rev() { v.insert(0, item); }
             JsValue::Number(v.len() as f64)
         }
@@ -1717,7 +1799,7 @@ fn eval_array_method_full(
             // skip optional fromIndex
             if lexer.peek_token() == Token::Comma { lexer.next_token(); eval_expr_with_dom(lexer, scope, dom); }
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
-            let v = arr.borrow();
+            let v = arr.lock().unwrap();
             for (i, item) in v.iter().enumerate() {
                 if crate::js::eval::js_loose_eq(item, &needle) {
                     return JsValue::Number(i as f64);
@@ -1730,7 +1812,7 @@ fn eval_array_method_full(
             let needle = eval_expr_with_dom(lexer, scope, dom);
             if lexer.peek_token() == Token::Comma { lexer.next_token(); eval_expr_with_dom(lexer, scope, dom); }
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
-            let v = arr.borrow();
+            let v = arr.lock().unwrap();
             JsValue::Bool(v.iter().any(|item| crate::js::eval::js_loose_eq(item, &needle)))
         }
         "join" => {
@@ -1742,17 +1824,17 @@ fn eval_array_method_full(
                 s
             };
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
-            let v = arr.borrow();
+            let v = arr.lock().unwrap();
             JsValue::Str(v.iter().map(|x| x.to_display()).collect::<Vec<_>>().join(&sep))
         }
         "reverse" => {
             skip_call_args(lexer);
-            arr.borrow_mut().reverse();
+            arr.lock().unwrap().reverse();
             JsValue::Array(arr.clone())
         }
         "slice" => {
             lexer.next_token();
-            let len = arr.borrow().len() as i64;
+            let len = arr.lock().unwrap().len() as i64;
             let start_val = if matches!(lexer.peek_token(), Token::RParen | Token::Eof) {
                 0
             } else {
@@ -1767,20 +1849,20 @@ fn eval_array_method_full(
                 len as usize
             };
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
-            let v = arr.borrow();
+            let v = arr.lock().unwrap();
             let slice: Vec<JsValue> = v[start_val.min(v.len())..end_val.min(v.len())].to_vec();
-            JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(slice)))
+            JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(slice)))
         }
         "concat" => {
             lexer.next_token();
-            let mut result: Vec<JsValue> = arr.borrow().clone();
+            let mut result: Vec<JsValue> = arr.lock().unwrap().clone();
             loop {
                 match lexer.peek_token() {
                     Token::RParen | Token::Eof => break,
                     _ => {
                         let v = eval_expr_with_dom(lexer, scope, dom);
                         match v {
-                            JsValue::Array(other) => result.extend(other.borrow().iter().cloned()),
+                            JsValue::Array(other) => result.extend(other.lock().unwrap().iter().cloned()),
                             other => result.push(other),
                         }
                         if lexer.peek_token() == Token::Comma { lexer.next_token(); }
@@ -1788,12 +1870,12 @@ fn eval_array_method_full(
                 }
             }
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
-            JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(result)))
+            JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(result)))
         }
         "forEach" => {
             let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![item, JsValue::Number(i as f64)];
                     let mut dummy = Vec::new();
@@ -1806,7 +1888,7 @@ fn eval_array_method_full(
         "map" => {
             let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 let mut out = Vec::new();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![item, JsValue::Number(i as f64)];
@@ -1815,7 +1897,7 @@ fn eval_array_method_full(
                     scope.entries.extend(dummy);
                     out.push(r);
                 }
-                JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(out)))
+                JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(out)))
             } else {
                 JsValue::Undefined
             }
@@ -1823,7 +1905,7 @@ fn eval_array_method_full(
         "filter" => {
             let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 let mut out = Vec::new();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![item.clone(), JsValue::Number(i as f64)];
@@ -1832,7 +1914,7 @@ fn eval_array_method_full(
                     scope.entries.extend(dummy);
                     if r.to_bool() { out.push(item); }
                 }
-                JsValue::Array(std::rc::Rc::new(std::cell::RefCell::new(out)))
+                JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(out)))
             } else {
                 JsValue::Undefined
             }
@@ -1840,7 +1922,7 @@ fn eval_array_method_full(
         "find" => {
             let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![item.clone(), JsValue::Number(i as f64)];
                     let mut dummy = Vec::new();
@@ -1860,11 +1942,11 @@ fn eval_array_method_full(
                 lexer.next_token();
                 eval_expr_with_dom(lexer, scope, dom)
             } else {
-                arr.borrow().first().cloned().unwrap_or(JsValue::Undefined)
+                arr.lock().unwrap().first().cloned().unwrap_or(JsValue::Undefined)
             };
             if lexer.peek_token() == Token::RParen { lexer.next_token(); }
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![acc, item, JsValue::Number(i as f64)];
                     let mut dummy = Vec::new();
@@ -1879,7 +1961,7 @@ fn eval_array_method_full(
         "some" => {
             let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![item, JsValue::Number(i as f64)];
                     let mut dummy = Vec::new();
@@ -1895,7 +1977,7 @@ fn eval_array_method_full(
         "every" => {
             let cb = { lexer.next_token(); let v = eval_expr_with_dom(lexer, scope, dom); if lexer.peek_token() == Token::RParen { lexer.next_token(); } v };
             if let JsValue::Function(func) = cb {
-                let snapshot: Vec<JsValue> = arr.borrow().clone();
+                let snapshot: Vec<JsValue> = arr.lock().unwrap().clone();
                 for (i, item) in snapshot.into_iter().enumerate() {
                     let args = vec![item, JsValue::Number(i as f64)];
                     let mut dummy = Vec::new();
@@ -2076,7 +2158,7 @@ fn eval_postfix_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>
                     JsValue::Array(arr) => {
                         let i = idx.to_number();
                         if i >= 0.0 && i.fract() == 0.0 {
-                            arr.borrow().get(i as usize).cloned().unwrap_or(JsValue::Undefined)
+                            arr.lock().unwrap().get(i as usize).cloned().unwrap_or(JsValue::Undefined)
                         } else {
                             JsValue::Undefined
                         }
@@ -2157,7 +2239,7 @@ fn eval_primary_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>
                         if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
                         let i = idx.to_number();
                         let item = if i >= 0.0 && i.fract() == 0.0 {
-                            arr.borrow().get(i as usize).cloned().unwrap_or(JsValue::Undefined)
+                            arr.lock().unwrap().get(i as usize).cloned().unwrap_or(JsValue::Undefined)
                         } else {
                             JsValue::Undefined
                         };

@@ -81,6 +81,10 @@ pub struct LoadResult {
     pub fonts:        Vec<(String, bool, bool, String)>,
     /// Console entries produced by JS execution on this page.
     pub console_entries: Vec<ConsoleEntry>,
+    /// Global scope after executing initial scripts.
+    pub js_scope:        crate::js::scope::Scope,
+    /// Timers created during initial script execution.
+    pub timers:          Vec<JsTimer>,
 }
 
 /// Lifecycle state of a single tab's background loader.
@@ -96,6 +100,11 @@ pub enum LoadState {
 // ---------------------------------------------------------------------------
 // Tab — one browser tab, owns its own DOM / history / scroll / image cache
 // ---------------------------------------------------------------------------
+
+pub struct JsTimer {
+    pub fire_at:  std::time::Instant,
+    pub callback: crate::js::types::JsFunction,
+}
 
 pub struct Tab {
     pub dom:        Node,
@@ -143,13 +152,19 @@ pub struct Tab {
     pub console_scroll: i32,
     /// Custom fonts that need to be registered in the central FontCache.
     pub pending_fonts:  Vec<(String, bool, bool, String)>,
+    /// JavaScript global scope for this tab.
+    pub js_scope:       crate::js::scope::Scope,
+    /// Hit-testable event listener regions from the last frame.
+    pub event_areas:    Vec<crate::render::layout::state::EventArea>,
+    /// Active timeouts for this tab.
+    pub timers:         Vec<JsTimer>,
 }
 
 impl Tab {
     /// Synchronously load the initial tab (only used for startup — after that
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
-        let (resolved, dom, meta, sheets, fonts, console_entries) = load_dom(url)?;
+        let (resolved, dom, meta, sheets, fonts, console_entries, js_scope, timers) = load_dom(url)?;
         Some(Tab {
             dom,
             scroll_y:       0,
@@ -174,6 +189,9 @@ impl Tab {
             console_open:   false,
             console_scroll: 0,
             pending_fonts:  fonts,
+            js_scope,
+            event_areas:    Vec::new(),
+            timers,
         })
     }
 
@@ -262,7 +280,7 @@ impl Tab {
             let send_val = match result {
                 Err(msg) => Err(msg),
                 Ok(None) => Err(format!("Failed to load: {url}")),
-                 Ok(Some((final_url, dom, meta, sheets, fonts, console_entries))) => Ok(LoadResult {
+                Ok(Some((final_url, dom, meta, sheets, fonts, console_entries, js_scope, timers))) => Ok(LoadResult {
                     final_url,
                     dom,
                     meta,
@@ -271,6 +289,8 @@ impl Tab {
                     style_sheets: sheets,
                     fonts,
                     console_entries,
+                    js_scope,
+                    timers,
                 }),
             };
 
@@ -309,6 +329,8 @@ impl Tab {
                         if result.push_history {
                             self.history.push(result.final_url);
                         }
+                        self.js_scope   = result.js_scope;
+                        self.timers     = result.timers;
                         self.load_state = LoadState::Idle;
                         true
                     }
@@ -337,6 +359,7 @@ impl Tab {
                         self.style_sheets = Vec::new();
                         self.console_entries = Vec::new();
                         self.console_scroll  = 0;
+                        self.js_scope   = crate::js::scope::Scope::new();
                         self.load_state   = LoadState::Crashed(msg);
                         true
                     }
@@ -357,6 +380,47 @@ impl Tab {
                 false
             }
         }
+    }
+
+    pub fn poll_timers(&mut self) -> bool {
+        let mut changed = false;
+        let now = std::time::Instant::now();
+        
+        // Find timers that are ready to fire
+        let mut ready = Vec::new();
+        self.timers.retain(|t| {
+            if t.fire_at <= now {
+                ready.push(t.callback.clone());
+                false
+            } else {
+                true
+            }
+        });
+
+        for func in ready {
+            let (entries, mutations) = {
+                let js_dom = crate::js::dom::JsDom::with_title(&self.dom, self.page_title.clone());
+                let entries = crate::js::interpreter::execute_function(&func, vec![], &js_dom, &mut self.js_scope);
+                (entries, js_dom.take_mutations())
+            };
+            
+            self.console_entries.extend(entries);
+            if !mutations.is_empty() {
+                for muta in mutations {
+                    match muta {
+                        crate::js::dom::DomMutation::SetTimeout { callback, delay_ms } => {
+                            self.timers.push(JsTimer {
+                                fire_at: std::time::Instant::now() + std::time::Duration::from_millis(delay_ms as u64),
+                                callback,
+                            });
+                        }
+                        _ => crate::js::dom::apply_one(&mut self.dom, muta),
+                    }
+                }
+                changed = true;
+            }
+        }
+        changed
     }
 
     // ---- legacy synchronous navigation (kept for back/forward/reload) ----
@@ -713,6 +777,10 @@ impl<'ttf> Browser<'ttf> {
                 }
                 changed = true; 
             }
+            // Check for expired timers
+            if tab.poll_timers() {
+                changed = true;
+            }
         }
         if changed {
             // Keep the address bar in sync with the active tab if it just finished loading.
@@ -813,6 +881,7 @@ impl<'ttf> Browser<'ttf> {
 
         // Check for audio player click (play/pause button or scrubber)
         if let Some(area) = self.tab().audio_at(x, content_y) {
+            // ... (keep existing audio logic)
             let base_url = self.tab().current_url().to_owned();
             let src      = area.src.clone();
             let idx      = area.index;
@@ -829,6 +898,48 @@ impl<'ttf> Browser<'ttf> {
                 self.need_draw = true;
             }
             return;
+        }
+
+        // --- JavaScript Click Events ---
+        // We find all elements at the click position that have a "click" listener.
+        let hits: Vec<_> = self.tab().event_areas.iter()
+            .filter(|a| a.event_type == "click" && a.contains(x, content_y, self.tab().scroll_y))
+            .rev() // top-painted first
+            .cloned()
+            .collect();
+
+        for area in hits {
+            // This is slightly expensive as it walks the DOM by pointer, but robust.
+            if let Some(el) = find_element_mut_by_ptr(&mut self.tab_mut().dom, area.element_ptr) {
+                let listeners = el.event_listeners.clone();
+                for (etype, func) in listeners {
+                    if etype == "click" {
+                        let (entries, mutations) = {
+                            let tab = self.tab_mut();
+                            let js_dom = crate::js::dom::JsDom::with_title(&tab.dom, tab.page_title.clone());
+                            let entries = crate::js::interpreter::execute_function(&func, vec![], &js_dom, &mut tab.js_scope);
+                            (entries, js_dom.take_mutations())
+                        };
+                        
+                        let tab = self.tab_mut();
+                        tab.console_entries.extend(entries);
+                        if !mutations.is_empty() {
+                            for muta in mutations {
+                                match muta {
+                                    crate::js::dom::DomMutation::SetTimeout { callback, delay_ms } => {
+                                        tab.timers.push(JsTimer {
+                                            fire_at: std::time::Instant::now() + std::time::Duration::from_millis(delay_ms as u64),
+                                            callback,
+                                        });
+                                    }
+                                    _ => crate::js::dom::apply_one(&mut tab.dom, muta),
+                                }
+                            }
+                            self.need_draw = true;
+                        }
+                    }
+                }
+            }
         }
 
         // Check button areas first (submit/reset)
@@ -1063,6 +1174,7 @@ impl<'ttf> Browser<'ttf> {
             tab.button_areas   = state.button_areas;
             tab.details_areas  = state.details_areas;
             tab.audio_areas    = state.audio_areas;
+            tab.event_areas    = state.event_areas;
             tab.content_height = state.content_height;
 
             // Ensure one engine exists per discovered audio player and pre-fetch

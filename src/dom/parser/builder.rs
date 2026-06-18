@@ -17,6 +17,7 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
         attrs_raw:  String::new(),
         style:      Style { display_block: true, ..Default::default() },
         children:   Vec::new(),
+        event_listeners: Vec::new(),
     }];
 
     let mut style_texts: Vec<String> = Vec::new();
@@ -115,6 +116,7 @@ pub fn parse_with_sheets(html: &str, base_url: &str) -> (Node, Vec<StyleSheet>) 
                     attrs_raw:  tok.attrs.clone(),
                     style:      parent_style,
                     children:   Vec::new(),
+                    event_listeners: Vec::new(),
                 };
                 apply_tag_defaults(&mut el);
                 let inline = el.style_attr.clone();
@@ -256,6 +258,7 @@ fn clone_node(node: &Node) -> Node {
             attrs_raw:  e.attrs_raw.clone(),
             style:      e.style.clone(),
             children:   e.children.iter().map(|c| clone_node(c)).collect(),
+            event_listeners: e.event_listeners.clone(),
         }),
     }
 }

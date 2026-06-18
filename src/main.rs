@@ -1,10 +1,10 @@
-mod app;
-mod dom;
-mod js;
-mod net;
-mod render;
-mod ui;
-mod window;
+use forkit::app;
+use forkit::dom;
+use forkit::js;
+use forkit::net;
+use forkit::render;
+use forkit::ui;
+use forkit::window;
 
 use std::env;
 

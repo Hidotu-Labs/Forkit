@@ -20,4 +20,4 @@ pub mod interpreter;
 // Re-export the public surface used by the rest of the codebase.
 pub use console::{ConsoleEntry, ConsoleLevel};
 pub use interpreter::{execute, execute_with_dom};
-pub use dom::{JsDom, apply_mutations};
+pub use dom::{JsDom, apply_mutations, apply_one, DomMutation};
