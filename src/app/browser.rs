@@ -75,10 +75,6 @@ pub struct LoadResult {
     /// Whether this load should push a new history entry (`true`) or replace
     /// the current entry (`false`, used for back/forward/reload).
     pub push_history: bool,
-    /// Parsed stylesheets, stored for re-applying the cascade each frame.
-    pub style_sheets: Vec<crate::dom::css::StyleSheet>,
-    /// Downloaded custom fonts: (family, bold, italic, temp_path)
-    pub fonts:        Vec<(String, bool, bool, String)>,
     /// Console entries produced by JS execution on this page.
     pub console_entries: Vec<ConsoleEntry>,
     /// Global scope after executing initial scripts.
@@ -137,21 +133,12 @@ pub struct Tab {
     pub favicon_url: Option<String>,
     /// Background load state for this tab.
     pub load_state: LoadState,
-    /// Raw pointer address of the currently hovered element (for :hover matching).
-    pub hovered_ptr: Option<usize>,
-    /// Raw pointer address of the currently focused element (for :focus matching).
-    pub focused_ptr: Option<usize>,
-    /// Parsed stylesheets for this tab, stored so the cascade can be re-applied
-    /// each frame with the current PseudoState.
-    pub style_sheets: Vec<crate::dom::css::StyleSheet>,
     /// Console output produced by JS execution on this page.
     pub console_entries: Vec<ConsoleEntry>,
     /// Whether the console panel is open.
     pub console_open: bool,
     /// Scroll offset within the console panel.
     pub console_scroll: i32,
-    /// Custom fonts that need to be registered in the central FontCache.
-    pub pending_fonts:  Vec<(String, bool, bool, String)>,
     /// JavaScript global scope for this tab.
     pub js_scope:       crate::js::scope::Scope,
     /// Hit-testable event listener regions from the last frame.
@@ -164,7 +151,7 @@ impl Tab {
     /// Synchronously load the initial tab (only used for startup — after that
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
-        let (resolved, dom, meta, sheets, fonts, console_entries, js_scope, timers) = load_dom(url)?;
+        let (resolved, dom, meta, console_entries, js_scope, timers) = load_dom(url)?;
         Some(Tab {
             dom,
             scroll_y:       0,
@@ -182,13 +169,9 @@ impl Tab {
             page_title:     meta.title,
             favicon_url:    meta.favicon_url,
             load_state:     LoadState::Idle,
-            hovered_ptr:    None,
-            focused_ptr:    None,
-            style_sheets:   sheets,
             console_entries,
             console_open:   false,
             console_scroll: 0,
-            pending_fonts:  fonts,
             js_scope,
             event_areas:    Vec::new(),
             timers,
@@ -280,14 +263,12 @@ impl Tab {
             let send_val = match result {
                 Err(msg) => Err(msg),
                 Ok(None) => Err(format!("Failed to load: {url}")),
-                Ok(Some((final_url, dom, meta, sheets, fonts, console_entries, js_scope, timers))) => Ok(LoadResult {
+                Ok(Some((final_url, dom, meta, console_entries, js_scope, timers))) => Ok(LoadResult {
                     final_url,
                     dom,
                     meta,
                     images: ImageCache::new(),
                     push_history,
-                    style_sheets: sheets,
-                    fonts,
                     console_entries,
                     js_scope,
                     timers,
@@ -320,10 +301,6 @@ impl Tab {
                         self.audio_areas   = Vec::new();
                         self.page_title    = result.meta.title;
                         self.favicon_url   = result.meta.favicon_url;
-                        self.hovered_ptr   = None;
-                        self.focused_ptr   = None;
-                        self.style_sheets  = result.style_sheets;
-                        self.pending_fonts = result.fonts;
                         self.console_entries = result.console_entries;
                         self.console_scroll  = 0;
                         if result.push_history {
@@ -344,7 +321,7 @@ impl Tab {
                              </body></html>"
                         );
                         // Parse the error page directly.
-                        let (error_node, _) = crate::dom::parser::parse_with_sheets(&error_html, "about:blank");
+                        let error_node = crate::dom::parser::parse_dom(&error_html);
                         self.dom          = error_node;
                         self.page_title   = "Error".to_owned();
                         self.favicon_url  = None;
@@ -354,9 +331,6 @@ impl Tab {
                         self.button_areas = Vec::new();
                         self.details_areas = Vec::new();
                         self.audio_areas   = Vec::new();
-                        self.hovered_ptr  = None;
-                        self.focused_ptr  = None;
-                        self.style_sheets = Vec::new();
                         self.console_entries = Vec::new();
                         self.console_scroll  = 0;
                         self.js_scope   = crate::js::scope::Scope::new();
@@ -668,10 +642,6 @@ impl<'ttf> Browser<'ttf> {
         let mut tab = Tab::new(initial)
             .ok_or_else(|| format!("Failed to load initial page: {initial}"))?;
 
-        for (name, bold, italic, path) in tab.pending_fonts.drain(..) {
-            fonts_cache.register(&name, bold, italic, &path);
-        }
-
         let bar_url = tab.current_url().to_owned();
 
         // Load persistent history; record the initial page visit.
@@ -770,13 +740,6 @@ impl<'ttf> Browser<'ttf> {
             if tab.poll_load() {
                 changed = true;
             }
-            // Register any new fonts this tab brought in
-            if !tab.pending_fonts.is_empty() {
-                for (name, bold, italic, path) in tab.pending_fonts.drain(..) {
-                    self.fonts.register(&name, bold, italic, &path);
-                }
-                changed = true; 
-            }
             // Check for expired timers
             if tab.poll_timers() {
                 changed = true;
@@ -834,17 +797,6 @@ impl<'ttf> Browser<'ttf> {
     pub fn can_back(&self)    -> bool { self.tab().can_back() }
     pub fn can_forward(&self) -> bool { self.tab().can_forward() }
 
-    /// Build a `PseudoState` from the current browser state.
-    /// Used to apply dynamic pseudo-classes before each draw.
-    pub fn pseudo_state(&self) -> crate::dom::css::PseudoState {
-        let tab = self.tab();
-        crate::dom::css::PseudoState {
-            hovered_path: vec![],
-            hovered_ptr:  tab.hovered_ptr,
-            focused_ptr:  tab.focused_ptr,
-            checked_ptrs: vec![],
-        }
-    }
 
     // ---- click handling ----
 
@@ -1129,13 +1081,7 @@ impl<'ttf> Browser<'ttf> {
         )));
 
         {
-            let ps   = self.pseudo_state();
             let tab  = &mut self.tabs[self.active];
-
-            if !tab.style_sheets.is_empty() {
-                let sheets = tab.style_sheets.clone();
-                crate::dom::css::apply_cascade_with_state(&mut tab.dom, &sheets, &ps);
-            }
 
             let base_url = tab.current_url().to_owned();
             let ctx  = RenderCtx {

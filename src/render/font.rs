@@ -1,4 +1,6 @@
 use sdl2::ttf::{Font, Sdl2TtfContext};
+use sdl2::render::TextureCreator;
+use sdl2::video::WindowContext;
 use crate::dom::node::FontFamily;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -6,10 +8,11 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FontKey {
-    size:   u16,
-    bold:   bool,
-    italic: bool,
-    family: FontFamily,
+    size:      u16,
+    bold:      bool,
+    italic:    bool,
+    underline: bool,
+    family:    FontFamily,
 }
 
 /// A resolved font + fallback font pair for rendering a single text run.
@@ -79,9 +82,9 @@ impl<'ttf> FontCache<'ttf> {
     /// a character is encountered for a given font.
     pub fn font_has_glyph(&mut self, size: u16, bold: bool, italic: bool, family: FontFamily, ch: char) -> bool {
         let size = size.clamp(8, 96);
-        let key = FontKey { size, bold, italic, family: family.clone() };
+        let key = FontKey { size, bold, italic, underline: false, family: family.clone() };
         // We need to ensure the font is loaded first.
-        let _ = self.get_family(size, bold, italic, family);
+        let _ = self.get_family(size, bold, italic, false, family);
         if !self.glyph_coverage.contains_key(&key) {
             self.glyph_coverage.insert(key.clone(), HashSet::new());
         }
@@ -103,7 +106,7 @@ impl<'ttf> FontCache<'ttf> {
     /// Return `true` if the fallback symbols font covers `ch`.
     pub fn fallback_has_glyph(&mut self, size: u16, ch: char) -> bool {
         let size = size.clamp(8, 96);
-        let key = FontKey { size, bold: false, italic: false, family: FontFamily::Custom("__fallback__".into()) };
+        let key = FontKey { size, bold: false, italic: false, underline: false, family: FontFamily::Custom("__fallback__".into()) };
         let _ = self.get_fallback(size);
         if !self.glyph_coverage.contains_key(&key) {
             self.glyph_coverage.insert(key.clone(), HashSet::new());
@@ -123,7 +126,7 @@ impl<'ttf> FontCache<'ttf> {
     /// Return `true` if the math fallback font covers `ch`.
     pub fn math_has_glyph(&mut self, size: u16, ch: char) -> bool {
         let size = size.clamp(8, 96);
-        let key = FontKey { size, bold: false, italic: false, family: FontFamily::Custom("__math__".into()) };
+        let key = FontKey { size, bold: false, italic: false, underline: false, family: FontFamily::Custom("__math__".into()) };
         let _ = self.get_math_fallback(size);
         if !self.glyph_coverage.contains_key(&key) {
             self.glyph_coverage.insert(key.clone(), HashSet::new());
@@ -144,12 +147,12 @@ impl<'ttf> FontCache<'ttf> {
     /// Returns `(width, height)` or a fallback estimate.
     pub fn size_of_cached(&mut self, text: &str, size: u16, bold: bool, italic: bool, family: FontFamily) -> (i32, i32) {
         let size = size.clamp(8, 96);
-        let key = FontKey { size, bold, italic, family: family.clone() };
+        let key = FontKey { size, bold, italic, underline: false, family: family.clone() };
         let cache_key = (text.to_owned(), key.clone());
         if let Some(&cached) = self.measure_cache.get(&cache_key) {
             return cached;
         }
-        let result = self.get_family(size, bold, italic, family)
+        let result = self.get_family(size, bold, italic, false, family)
             .and_then(|f| f.size_of(text).ok())
             .map(|(w, h)| (w as i32, h as i32))
             .unwrap_or((text.len() as i32 * (size as i32 / 2).max(4), size as i32));
@@ -168,22 +171,49 @@ impl<'ttf> FontCache<'ttf> {
     }
 
     pub fn get(&mut self, size: u16, bold: bool, italic: bool) -> Option<&Font<'ttf, 'static>> {
-        self.get_family(size, bold, italic, FontFamily::SansSerif)
+        self.get_family(size, bold, italic, false, FontFamily::SansSerif)
+    }
+
+    pub fn measure_text(&mut self, text: &str, size: u16, bold: bool, italic: bool) -> (i32, i32) {
+        self.size_of_cached(text, size, bold, italic, FontFamily::SansSerif)
+    }
+
+    pub fn get_text_texture<'a>(
+        &mut self,
+        tc: &'a TextureCreator<WindowContext>,
+        text: &str,
+        size: u16,
+        color: [u8; 3],
+        bold: bool,
+        italic: bool,
+        underline: bool,
+    ) -> Option<sdl2::render::Texture<'a>> {
+        let font = self.get_family(size, bold, italic, underline, FontFamily::SansSerif)?;
+
+        let c = sdl2::pixels::Color::RGB(color[0], color[1], color[2]);
+        let surf = font.render(text).blended(c).ok()?;
+        tc.create_texture_from_surface(&surf).ok()
     }
 
     pub fn get_family(
         &mut self,
-        size:   u16,
-        bold:   bool,
-        italic: bool,
-        family: FontFamily,
+        size:      u16,
+        bold:      bool,
+        italic:    bool,
+        underline: bool,
+        family:    FontFamily,
     ) -> Option<&Font<'ttf, 'static>> {
         let size = size.clamp(8, 96);
-        let key  = FontKey { size, bold, italic, family: family.clone() };
+        let key  = FontKey { size, bold, italic, underline, family: family.clone() };
 
         if !self.cache.contains_key(&key) {
-            let font = self.load_font(size, bold, italic, family);
-            self.cache.insert(key.clone(), font?);
+            let mut font = self.load_font(size, bold, italic, family)?;
+            let mut style = sdl2::ttf::FontStyle::NORMAL;
+            if bold      { style |= sdl2::ttf::FontStyle::BOLD; }
+            if italic    { style |= sdl2::ttf::FontStyle::ITALIC; }
+            if underline { style |= sdl2::ttf::FontStyle::UNDERLINE; }
+            font.set_style(style);
+            self.cache.insert(key.clone(), font);
         }
 
         self.cache.get(&key)
@@ -197,9 +227,10 @@ impl<'ttf> FontCache<'ttf> {
         // Use a sentinel key: Custom("__fallback__") bold=false italic=false
         let key = FontKey {
             size,
-            bold:   false,
-            italic: false,
-            family: FontFamily::Custom("__fallback__".into()),
+            bold:      false,
+            italic:    false,
+            underline: false,
+            family:    FontFamily::Custom("__fallback__".into()),
         };
         if !self.cache.contains_key(&key) {
             let font = self.load_fallback_font(size);
@@ -213,9 +244,10 @@ impl<'ttf> FontCache<'ttf> {
         let size = size.clamp(8, 96);
         let key = FontKey {
             size,
-            bold:   false,
-            italic: false,
-            family: FontFamily::Custom("__math__".into()),
+            bold:      false,
+            italic:    false,
+            underline: false,
+            family:    FontFamily::Custom("__math__".into()),
         };
         if !self.cache.contains_key(&key) {
             let font = self.load_math_font(size);

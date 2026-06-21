@@ -1308,30 +1308,6 @@ fn handle_element_write(
             }
             true
         }
-        // ── el.style.prop = "..." ────────────────────────────────────────────
-        "style" if lexer.peek_token() == Token::Dot => {
-            lexer.next_token(); // consume `.`
-            let css_prop = match lexer.next_token() {
-                Token::Ident(p) => p,
-                _ => return true,
-            };
-            if lexer.peek_token() == Token::Eq {
-                lexer.next_token();
-                let val = eval_expr_with_dom(lexer, scope, dom).to_display();
-                let css_prop_kebab = camel_to_kebab(&css_prop);
-                if !detached {
-                    if let Some(d) = dom {
-                        d.push_mutation(crate::js::dom::DomMutation::SetStyleProp {
-                            path: el.path.clone(), prop: css_prop_kebab, value: val,
-                        });
-                    }
-                }
-                // For detached elements style writes are a no-op (not observable yet)
-            } else {
-                skip_statement(lexer);
-            }
-            true
-        }
         // ── el.setAttribute("name", "value") ────────────────────────────────
         "setAttribute" if lexer.peek_token() == Token::LParen => {
             lexer.next_token();
@@ -1435,20 +1411,6 @@ fn read_arg_str(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>>) -
     eval_expr_with_dom(lexer, scope, dom).to_display()
 }
 
-/// Convert a camelCase property name to kebab-case.
-/// e.g. `backgroundColor` → `background-color`, `fontSize` → `font-size`.
-fn camel_to_kebab(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
-        if ch.is_ascii_uppercase() {
-            out.push('-');
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
 
 fn chain_element_props(
     lexer: &mut Lexer,
@@ -1533,6 +1495,7 @@ fn read_element_prop(encoded: &str, prop: &str, lexer: &mut Lexer) -> JsValue {
         "textContent" => JsValue::Str(el.text_content),
         "innerHTML"   => JsValue::Str(el.inner_html),
         "innerText"   => JsValue::Str(el.text_content),
+        "href"        => JsValue::Str(el.href),
         "length"      => JsValue::Number(1.0),
         "children"    => JsValue::Number(el.children.len() as f64),
         "getAttribute" => {
@@ -1594,7 +1557,7 @@ fn node_list_value(els: Vec<JsElement>) -> JsValue {
 fn encode_element(el: &JsElement) -> String {
     let path_str = el.path.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
     format!(
-        "\x00elem\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}",
+        "\x00elem\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}\x00{}",
         escape_field(&el.tag),
         escape_field(&el.id),
         escape_field(&el.class_name),
@@ -1603,6 +1566,7 @@ fn encode_element(el: &JsElement) -> String {
         escape_field(&el.attrs_raw),
         el.children.len(),
         escape_field(&path_str),
+        escape_field(&el.href),
     )
 }
 
@@ -1631,6 +1595,7 @@ fn decode_element(s: &str) -> JsElement {
         text_content: unescape_field(&get(5)),
         inner_html:   unescape_field(&get(6)),
         attrs_raw:    unescape_field(&get(7)),
+        href:         unescape_field(&get(10)),
         children:     Vec::new(),
         path,
     }

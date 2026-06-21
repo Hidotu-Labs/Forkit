@@ -142,20 +142,7 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
 // SVG pre-processing
 // ---------------------------------------------------------------------------
 
-/// Pre-process raw SVG bytes before handing to SDL2/nanosvg.
-///
-/// nanosvg (used by SDL2_image) does not support `<style>` blocks, CDATA
-/// sections, or `rgba()` color values. This function:
-/// 1. Parses CSS rules out of any `<style>` tags in the SVG.
-/// 2. For each shape element, injects matching rules as `fill`/`stroke`
-///    XML attributes (not CSS properties) that nanosvg understands.
-/// 3. Converts `rgba(r,g,b,a)` colors to `#rrggbb` hex so nanosvg
-///    accepts them, and returns the minimum alpha across all fills so
-///    the caller can apply it via `texture.set_alpha_mod()`.
-/// 4. Strips the original `<style>` blocks.
-///
-/// Returns `(modified_svg_bytes, alpha_mod)` where `alpha_mod` is
-/// 0–255 (255 = fully opaque). If no alpha is specified, returns 255.
+/// Returns modified_svg_bytes.
 pub fn preprocess_svg(bytes: &[u8]) -> (Vec<u8>, u8) {
     let src = match std::str::from_utf8(bytes) {
         Ok(s)  => s,
@@ -177,66 +164,11 @@ pub fn preprocess_svg(bytes: &[u8]) -> (Vec<u8>, u8) {
         return (bytes.to_vec(), 255);
     }
 
-    // Compute the minimum alpha across all fill/stroke values in all rules.
-    // This becomes the SDL2 alpha_mod for the whole texture.
-    let mut min_alpha: f32 = 1.0;
-    for rule in &rules {
-        let decls = &rule.declarations;
-        if let Some(alpha) = extract_rgba_alpha(decls) {
-            if alpha < min_alpha { min_alpha = alpha; }
-        }
-    }
-    let alpha_mod = (min_alpha * 255.0).round() as u8;
-
-    // Rewrite rules to use opaque hex colors so nanosvg accepts them.
-    let opaque_rules: Vec<SvgCssRule> = rules.into_iter().map(|mut r| {
-        r.declarations = opacify_rgba_in_declarations(&r.declarations);
-        r
-    }).collect();
-
-    let rewritten = rewrite_svg_elements(src, &opaque_rules);
-    (rewritten.into_bytes(), alpha_mod)
+    let rewritten = rewrite_svg_elements(src, &rules);
+    (rewritten.into_bytes(), 255)
 }
 
-/// Extract the alpha component from the first `rgba(...)` value found in a
-/// CSS declaration string. Returns `None` if no rgba() is present.
-fn extract_rgba_alpha(decls: &str) -> Option<f32> {
-    let lower = decls.to_ascii_lowercase();
-    let start = lower.find("rgba(")?;
-    let inner_start = start + 5;
-    let inner_end = lower[inner_start..].find(')')? + inner_start;
-    let inner = &decls[inner_start..inner_end];
-    let parts: Vec<&str> = inner.split(',').collect();
-    if parts.len() >= 4 {
-        parts[3].trim().parse::<f32>().ok()
-    } else {
-        None
-    }
-}
 
-/// Replace `rgba(r,g,b,a)` in a CSS declaration string with the opaque
-/// hex equivalent `#rrggbb` so nanosvg's limited CSS parser accepts it.
-fn opacify_rgba_in_declarations(decls: &str) -> String {
-    let lower = decls.to_ascii_lowercase();
-    let mut out = String::from(decls);
-    if let Some(rel) = lower.find("rgba(") {
-        let inner_start = rel + 5;
-        if let Some(close) = decls[inner_start..].find(')') {
-            let inner_end = inner_start + close;
-            let inner = &decls[inner_start..inner_end];
-            let parts: Vec<&str> = inner.split(',').collect();
-            if parts.len() >= 3 {
-                let r = parts[0].trim().parse::<f32>().unwrap_or(0.0) as u8;
-                let g = parts[1].trim().parse::<f32>().unwrap_or(0.0) as u8;
-                let b = parts[2].trim().parse::<f32>().unwrap_or(0.0) as u8;
-                let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
-                let full_end = inner_end + 1; // include ')'
-                out = format!("{}{}{}", &decls[..rel], hex, &decls[full_end..]);
-            }
-        }
-    }
-    out
-}
 
 /// Extract the raw CSS text from all `<style …>…</style>` sections,
 /// unwrapping CDATA markers if present.

@@ -132,13 +132,8 @@ impl SearchBar {
         // URL text
         let display = if self.url.is_empty() { "Enter URL or search…" } else { &self.url };
         let (tr, tg, tb) = if self.url.is_empty() { PLACEHOLDER } else { TEXT_FG };
-        let style = crate::dom::node::Style {
-            font_size: FONT_SIZE,
-            color: [tr, tg, tb],
-            ..Default::default()
-        };
-        if let Some(font) = fonts.get(style.font_size, false, false) {
-            let c = Color::RGB(style.color[0], style.color[1], style.color[2]);
+        if let Some(font) = fonts.get(FONT_SIZE, false, false) {
+            let c = Color::RGB(tr, tg, tb);
             if let Ok(surf) = font.render(display).blended(c) {
                 if let Ok(tex) = tc.create_texture_from_surface(&surf) {
                     let (sw, sh) = (surf.width(), surf.height());

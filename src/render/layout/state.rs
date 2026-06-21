@@ -1,7 +1,7 @@
 use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
 
-use crate::dom::node::{Node, Visibility};
+use crate::dom::node::Node;
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::renderer::RenderCtx;
@@ -9,216 +9,107 @@ use crate::render::renderer::RenderCtx;
 use super::block;
 use super::inline;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputKind {
+    Text, Password, TextArea, Checkbox, Radio, Range, Color, Number, Other,
+}
+
 #[derive(Debug, Clone)]
 pub struct LayoutBox {
     pub x: i32, pub y: i32, pub w: i32, pub h: i32,
 }
 
-// ---------------------------------------------------------------------------
-// LinkArea — clickable region bound to an href
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct LinkArea {
-    pub x:    i32,
-    pub y:    i32,
-    pub w:    i32,
-    pub h:    i32,
-    pub href: String,
+    pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub href: String,
 }
-
 impl LinkArea {
-    /// Returns true if `(px, py)` is inside this area (scroll-adjusted).
     pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let ay = self.y - scroll_y;
-        px >= self.x && px < self.x + self.w
-            && py >= ay && py < ay + self.h
+        px >= self.x && px < self.x + self.w && py >= ay && py < ay + self.h
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputKind {
-    Text,
-    Password,
-    TextArea,
-    Checkbox,
-    Radio,
-    Range,
-    Color,
-    Number,
-    Other,
 }
 
 #[derive(Debug, Clone)]
 pub struct InputArea {
-    pub x:    i32,
-    pub y:    i32,
-    pub w:    i32,
-    pub h:    i32,
-    /// Unique index among all inputs on the page (assigned at layout time).
-    pub index: usize,
-    pub kind:  InputKind,
-    /// Value of the HTML `name` attribute (used for radio button grouping).
-    pub name:  String,
-    /// The HTML `value` attribute default (used when no live value has been typed yet).
-    pub default_value: String,
-    /// The input has the `disabled` attribute — not focusable or editable.
-    pub disabled: bool,
-    /// The input has the `readonly` attribute — focusable but not editable.
-    pub readonly: bool,
+    pub x: i32, pub y: i32, pub w: i32, pub h: i32,
+    pub index: usize, pub kind: InputKind, pub name: String,
+    pub default_value: String, pub disabled: bool, pub readonly: bool,
 }
-
-
 impl InputArea {
-    /// Returns true if `(px, py)` is inside this area (scroll-adjusted).
     pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let ay = self.y - scroll_y;
-        px >= self.x && px < self.x + self.w
-            && py >= ay && py < ay + self.h
+        px >= self.x && px < self.x + self.w && py >= ay && py < ay + self.h
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ButtonAction {
-    /// Navigate to this URL (href from <a> styled as button, or form action).
-    Navigate(String),
-    /// Submit the form: navigate to `action` URL (empty string = current page).
-    Submit(String),
-    /// Reset all form inputs on the page.
-    Reset,
-    /// Increment the number input at this index.
-    StepUp(usize),
-    /// Decrement the number input at this index.
-    StepDown(usize),
-    /// Generic button with no built-in action.
-    None,
+    Navigate(String), Submit(String), Reset, StepUp(usize), StepDown(usize), None,
 }
 
 #[derive(Debug, Clone)]
 pub struct ButtonArea {
-    pub x:      i32,
-    pub y:      i32,
-    pub w:      i32,
-    pub h:      i32,
-    pub action: ButtonAction,
+    pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub action: ButtonAction,
 }
-
 impl ButtonArea {
     pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let ay = self.y - scroll_y;
-        px >= self.x && px < self.x + self.w
-            && py >= ay && py < ay + self.h
+        px >= self.x && px < self.x + self.w && py >= ay && py < ay + self.h
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct DetailsArea {
-    pub x:           i32,
-    pub y:           i32,
-    pub w:           i32,
-    pub h:           i32,
-    pub element_ptr: usize,
+    pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub element_ptr: usize,
 }
-
 impl DetailsArea {
     pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let ay = self.y - scroll_y;
-        px >= self.x && px < self.x + self.w
-            && py >= ay && py < ay + self.h
+        px >= self.x && px < self.x + self.w && py >= ay && py < ay + self.h
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct EventArea {
-    pub x:           i32,
-    pub y:           i32,
-    pub w:           i32,
-    pub h:           i32,
-    pub element_ptr: usize,
-    pub event_type:  String,
+    pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub element_ptr: usize, pub event_type: String,
 }
-
 impl EventArea {
     pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let ay = self.y - scroll_y;
-        px >= self.x && px < self.x + self.w
-            && py >= ay && py < ay + self.h
+        px >= self.x && px < self.x + self.w && py >= ay && py < ay + self.h
     }
 }
 
-/// Hit-testable region for an `<audio>` player rendered on the page.
 #[derive(Debug, Clone)]
 pub struct AudioArea {
-    /// Full player bounding box (page coordinates, before scroll).
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    /// Per-page index — uniquely identifies this player among all audio
-    /// elements on the page (assigned at layout time, like `InputArea::index`).
-    pub index: usize,
-    /// Resolved source URL of the audio.
-    pub src: String,
-    /// Sub-region: the ▶/⏸ play-pause button.
-    pub play_btn: (i32, i32, i32, i32),
-    /// Sub-region: the progress scrubber track (full track, not just filled part).
-    pub scrubber: (i32, i32, i32, i32),
+    pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub index: usize, pub src: String,
+    pub play_btn: (i32, i32, i32, i32), pub scrubber: (i32, i32, i32, i32),
 }
-
 impl AudioArea {
     pub fn contains(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let ay = self.y - scroll_y;
-        px >= self.x && px < self.x + self.w
-            && py >= ay && py < ay + self.h
+        px >= self.x && px < self.x + self.w && py >= ay && py < ay + self.h
     }
-
     pub fn play_btn_hit(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let (bx, by, bw, bh) = self.play_btn;
         let ay = by - scroll_y;
         px >= bx && px < bx + bw && py >= ay && py < ay + bh
     }
-
     pub fn scrubber_hit(&self, px: i32, py: i32, scroll_y: i32) -> bool {
         let (sx, sy, sw, sh) = self.scrubber;
         let ay = sy - scroll_y;
         px >= sx && px < sx + sw && py >= ay && py < ay + sh
     }
-
-    /// Returns the 0.0–1.0 seek ratio from a click at `px` on the scrubber.
     pub fn scrubber_ratio(&self, px: i32) -> f64 {
         let (sx, _, sw, _) = self.scrubber;
         ((px - sx) as f64 / sw as f64).clamp(0.0, 1.0)
     }
 }
 
-pub const MARGIN_LEFT:  i32 = 0;
-
-/// Snapshot of audio playback state for one `<audio>` element.
-/// Passed into `LayoutState` so the renderer can draw the correct
-/// play/pause icon and scrubber position without coupling to SDL2_mixer.
 #[derive(Debug, Clone, Default)]
 pub struct AudioPlayback {
-    pub playing:       bool,
-    /// 0.0 – 1.0
-    pub progress:      f64,
-    pub position_secs: f64,
-    pub duration_secs: f64,
-}
-pub const MARGIN_RIGHT: i32 = 0;
-pub const MARGIN_TOP:   i32 = 0;
-pub const LINE_SPACING: i32 = 1;
-pub const BLOCK_MARGIN: i32 = 0;
-
-/// Fallback page margin used when body has no margin/padding CSS set.
-const DEFAULT_PAGE_MARGIN: i32 = 8;
-
-#[derive(Debug, Clone)]
-pub struct RoundedClip {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    pub radii: [u16; 4],
+    pub playing: bool, pub progress: f64, pub position_secs: f64, pub duration_secs: f64,
 }
 
 pub struct LayoutState<'ctx> {
@@ -226,9 +117,6 @@ pub struct LayoutState<'ctx> {
     pub cursor_x:    i32,
     pub cursor_y:    i32,
     pub line_height: i32,
-    pub indent:      i32,
-    /// Left edge offset set by body/html margin+padding (replaces MARGIN_LEFT for content).
-    pub margin_left: i32,
     pub boxes:       Vec<LayoutBox>,
     pub link_areas:  Vec<LinkArea>,
     pub input_areas: Vec<InputArea>,
@@ -236,41 +124,20 @@ pub struct LayoutState<'ctx> {
     pub details_areas: Vec<DetailsArea>,
     pub audio_areas: Vec<AudioArea>,
     pub event_areas: Vec<EventArea>,
-    /// Playback state for audio elements, keyed by per-page audio index.
-    /// Set by the browser before each layout pass via `set_audio_state`.
     pub audio_playback: std::collections::HashMap<usize, AudioPlayback>,
-    /// Counter for assigning unique indices to audio areas.
-    pub audio_count: usize,
-    /// Counter for assigning unique indices to input areas.
-    pub input_count: usize,
-    /// Live values for each focusable input (indexed by input order on the page).
     pub input_values: Vec<String>,
-    /// Which input index is currently focused (if any).
     pub focused_input: Option<usize>,
-    /// The action URL of the nearest enclosing <form> (passed down during layout).
-    pub form_action: String,
-    /// Counter stack for ordered lists.
-    pub ol_stack:    Vec<u32>,
-    /// Total document height in pixels (set after layout completes).
+    pub active_link: Option<String>,
     pub content_height: i32,
-    /// Optional rounded clip to apply to child elements (experimental).
-    pub rounding_clip: Option<RoundedClip>,
-    /// Stack of (x, y, w, h) for ancestors with position: relative/absolute/fixed.
-    /// Used as the containing block for position: absolute children.
-    pub positioned_ancestors: Vec<LayoutBox>,
-    /// Flag to indicate we are currently laying out an element's INNERS after it was absolutely positioned.
-    pub in_absolute_pass: bool,
 }
 
 impl<'ctx> LayoutState<'ctx> {
     pub fn new(ctx: &'ctx RenderCtx) -> Self {
         LayoutState {
             ctx,
-            cursor_x:      0,
-            cursor_y:      0,
+            cursor_x:      8,
+            cursor_y:      8,
             line_height:   16,
-            indent:        0,
-            margin_left:   0,
             boxes:         Vec::new(),
             link_areas:    Vec::new(),
             input_areas:   Vec::new(),
@@ -279,52 +146,23 @@ impl<'ctx> LayoutState<'ctx> {
             audio_areas:   Vec::new(),
             event_areas:   Vec::new(),
             audio_playback: std::collections::HashMap::new(),
-            audio_count:   0,
-            input_count:   0,
             input_values:  Vec::new(),
             focused_input: None,
-            form_action:   String::new(),
-            ol_stack:      Vec::new(),
+            active_link:   None,
             content_height: 0,
-            rounding_clip:  None,
-            positioned_ancestors: Vec::new(),
-            in_absolute_pass: false,
         }
     }
 
-    /// Seed the layout state with live input data before rendering.
     pub fn set_input_state(&mut self, values: Vec<String>, focused: Option<usize>) {
-        self.input_values  = values;
+        self.input_values = values;
         self.focused_input = focused;
     }
 
-    /// Seed the layout state with audio playback snapshots before rendering.
     pub fn set_audio_state(&mut self, playback: std::collections::HashMap<usize, AudioPlayback>) {
         self.audio_playback = playback;
     }
 
     pub fn into_boxes(self) -> Vec<LayoutBox> { self.boxes }
-
-    /// Advance to the next line using the current style's line-height multiplier.
-    pub fn newline(&mut self, font_size: u16, line_height_mul: f32) {
-        let lh = (font_size as f32 * line_height_mul) as i32;
-        self.cursor_y   += self.line_height.max(lh) + LINE_SPACING;
-        self.cursor_x    = self.margin_left + self.indent;
-        self.line_height = font_size as i32;
-    }
-
-    /// Hit-test a click at page coordinates `(px, py)` (scroll-adjusted).
-    /// Returns the href of the first matching link area, if any.
-    pub fn link_at(&self, px: i32, py: i32, scroll_y: i32) -> Option<&str> {
-        self.link_areas.iter()
-            .rev() // last-painted (topmost) wins
-            .find(|a| a.contains(px, py, scroll_y))
-            .map(|a| a.href.as_str())
-    }
-
-    // -----------------------------------------------------------------------
-    // Public entry — dispatch to inline or block renderer
-    // -----------------------------------------------------------------------
 
     pub fn layout_node(
         &mut self,
@@ -338,32 +176,10 @@ impl<'ctx> LayoutState<'ctx> {
     ) {
         match node {
             Node::Text(t)    => {
-                if t.style.visibility == Visibility::Hidden {
-                    block::advance_text_invisible(self, fonts, &t.text, &t.style);
-                } else {
-                    // Re-resolve viewport-relative font-size (vw/vh/calc) now
-                    // that we have the real viewport dimensions.
-                    if let Some(raw) = &t.style.font_size_raw {
-                        let ctx = crate::dom::css::LengthContext {
-                            base_font_size:  t.style.font_size,
-                            percent_base:    16,
-                            viewport_width:  self.ctx.viewport_width,
-                            viewport_height: self.ctx.viewport_height,
-                        };
-                        if let Some(n) = crate::dom::css::parse_length_ctx(raw, &ctx) {
-                            let resolved = n.clamp(8, 96) as u16;
-                            // Clone and patch so we don't mutate the stored DOM
-                            let mut patched = t.style.clone();
-                            patched.font_size = resolved;
-                            return inline::paint_wrapped(self, canvas, tc, fonts, &t.text, &patched, max_w);
-                        }
-                    }
-                    inline::paint_wrapped(self, canvas, tc, fonts, &t.text, &t.style, max_w);
-                }
+                inline::paint_text(self, canvas, tc, fonts, &t.text, max_w);
             }
             Node::Element(e) => block::layout_element(self, canvas, tc, fonts, images, base_url, e, max_w),
         }
-        // Update total document height after each top-level node
         let bottom = self.cursor_y + self.line_height;
         if bottom > self.content_height {
             self.content_height = bottom;

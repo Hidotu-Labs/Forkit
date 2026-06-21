@@ -28,7 +28,7 @@
 ///   el.remove()
 
 use std::sync::Mutex;
-use crate::dom::node::{Node, Element, TextNode, Style};
+use crate::dom::node::{Node, Element, TextNode};
 use crate::dom::parser::get_attr;
 
 // ---------------------------------------------------------------------------
@@ -51,8 +51,6 @@ pub enum DomMutation {
     SetClassName    { path: Vec<usize>, value: String },
     /// Set `el.id`.
     SetId           { path: Vec<usize>, value: String },
-    /// Apply one CSS property via `el.style.prop = value`.
-    SetStyleProp    { path: Vec<usize>, prop: String, value: String },
     /// Append a newly-created element as the last child.
     AppendChild     { path: Vec<usize>, child_tag: String, child_text: String },
     /// Remove the element from its parent.
@@ -72,6 +70,7 @@ pub struct JsElement {
     pub tag:        String,
     pub id:         String,
     pub class_name: String,
+    pub href:       String,
     pub attrs_raw:  String,
     /// Concatenated text content of this element and all its descendants.
     pub text_content: String,
@@ -99,6 +98,7 @@ impl JsElement {
             tag:          el.tag.clone(),
             id:           el.id.clone(),
             class_name:   el.class_name.clone(),
+            href:         el.href.clone(),
             attrs_raw:    el.attrs_raw.clone(),
             text_content: collect_text(&el.children),
             inner_html:   serialize_inner(&el.children),
@@ -109,10 +109,11 @@ impl JsElement {
 
     /// Read a named attribute (case-insensitive key).
     pub fn get_attribute(&self, name: &str) -> Option<String> {
-        // id / class / style are stored as dedicated fields
+        // id / class / href / style are stored as dedicated fields
         match name.to_ascii_lowercase().as_str() {
             "id"    => if self.id.is_empty() { None } else { Some(self.id.clone()) },
             "class" => if self.class_name.is_empty() { None } else { Some(self.class_name.clone()) },
+            "href"  => if self.href.is_empty() { None } else { Some(self.href.clone()) },
             other   => get_attr(&self.attrs_raw, other).map(|s| s.to_owned()),
         }
     }
@@ -192,6 +193,7 @@ impl<'a> JsDom<'a> {
             tag:          tag.to_ascii_lowercase(),
             id:           String::new(),
             class_name:   String::new(),
+            href:         String::new(),
             attrs_raw:    String::new(),
             text_content: String::new(),
             inner_html:   String::new(),
@@ -250,7 +252,6 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
                 if !value.is_empty() {
                     el.children.push(Node::Text(TextNode {
                         text:  value,
-                        style: Style::default(),
                     }));
                 }
             }
@@ -259,7 +260,7 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
             if path.is_empty() { return; }
             if let Some(el) = navigate_mut(root, &path) {
                 // Parse a simple HTML fragment and replace children.
-                el.children = parse_html_fragment(&value, &el.style);
+                el.children = parse_html_fragment(&value);
             }
         }
         DomMutation::SetAttribute { path, name, value } => {
@@ -268,10 +269,7 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
                 match name.to_ascii_lowercase().as_str() {
                     "id"    => { el.id = value; }
                     "class" => { el.class_name = value; }
-                    "style" => {
-                        el.style_attr = value.clone();
-                        crate::dom::css::inline::apply_inline(&value, &mut el.style);
-                    }
+                    "href"  => { el.href = value; }
                     other   => {
                         set_attr_raw(&mut el.attrs_raw, other, &value);
                     }
@@ -284,7 +282,7 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
                 match name.to_ascii_lowercase().as_str() {
                     "id"    => { el.id.clear(); }
                     "class" => { el.class_name.clear(); }
-                    "style" => { el.style_attr.clear(); }
+                    "href"  => { el.href.clear(); }
                     other   => { remove_attr_raw(&mut el.attrs_raw, other); }
                 }
             }
@@ -301,15 +299,6 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
                 el.id = value;
             }
         }
-        DomMutation::SetStyleProp { path, prop, value } => {
-            if path.is_empty() { return; }
-            if let Some(el) = navigate_mut(root, &path) {
-                let base = el.style.font_size;
-                crate::dom::css::inline::apply_property(&prop, &value, base, &mut el.style);
-                // Also update style_attr so the cascade picks it up on reset
-                update_style_attr(&mut el.style_attr, &prop, &value);
-            }
-        }
         DomMutation::AppendChild { path, child_tag, child_text } => {
             if path.is_empty() { return; }
             if let Some(el) = navigate_mut(root, &path) {
@@ -317,17 +306,14 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
                     tag:        child_tag.clone(),
                     id:         String::new(),
                     class_name: String::new(),
-                    style_attr: String::new(),
+                    href:       String::new(),
                     attrs_raw:  String::new(),
-                    style:      Style::default(),
                     children:   Vec::new(),
                     event_listeners: Vec::new(),
                 };
-                crate::dom::css::apply_tag_defaults(&mut child_el);
                 if !child_text.is_empty() {
                     child_el.children.push(Node::Text(TextNode {
                         text:  child_text,
-                        style: Style::default(),
                     }));
                 }
                 el.children.push(Node::Element(child_el));
@@ -344,7 +330,6 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
             }
         }
         DomMutation::AddEventListener { path, event_type, callback } => {
-            if path.is_empty() { return; }
             if let Some(el) = navigate_mut(root, &path) {
                 el.event_listeners.push((event_type, callback));
             }
@@ -428,28 +413,10 @@ fn remove_attr_raw(attrs_raw: &mut String, name: &str) {
     *attrs_raw = result;
 }
 
-/// Update or append a CSS property in a `style_attr` string.
-fn update_style_attr(style_attr: &mut String, prop: &str, value: &str) {
-    // Strip existing `prop: ...;` then append.
-    let lower_prop = prop.to_ascii_lowercase();
-    let mut result = String::new();
-    for part in style_attr.split(';') {
-        let part = part.trim();
-        if part.is_empty() { continue; }
-        if let Some(colon) = part.find(':') {
-            let p = part[..colon].trim().to_ascii_lowercase();
-            if p == lower_prop { continue; } // skip old value
-        }
-        result.push_str(part);
-        result.push(';');
-    }
-    result.push_str(&format!("{}:{};", lower_prop, value));
-    *style_attr = result;
-}
 
 /// Parse a very simple HTML fragment into a list of `Node`s.
 /// Supports plain text and `<tag>text</tag>` elements (one level deep).
-fn parse_html_fragment(html: &str, _parent_style: &Style) -> Vec<Node> {
+fn parse_html_fragment(html: &str) -> Vec<Node> {
     crate::dom::parser::parse_fragment(html)
 }
 

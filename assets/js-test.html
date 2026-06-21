@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <title>Forkit JavaScript Test</title>
   <style>
@@ -13,8 +14,19 @@
       line-height: 1.5;
     }
 
-    h1 { color: #1a1a2e; font-size: 26px; margin-bottom: 8px; }
-    h2 { color: #0f3460; font-size: 20px; margin: 20px 0 6px 0; border-bottom: 2px solid #0f3460; padding-bottom: 4px; }
+    h1 {
+      color: #1a1a2e;
+      font-size: 26px;
+      margin-bottom: 8px;
+    }
+
+    h2 {
+      color: #0f3460;
+      font-size: 20px;
+      margin: 20px 0 6px 0;
+      border-bottom: 2px solid #0f3460;
+      padding-bottom: 4px;
+    }
 
     .card {
       background-color: #ffffff;
@@ -36,13 +48,35 @@
       margin-bottom: 2px;
     }
 
-    .pass  { background-color: rgba(30, 160, 80, 0.1);  border-left: 3px solid #009944; }
-    .fail  { background-color: rgba(200, 50, 50, 0.1);  border-left: 3px solid #cc2222; color: #cc2222; }
-    .na    { background-color: rgba(200, 200, 200, 0.2); border-left: 3px solid #aaaaaa; color: #777777; }
-    .info  { background-color: rgba(0, 100, 200, 0.08); border-left: 3px solid #0064c8; }
-    .write { background-color: rgba(180, 100, 0, 0.08); border-left: 3px solid #b46400; }
+    .pass {
+      background-color: rgba(30, 160, 80, 0.1);
+      border-left: 3px solid #009944;
+    }
+
+    .fail {
+      background-color: rgba(200, 50, 50, 0.1);
+      border-left: 3px solid #cc2222;
+      color: #cc2222;
+    }
+
+    .na {
+      background-color: rgba(200, 200, 200, 0.2);
+      border-left: 3px solid #aaaaaa;
+      color: #777777;
+    }
+
+    .info {
+      background-color: rgba(0, 100, 200, 0.08);
+      border-left: 3px solid #0064c8;
+    }
+
+    .write {
+      background-color: rgba(180, 100, 0, 0.08);
+      border-left: 3px solid #b46400;
+    }
   </style>
 </head>
+
 <body>
 
   <h1>Forkit — JavaScript Test</h1>
@@ -55,10 +89,10 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>17a. Variables &amp; Arithmetic</h2>
   <div class="card">
-    <div class="label">var / let / const  ·  + - * / %  ·  += -= *= /=</div>
+    <div class="label">var / let / const · + - * / % · += -= *= /=</div>
     <div class="row pass">let x = 10; x * 3 - 5 = 25</div>
-    <div class="label">Comparison: == != &lt; &gt; &lt;= &gt;=  ·  Logical: &amp;&amp; || !</div>
-    <div class="row pass">10 &gt; 5 → true  ·  true &amp;&amp; false → false</div>
+    <div class="label">Comparison: == != &lt; &gt; &lt;= &gt;= · Logical: &amp;&amp; || !</div>
+    <div class="row pass">10 &gt; 5 → true · true &amp;&amp; false → false</div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════ -->
@@ -93,7 +127,7 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>17e. DOM Read — element properties</h2>
   <div class="card">
-    <div class="label">.id  .className  .tagName  .textContent  .innerHTML</div>
+    <div class="label">.id .className .tagName .textContent .innerHTML</div>
     <div class="row pass" id="prop-demo" class="demo-class">Property demo element</div>
   </div>
 
@@ -151,9 +185,9 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>18e. DOM Write — el.style property setter</h2>
   <div class="card">
-    <div class="label">el.style.backgroundColor = "#e8f5e9"  ·  el.style.color = "#1b5e20"</div>
+    <div class="label">el.style.backgroundColor = "#e8f5e9" · el.style.color = "#1b5e20"</div>
     <div class="row write" id="write-style">Background and text colour set via el.style</div>
-    <div class="label">el.style.fontSize = "20px"  ·  el.style.fontWeight = "bold"</div>
+    <div class="label">el.style.fontSize = "20px" · el.style.fontWeight = "bold"</div>
     <div class="row write" id="write-style-font">Font size and weight set via el.style</div>
   </div>
 
@@ -330,7 +364,7 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>21a. Arrays — literal and index access</h2>
   <div class="card">
-    <div class="label">let nums = [10,20,30,40,50]  ·  nums[0]  nums[4]  nums.length</div>
+    <div class="label">let nums = [10,20,30,40,50] · nums[0] nums[4] nums.length</div>
     <div class="row write" id="arr-literal">arr-literal not yet run</div>
   </div>
 
@@ -351,14 +385,14 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>21d. Arrays — indexOf / includes</h2>
   <div class="card">
-    <div class="label">fruits.indexOf("banana")  ·  fruits.includes("banana")  ·  fruits.includes("grape")</div>
+    <div class="label">fruits.indexOf("banana") · fruits.includes("banana") · fruits.includes("grape")</div>
     <div class="row write" id="arr-indexof">arr-indexof not yet run</div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>21e. Arrays — join</h2>
   <div class="card">
-    <div class="label">words.join(", ")  ·  words.join("-")</div>
+    <div class="label">words.join(", ") · words.join("-")</div>
     <div class="row write" id="arr-join">arr-join not yet run</div>
   </div>
 
@@ -379,21 +413,21 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>21h. Arrays — map / filter / reduce</h2>
   <div class="card">
-    <div class="label">base.map(x=&gt;x*2)  ·  filter(x%2==0)  ·  reduce(sum,0)</div>
+    <div class="label">base.map(x=&gt;x*2) · filter(x%2==0) · reduce(sum,0)</div>
     <div class="row write" id="arr-hof">arr-hof not yet run</div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>21i. Arrays — slice / concat</h2>
   <div class="card">
-    <div class="label">orig.slice(1,4)  ·  slice(0,2).concat(slice(3,5))</div>
+    <div class="label">orig.slice(1,4) · slice(0,2).concat(slice(3,5))</div>
     <div class="row write" id="arr-slice-concat">arr-slice-concat not yet run</div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════ -->
   <h2>21j. Arrays — arrow callbacks (filter / map / every / some)</h2>
   <div class="card">
-    <div class="label">scores.filter(s=&gt;s&gt;=7)  ·  .map(s=&gt;s*10)  ·  .every(s=&gt;s&gt;0)  ·  .some(s=&gt;s==10)</div>
+    <div class="label">scores.filter(s=&gt;s&gt;=7) · .map(s=&gt;s*10) · .every(s=&gt;s&gt;0) · .some(s=&gt;s==10)</div>
     <div class="row write" id="arr-arrow-cb">arr-arrow-cb not yet run</div>
   </div>
 
@@ -408,7 +442,8 @@
   <h2>22a. Event Listeners — addEventListener</h2>
   <div class="card">
     <div class="label">el.addEventListener("click", callback)</div>
-    <div id="evt-click-btn" class="row info" style="cursor: pointer; user-select: none; border: 2px solid #0064c8; text-align: center; font-weight: bold;">
+    <div id="evt-click-btn" class="row info"
+      style="cursor: pointer; user-select: none; border: 2px solid #0064c8; text-align: center; font-weight: bold;">
       CLICK ME TO TEST
     </div>
     <div id="evt-result" class="row info">Result will appear here</div>
@@ -426,8 +461,8 @@
     // 17a — Variables & arithmetic
     // ════════════════════════════════════════════════════════
     var greeting = "Forkit JS engine";
-    let version  = 2;
-    const pi     = 3.14159;
+    let version = 2;
+    const pi = 3.14159;
     console.log("--- 17a: Variables ---");
     console.log(greeting + " v" + version);
     console.log("pi =", pi);
@@ -1048,7 +1083,7 @@
     // ════════════════════════════════════════════════════════
     console.log("--- 20e: function expression ---");
 
-    const double = function(x) { return x * 2; };
+    const double = function (x) { return x * 2; };
     let doubleResult = double(7);
     let fnExprEl = document.getElementById("fn-expr");
     if (doubleResult == 14) {
@@ -1200,7 +1235,7 @@
     let fruits = ["apple", "banana", "cherry"];
     let idxBanana = fruits.indexOf("banana");
     let hasBanana = fruits.includes("banana");
-    let hasGrape  = fruits.includes("grape");
+    let hasGrape = fruits.includes("grape");
     console.log("indexOf banana:", idxBanana, "includes banana:", hasBanana, "includes grape:", hasGrape);
 
     let arr21dEl = document.getElementById("arr-indexof");
@@ -1280,9 +1315,9 @@
     console.log("--- 21h: map / filter / reduce ---");
 
     let base = [1, 2, 3, 4, 5];
-    let doubled = base.map(function(x) { return x * 2; });
-    let evens   = base.filter(function(x) { return x % 2 == 0; });
-    let total   = base.reduce(function(acc, x) { return acc + x; }, 0);
+    let doubled = base.map(function (x) { return x * 2; });
+    let evens = base.filter(function (x) { return x % 2 == 0; });
+    let total = base.reduce(function (acc, x) { return acc + x; }, 0);
     console.log("map *2:", doubled.join(","));
     console.log("filter even:", evens.join(","));
     console.log("reduce sum:", total);
@@ -1302,8 +1337,8 @@
     console.log("--- 21i: slice / concat ---");
 
     let orig = [0, 1, 2, 3, 4];
-    let sliced  = orig.slice(1, 4);
-    let cat     = orig.slice(0, 2).concat(orig.slice(3, 5));
+    let sliced = orig.slice(1, 4);
+    let cat = orig.slice(0, 2).concat(orig.slice(3, 5));
     console.log("slice(1,4):", sliced.join(","));
     console.log("concat [0,1]+[3,4]:", cat.join(","));
 
@@ -1322,7 +1357,7 @@
     console.log("--- 21j: arrow callbacks ---");
 
     let scores = [8, 3, 10, 5, 7];
-    let high   = scores.filter((s) => s >= 7);
+    let high = scores.filter((s) => s >= 7);
     let scaled = scores.map((s) => s * 10);
     let passed = scores.every((s) => s > 0);
     let hasMax = scores.some((s) => s == 10);
@@ -1385,13 +1420,13 @@
     let clickCount = 0;
 
     if (clickBtn && clickResult) {
-        clickBtn.addEventListener("click", function() {
-            clickCount++;
-            clickResult.textContent = "PASS: Button clicked " + clickCount + " times!";
-            clickResult.className = "row pass";
-            clickBtn.style.backgroundColor = "#e8f5e9";
-            console.log("Button click handler executed! count=" + clickCount);
-        });
+      clickBtn.addEventListener("click", function () {
+        clickCount++;
+        clickResult.textContent = "PASS: Button clicked " + clickCount + " times!";
+        clickResult.className = "row pass";
+        clickBtn.style.backgroundColor = "#e8f5e9";
+        console.log("Button click handler executed! count=" + clickCount);
+      });
     }
 
     // ════════════════════════════════════════════════════════
@@ -1400,15 +1435,16 @@
     console.log("--- 22b: setTimeout ---");
     let timerResult = document.getElementById("timer-result");
     if (timerResult) {
-        console.log("Setting timeout for 2000ms...");
-        setTimeout(function() {
-            console.log("Timer callback executing!");
-            timerResult.textContent = "PASS: Timer executed after delay!";
-            timerResult.className = "row pass";
-        }, 2000);
+      console.log("Setting timeout for 2000ms...");
+      setTimeout(function () {
+        console.log("Timer callback executing!");
+        timerResult.textContent = "PASS: Timer executed after delay!";
+        timerResult.className = "row pass";
+      }, 2000);
     }
 
     console.warn("All initial JS tests complete");
   </script>
 </body>
+
 </html>

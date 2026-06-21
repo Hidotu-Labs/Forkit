@@ -120,13 +120,6 @@ pub fn handle_event(browser: &mut Browser, event: Event) -> bool {
             browser.mouse_x = x;
             browser.mouse_y = content_y;
 
-            // Hover detection on element for :hover
-            let hovered = browser.tab().find_element_at(x, content_y);
-            if browser.tab().hovered_ptr != hovered {
-                browser.tab_mut().hovered_ptr = hovered;
-                browser.need_draw = true;
-            }
-
             // ── Console resize drag ───────────────────────────────────────
             if let Some((drag_start_x, drag_start_w)) = browser.console_resize_drag {
                 // Dragging left increases panel width (handle is on the left edge)

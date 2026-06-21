@@ -2,8 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::dom::node::Node;
-use crate::dom::parser::{parse_with_sheets, extract_page_meta, extract_head_meta};
-use crate::dom::css::StyleSheet;
+use crate::dom::parser::{parse_dom, extract_page_meta, extract_head_meta};
 use crate::js;
 use crate::net;
 
@@ -19,7 +18,7 @@ pub struct PageMeta {
     pub viewport_initial_scale: f32,
 }
 
-pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>, Vec<(String, bool, bool, String)>, Vec<ConsoleEntry>, crate::js::scope::Scope, Vec<super::browser::JsTimer>)> {
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<ConsoleEntry>, crate::js::scope::Scope, Vec<super::browser::JsTimer>)> {
     let (final_url, html) = fetch_html(source)?;
 
     // --- Parse <meta charset>, <meta viewport>, <base href> from the HTML ----
@@ -42,47 +41,13 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>
     let html = maybe_redecode_html(html, &head_meta.charset, source);
 
     let (title, favicon_url) = extract_page_meta(&html, &effective_base);
-    let (mut dom, sheets) = parse_with_sheets(&html, &effective_base);
+    let mut dom = parse_dom(&html);
     let meta = PageMeta {
         title,
         favicon_url,
         viewport_width_device:   head_meta.viewport_width_device,
         viewport_initial_scale:  head_meta.viewport_initial_scale,
     };
-
-    // Download fonts
-    let mut downloaded_fonts = Vec::new();
-    let temp_dir = std::env::temp_dir().join("forkit_fonts");
-    let _ = std::fs::create_dir_all(&temp_dir);
-
-    for sheet in &sheets {
-        for face in &sheet.font_faces {
-            for src_url in &face.srcs {
-                let font_url = crate::net::resolve_url(src_url, &effective_base);
-                let ext = if font_url.contains(".otf") { "otf" } 
-                          else if font_url.contains(".woff2") { "woff2" }
-                          else if font_url.contains(".woff") { "woff" }
-                          else { "ttf" };
-                let hash = format!("{:x}", md5_hash(&font_url));
-                let local_path = temp_dir.join(format!("{}.{}", hash, ext));
-
-                if !local_path.exists() {
-                    println!("[loader] Downloading font: {} -> {:?}", font_url, local_path);
-                    if let Ok((_, bytes)) = crate::net::fetch_url_bytes(&font_url) {
-                        let _ = std::fs::write(&local_path, bytes);
-                    } else {
-                        eprintln!("[loader] Failed to download font: {}", font_url);
-                    }
-                }
-
-                if local_path.exists() {
-                    // Stop at the first successfully downloaded source for this face
-                    downloaded_fonts.push((face.family.clone(), face.bold, face.italic, local_path.to_string_lossy().to_string()));
-                    break;
-                }
-            }
-        }
-    }
 
     let mut console_entries: Vec<ConsoleEntry> = Vec::new();
     let js_dom = js::JsDom::with_title(&dom, meta.title.clone());
@@ -106,10 +71,9 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<StyleSheet>
                 _ => js::apply_one(&mut dom, muta),
             }
         }
-        crate::dom::css::apply_cascade(&mut dom, &sheets);
     }
 
-    Some((final_url, dom, meta, sheets, downloaded_fonts, console_entries, js_scope, initial_timers))
+    Some((final_url, dom, meta, console_entries, js_scope, initial_timers))
 }
 
 /// If the HTML head declares a single-byte charset that differs from UTF-8,
@@ -174,16 +138,13 @@ fn fetch_html(source: &str) -> Option<(String, String)> {
         let mut html = String::from("<html><head><title>History</title>\
             <style>\
                 body { font-family: sans-serif; background: #f8f8fb; color: #333; margin: 0; padding: 40px; }\
-                .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }\
-                h1 { margin-top: 0; color: #222; font-weight: 600; font-size: 24px; display: flex; justify-content: space-between; align-items: center; }\
-                .entry { border-bottom: 1px solid #eee; padding: 16px 0; display: flex; flex-direction: column; gap: 4px; }\
+                .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border: 1px solid #ddd; }\
+                h1 { margin-top: 0; color: #222; font-weight: 600; font-size: 24px; border-bottom: 2px solid #eee; padding-bottom: 10px; }\
+                .entry { border-bottom: 1px solid #eee; padding: 16px 0; }\
                 .entry:last-child { border-bottom: none; }\
-                .entry-title { font-weight: 500; color: #000; text-decoration: none; font-size: 16px; }\
+                .entry-title { font-weight: 500; color: #000; text-decoration: none; font-size: 16px; display: block; }\
                 .entry-title:hover { text-decoration: underline; color: #0078d7; }\
-                .entry-url { color: #0066cc; font-size: 13px; text-decoration: none; word-break: break-all; }\
-                .entry-meta { color: #888; font-size: 11px; margin-top: 4px; }\
-                .clear-btn { background: #e8eaed; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; color: #444; font-size: 13px; font-weight: 500; transition: background 0.2s; }\
-                .clear-btn:hover { background: #dadce0; }\
+                .entry-url { color: #0066cc; font-size: 13px; text-decoration: none; display: block; }\
             </style></head><body><div class=\"container\">");
         
         html.push_str("<h1>History</h1>");
