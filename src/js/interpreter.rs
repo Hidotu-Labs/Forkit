@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 /// Statement runner — drives the top-level execution loop.
 
 use crate::js::lexer::{Lexer, Token};

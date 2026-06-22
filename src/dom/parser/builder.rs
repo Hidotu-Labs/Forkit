@@ -38,7 +38,7 @@ pub fn parse_dom(html: &str) -> Node {
             TokKind::Open | TokKind::SelfClose => {
                 let tag = tok.tag.as_str();
 
-                if is_skip(tag) || tag == "style" {
+                if is_skip(tag) {
                     if !is_void(tag) && tok.kind != TokKind::SelfClose {
                         let mut depth = 1usize;
                         while depth > 0 {

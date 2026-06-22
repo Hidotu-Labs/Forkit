@@ -9,7 +9,7 @@ pub const SKIP_TAGS: &[&str] = &[
 
 pub const STYLE_HARVEST_TAGS: &[&str] = &["head"];
 
-pub const RAW_TEXT_TAGS: &[&str] = &["pre", "textarea"];
+pub const RAW_TEXT_TAGS: &[&str] = &["pre", "textarea", "style"];
 
 pub fn is_void(tag: &str)          -> bool { VOID_TAGS.contains(&tag) }
 pub fn is_skip(tag: &str)          -> bool { SKIP_TAGS.contains(&tag) }

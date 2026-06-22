@@ -4,7 +4,6 @@ use sdl2::video::WindowContext;
 use crate::dom::node::FontFamily;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -183,16 +182,18 @@ impl<'ttf> FontCache<'ttf> {
         tc: &'a TextureCreator<WindowContext>,
         text: &str,
         size: u16,
-        color: [u8; 3],
+        color: [u8; 4],
         bold: bool,
         italic: bool,
         underline: bool,
     ) -> Option<sdl2::render::Texture<'a>> {
         let font = self.get_family(size, bold, italic, underline, FontFamily::SansSerif)?;
 
-        let c = sdl2::pixels::Color::RGB(color[0], color[1], color[2]);
+        let c = sdl2::pixels::Color::RGBA(color[0], color[1], color[2], color[3]);
         let surf = font.render(text).blended(c).ok()?;
-        tc.create_texture_from_surface(&surf).ok()
+        let mut tex = tc.create_texture_from_surface(&surf).ok()?;
+        tex.set_blend_mode(sdl2::render::BlendMode::Blend);
+        Some(tex)
     }
 
     pub fn get_family(

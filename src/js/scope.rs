@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 /// Variable store for script execution.
 ///
 /// Maintains a stack of frames so that block-scoped `let`/`const` bindings

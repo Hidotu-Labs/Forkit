@@ -145,6 +145,7 @@ pub struct Tab {
     pub event_areas:    Vec<crate::render::layout::state::EventArea>,
     /// Active timeouts for this tab.
     pub timers:         Vec<JsTimer>,
+    pub stylesheets:    Vec<crate::dom::css::Stylesheet>,
 }
 
 impl Tab {
@@ -152,7 +153,7 @@ impl Tab {
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
         let (resolved, dom, meta, console_entries, js_scope, timers) = load_dom(url)?;
-        Some(Tab {
+        let mut tab = Tab {
             dom,
             scroll_y:       0,
             images:         ImageCache::new(),
@@ -175,7 +176,10 @@ impl Tab {
             js_scope,
             event_areas:    Vec::new(),
             timers,
-        })
+            stylesheets:    Vec::new(),
+        };
+        tab.collect_styles();
+        Some(tab)
     }
 
     // ---- accessors ----
@@ -309,6 +313,7 @@ impl Tab {
                         self.js_scope   = result.js_scope;
                         self.timers     = result.timers;
                         self.load_state = LoadState::Idle;
+                        self.collect_styles();
                         true
                     }
                     Ok(Err(msg)) => {
@@ -568,10 +573,33 @@ impl Tab {
     /// element hit-testing.  Full DOM hit-testing requires layout boxes that
     /// carry element pointers — this is the initial implementation.
     pub fn find_element_at(&self, _x: i32, _y: i32) -> Option<usize> {
-        // Full DOM hit-testing not yet implemented.
-        // A complete implementation would walk LayoutBox entries that carry
-        // element raw pointers and return the topmost hit.
         None
+    }
+
+    pub fn collect_styles(&mut self) {
+        self.stylesheets.clear();
+        fn traverse(node: &crate::dom::node::Node, sheets: &mut Vec<crate::dom::css::Stylesheet>) {
+            match node {
+                crate::dom::node::Node::Element(el) => {
+                    if el.tag == "style" {
+                        let mut css_text = String::new();
+                        for child in &el.children {
+                            if let crate::dom::node::Node::Text(txt) = child {
+                                css_text.push_str(&txt.text);
+                            }
+                        }
+                        if !css_text.is_empty() {
+                            sheets.push(crate::dom::css::parse_stylesheet(&css_text));
+                        }
+                    }
+                    for child in &el.children {
+                        traverse(child, sheets);
+                    }
+                }
+                crate::dom::node::Node::Text(_) => {}
+            }
+        }
+        traverse(&self.dom, &mut self.stylesheets);
     }
 }
 
@@ -636,15 +664,21 @@ impl<'ttf> Browser<'ttf> {
         ttf_ctx: &'ttf Sdl2TtfContext,
         initial: &str,
     ) -> Result<Self, String> {
-        let window = AppWindow::new(sdl, "Forkit")?;
-        let mut fonts_cache = FontCache::new(ttf_ctx);
+        let video      = sdl.video().expect("video subsystem");
+        let text_input = video.text_input();
+        text_input.start();
 
-        let mut tab = Tab::new(initial)
+        let _event_pump = sdl.event_pump().expect("Event pump failed");
+
+        let fonts_cache = FontCache::new(ttf_ctx);
+
+        let window = AppWindow::new(sdl, "Forkit")?;
+
+        let tab = Tab::new(initial)
             .ok_or_else(|| format!("Failed to load initial page: {initial}"))?;
 
         let bar_url = tab.current_url().to_owned();
 
-        // Load persistent history; record the initial page visit.
         let mut history_store = HistoryStore::load();
         history_store.push(&bar_url, &tab.page_title);
 
@@ -1090,6 +1124,7 @@ impl<'ttf> Browser<'ttf> {
                 scroll_y:        tab.scroll_y,
                 base_url:        base_url.clone(),
             };            let mut state = LayoutState::new(&ctx);
+            state.stylesheets = tab.stylesheets.clone();
             state.set_input_state(tab.input_values.clone(), tab.focused_input);
 
             // Build audio playback snapshot keyed by per-page player index

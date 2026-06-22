@@ -112,6 +112,14 @@ pub struct AudioPlayback {
     pub playing: bool, pub progress: f64, pub position_secs: f64, pub duration_secs: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextTransform {
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
 pub struct LayoutState<'ctx> {
     pub ctx:         &'ctx RenderCtx,
     pub cursor_x:    i32,
@@ -129,6 +137,17 @@ pub struct LayoutState<'ctx> {
     pub focused_input: Option<usize>,
     pub active_link: Option<String>,
     pub content_height: i32,
+    pub current_color: [u8; 4],
+    pub current_bg_color: Option<[u8; 4]>,
+    pub current_font_size: u16,
+    pub current_bold: bool,
+    pub current_italic: bool,
+    pub current_text_transform: TextTransform,
+    pub current_opacity: f32,
+    pub current_border_radius: i32,
+    pub current_padding: i32,
+    pub stylesheets: Vec<crate::dom::css::Stylesheet>,
+    pub paint: bool,
 }
 
 impl<'ctx> LayoutState<'ctx> {
@@ -150,6 +169,39 @@ impl<'ctx> LayoutState<'ctx> {
             focused_input: None,
             active_link:   None,
             content_height: 0,
+            current_color: [0, 0, 0, 255],
+            current_bg_color: None,
+            current_font_size: 16,
+            current_bold: false,
+            current_italic: false,
+            current_text_transform: TextTransform::None,
+            current_opacity: 1.0,
+            current_border_radius: 0,
+            current_padding: 0,
+            stylesheets: Vec::new(),
+            paint: true,
+        }
+    }
+
+    pub fn collect_styles(&mut self, node: &crate::dom::node::Node) {
+        match node {
+            crate::dom::node::Node::Element(el) => {
+                if el.tag == "style" {
+                    let mut css_text = String::new();
+                    for child in &el.children {
+                        if let crate::dom::node::Node::Text(txt) = child {
+                            css_text.push_str(&txt.text);
+                        }
+                    }
+                    if !css_text.is_empty() {
+                        self.stylesheets.push(crate::dom::css::parse_stylesheet(&css_text));
+                    }
+                }
+                for child in &el.children {
+                    self.collect_styles(child);
+                }
+            }
+            crate::dom::node::Node::Text(_) => {}
         }
     }
 
