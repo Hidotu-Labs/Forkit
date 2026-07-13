@@ -15,6 +15,7 @@ pub fn paint_text(
     let font_size = state.current_font_size;
     let bold = state.current_bold;
     let italic = state.current_italic;
+    let family = state.current_font_family.clone();
     
     let transformed_text = match state.current_text_transform {
         crate::render::layout::state::TextTransform::Uppercase => text.to_uppercase(),
@@ -48,10 +49,10 @@ pub fn paint_text(
 
     canvas.set_draw_color(Color::RGBA(text_color[0], text_color[1], text_color[2], text_color[3]));
 
-    let (space_width, _) = fonts.measure_text(" ", font_size, bold, italic);
+    let (space_width, _) = fonts.measure_family(" ", font_size, bold, italic, family.clone());
 
     for word in transformed_text.split_whitespace() {
-        let (w, h) = fonts.measure_text(word, font_size, bold, italic);
+        let (w, h) = fonts.measure_family(word, font_size, bold, italic, family.clone());
         if state.cursor_x + w > max_w {
             state.cursor_y += state.line_height;
             state.cursor_x = state.line_start_x;
@@ -59,7 +60,7 @@ pub fn paint_text(
         
         if state.paint {
             let is_link = state.active_link.is_some();
-            let tex = fonts.get_text_texture(tc, word, font_size, text_color, bold, italic, is_link);
+            let tex = fonts.get_text_texture_family(tc, word, font_size, text_color, bold, italic, is_link, family.clone());
             if let Some(t) = tex {
                 let y_offset = (state.line_height - h) / 2;
                 let target = sdl2::rect::Rect::new(state.cursor_x, state.cursor_y + y_offset - state.ctx.scroll_y, w as u32, h as u32);

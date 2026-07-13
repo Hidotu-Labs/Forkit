@@ -177,6 +177,31 @@ impl<'ttf> FontCache<'ttf> {
         self.size_of_cached(text, size, bold, italic, FontFamily::SansSerif)
     }
 
+    /// Like `measure_text` but honours the given `FontFamily`.
+    pub fn measure_family(&mut self, text: &str, size: u16, bold: bool, italic: bool, family: FontFamily) -> (i32, i32) {
+        self.size_of_cached(text, size, bold, italic, family)
+    }
+
+    /// Like `get_text_texture` but honours the given `FontFamily`.
+    pub fn get_text_texture_family<'a>(
+        &mut self,
+        tc:        &'a TextureCreator<WindowContext>,
+        text:      &str,
+        size:      u16,
+        color:     [u8; 4],
+        bold:      bool,
+        italic:    bool,
+        underline: bool,
+        family:    FontFamily,
+    ) -> Option<sdl2::render::Texture<'a>> {
+        let font = self.get_family(size, bold, italic, underline, family)?;
+        let c = sdl2::pixels::Color::RGBA(color[0], color[1], color[2], color[3]);
+        let surf = font.render(text).blended(c).ok()?;
+        let mut tex = tc.create_texture_from_surface(&surf).ok()?;
+        tex.set_blend_mode(sdl2::render::BlendMode::Blend);
+        Some(tex)
+    }
+
     pub fn get_text_texture<'a>(
         &mut self,
         tc: &'a TextureCreator<WindowContext>,
@@ -343,7 +368,13 @@ impl<'ttf> FontCache<'ttf> {
                 "NotoSansMono-Regular.ttf",
                 "NotoSansMono-Bold.ttf",
             ),
-            FontFamily::SansSerif | FontFamily::Serif | FontFamily::Custom(_) => (
+            FontFamily::Serif => (
+                "NotoSerif-Regular.ttf",
+                "NotoSerif-Bold.ttf",
+                "NotoSerif-Italic.ttf",
+                "NotoSerif-BoldItalic.ttf",
+            ),
+            FontFamily::SansSerif | FontFamily::Custom(_) => (
                 "NotoSans-Regular.ttf",
                 "NotoSans-Bold.ttf",
                 "NotoSans-Italic.ttf",

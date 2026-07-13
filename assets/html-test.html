@@ -85,6 +85,17 @@
       margin-bottom: 12px;
       border-radius: 4px;
     }
+
+    .img-row {
+      display: block;
+      margin-bottom: 12px;
+    }
+
+    .img-caption {
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -113,6 +124,8 @@
       <tr><td>Inline-Block &amp; Normal Blocks</td><td class="done">Supported</td></tr>
       <tr><td>Buttons (Submit, Reset, Click)</td><td class="done">Supported</td></tr>
       <tr><td>Meta (charset, viewport, base)</td><td class="done">Supported</td></tr>
+      <tr><td>Images (PNG, JPG, GIF, WebP, data URIs)</td><td class="done">Supported</td></tr>
+      <tr><td>SVG (inline &lt;svg&gt; tag)</td><td class="done">Supported</td></tr>
     </tbody>
   </table>
 </div>
@@ -208,6 +221,83 @@
   <div class="note">
     Clicking a <b>Reset</b> button will clear all input fields on the page.
   </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<h2>6. Images &amp; SVG</h2>
+<div class="card">
+
+  <div class="test">
+    <div class="test-label">Remote PNG (with explicit size)</div>
+    <div class="img-row">
+      <img src="https://www.rust-lang.org/logos/rust-logo-128x128.png"
+           width="80" height="80"
+           alt="Rust logo">
+      <div class="img-caption">Rust logo — 80×80px from rust-lang.org</div>
+    </div>
+  </div>
+
+  <div class="test">
+    <div class="test-label">Remote JPEG (natural size, max-width constrained)</div>
+    <div class="img-row">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/280px-PNG_transparency_demonstration_1.png"
+           alt="Transparency demo">
+      <div class="img-caption">PNG with alpha channel — rendered at natural width</div>
+    </div>
+  </div>
+
+  <div class="test">
+    <div class="test-label">Data URI (inline PNG, 1×1 red pixel scaled up)</div>
+    <div class="img-row">
+      <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg=="
+           width="60" height="60"
+           alt="Red pixel">
+      <div class="img-caption">1×1 red pixel via data URI, displayed at 60×60</div>
+    </div>
+  </div>
+
+  <div class="test">
+    <div class="test-label">Alt text fallback (broken src)</div>
+    <div class="img-row">
+      <img src="https://example.invalid/does-not-exist.png"
+           width="80" height="40"
+           alt="[broken image]">
+      <div class="img-caption">Should show alt text "[broken image]" since URL fails</div>
+    </div>
+  </div>
+
+  <div class="test">
+    <div class="test-label">Inline SVG — simple shapes</div>
+    <svg width="180" height="80" xmlns="http://www.w3.org/2000/svg">
+      <rect x="5"  y="5"  width="60" height="60" fill="#0f3460" rx="8"/>
+      <circle cx="105" cy="35" r="30" fill="#e11d48"/>
+      <polygon points="155,5 175,65 135,65" fill="#059669"/>
+    </svg>
+    <div class="img-caption">Blue rounded rect, red circle, green triangle — all inline SVG</div>
+  </div>
+
+  <div class="test">
+    <div class="test-label">Inline SVG — styled with &lt;style&gt; block</div>
+    <svg width="200" height="60" xmlns="http://www.w3.org/2000/svg">
+      <style>
+        rect   { fill: #fbbf24; }
+        circle { fill: #7c3aed; }
+      </style>
+      <rect x="10" y="10" width="80" height="40" rx="6"/>
+      <circle cx="150" cy="30" r="25"/>
+    </svg>
+    <div class="img-caption">SVG shapes styled via internal &lt;style&gt; — yellow rect, purple circle</div>
+  </div>
+
+  <div class="test">
+    <div class="test-label">Inline SVG — text</div>
+    <svg width="220" height="50" xmlns="http://www.w3.org/2000/svg">
+      <rect width="220" height="50" fill="#1e293b"/>
+      <text x="12" y="32" font-size="20" fill="#f8fafc" font-family="sans-serif">Hello SVG!</text>
+    </svg>
+    <div class="img-caption">SVG text rendered on a dark background</div>
+  </div>
+
 </div>
 
 </body>

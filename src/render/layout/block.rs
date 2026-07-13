@@ -3,10 +3,104 @@ use sdl2::video::{Window, WindowContext};
 use sdl2::pixels::Color;
 use crate::html5::node::Element;
 use crate::render::font::FontCache;
-use crate::render::image::ImageCache;
+use crate::render::image::{ImageCache, preprocess_svg, sniff_image_type};
 use crate::html5::parser::get_attr;
 use crate::css::{self};
 use super::LayoutState;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Image / SVG rendering helper
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Render image bytes at the current cursor position.
+///
+/// `explicit_w` / `explicit_h` come from the element's `width` / `height`
+/// attributes or CSS.  When only one dimension is given the other is scaled
+/// proportionally.  When neither is given a sensible maximum width is used.
+///
+/// Returns the (drawn_w, drawn_h) on success so the caller can advance the
+/// cursor.
+fn paint_image(
+    state:      &mut LayoutState,
+    canvas:     &mut sdl2::render::Canvas<Window>,
+    tc:         &sdl2::render::TextureCreator<WindowContext>,
+    bytes:      &[u8],
+    explicit_w: Option<i32>,
+    explicit_h: Option<i32>,
+    max_w:      i32,
+) -> Option<(i32, i32)> {
+    use sdl2::rwops::RWops;
+    use sdl2::image::ImageRWops;
+
+    // Detect format; SVG needs to be pre-processed before decoding
+    let img_type = sniff_image_type(bytes);
+    let owned_bytes: Vec<u8>;
+    let bytes_to_load: &[u8] = if img_type == "SVG" {
+        let (processed, _) = preprocess_svg(bytes);
+        owned_bytes = processed;
+        &owned_bytes
+    } else {
+        bytes
+    };
+
+    let rw = RWops::from_bytes(bytes_to_load).ok()?;
+    let surface = rw.load_typed(img_type).ok()?;
+
+    let nat_w = surface.width()  as i32;
+    let nat_h = surface.height() as i32;
+    if nat_w == 0 || nat_h == 0 {
+        return None;
+    }
+
+    // Compute display dimensions
+    let (disp_w, disp_h) = match (explicit_w, explicit_h) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None)    => {
+            let h = (nat_h as f32 * w as f32 / nat_w as f32) as i32;
+            (w, h.max(1))
+        }
+        (None, Some(h))    => {
+            let w = (nat_w as f32 * h as f32 / nat_h as f32) as i32;
+            (w.max(1), h)
+        }
+        (None, None) => {
+            // Default: fit within available width, no upscaling
+            let avail = (max_w - state.cursor_x).max(1);
+            if nat_w > avail {
+                let h = (nat_h as f32 * avail as f32 / nat_w as f32) as i32;
+                (avail, h.max(1))
+            } else {
+                (nat_w, nat_h)
+            }
+        }
+    };
+
+    if state.paint {
+        let texture = tc.create_texture_from_surface(&surface).ok()?;
+        let dst = sdl2::rect::Rect::new(
+            state.cursor_x,
+            state.cursor_y - state.ctx.scroll_y,
+            disp_w as u32,
+            disp_h as u32,
+        );
+        let _ = canvas.copy(&texture, None, Some(dst));
+    }
+
+    Some((disp_w, disp_h))
+}
+
+/// Parse a dimension attribute value like "200", "200px", or "50%".
+/// Percent is resolved against `reference`.
+fn parse_dim_attr(val: &str, reference: i32) -> Option<i32> {
+    let v = val.trim();
+    if let Some(px) = v.strip_suffix("px") {
+        return px.trim().parse::<f32>().ok().map(|f| f as i32);
+    }
+    if let Some(pct) = v.strip_suffix('%') {
+        return pct.trim().parse::<f32>().ok().map(|f| (f / 100.0 * reference as f32) as i32);
+    }
+    v.parse::<f32>().ok().map(|f| f as i32)
+}
 
 pub fn layout_element(
     state:    &mut LayoutState,
@@ -31,6 +125,111 @@ pub fn layout_element(
     }
     // thead/tbody/tfoot/tr/td/th are rendered by layout_table; skip if encountered standalone
     if matches!(tag.as_str(), "thead" | "tbody" | "tfoot" | "tr" | "td" | "th") {
+        return;
+    }
+
+    // ── <img> ────────────────────────────────────────────────────────────────
+    // Handle before any state mutation so cursor advances happen exactly once
+    // regardless of whether the parent runs a two-pass (measure + paint) loop.
+    if tag == "img" {
+        let src = get_attr(&el.attrs_raw, "src").unwrap_or("").to_owned();
+        if !src.is_empty() {
+            // Parse explicit width / height from attributes then inline style
+            let attr_w = get_attr(&el.attrs_raw, "width")
+                .and_then(|v| parse_dim_attr(v, max_w - state.cursor_x));
+            let attr_h = get_attr(&el.attrs_raw, "height")
+                .and_then(|v| parse_dim_attr(v, state.ctx.viewport_height));
+
+            let mut style_w = attr_w;
+            let mut style_h = attr_h;
+            if let Some(style_raw) = get_attr(&el.attrs_raw, "style") {
+                for part in style_raw.split(';') {
+                    if let Some(colon) = part.find(':') {
+                        let k = part[..colon].trim();
+                        let v = part[colon + 1..].trim();
+                        match k {
+                            "width"  => style_w = parse_dim_attr(v, max_w - state.cursor_x),
+                            "height" => style_h = parse_dim_attr(v, state.ctx.viewport_height),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            // If the image is wider than remaining space, wrap to next line first
+            let need_w = style_w.unwrap_or(0);
+            if need_w > 0 && state.cursor_x + need_w > max_w && state.cursor_x > state.line_start_x {
+                state.cursor_y += state.line_height;
+                state.cursor_x = state.line_start_x;
+            }
+
+            if let Some(bytes) = images.get_bytes(&src, base_url).map(|b| b.to_vec()) {
+                if let Some((dw, dh)) = paint_image(state, canvas, tc, &bytes, style_w, style_h, max_w) {
+                    state.cursor_x += dw;
+                    if dh > state.line_height {
+                        state.line_height = dh;
+                    }
+                }
+            } else {
+                // Fallback: render alt text
+                let alt = get_attr(&el.attrs_raw, "alt").unwrap_or("[img]").to_owned();
+                if !alt.is_empty() {
+                    super::inline::paint_text(state, canvas, tc, fonts, &alt, max_w);
+                }
+            }
+        }
+        return;
+    }
+
+    // ── <svg> ────────────────────────────────────────────────────────────────
+    // The parser captures the full <svg>…</svg> markup as a single TextNode
+    // child.  Extract it and render as a raster image via SDL2_image + nanosvg.
+    if tag == "svg" {
+        let svg_markup: Option<String> = el.children.iter().find_map(|c| {
+            if let crate::html5::node::Node::Text(t) = c {
+                if t.text.contains("<svg") || t.text.trim_start().starts_with('<') {
+                    return Some(t.text.clone());
+                }
+            }
+            None
+        });
+
+        if let Some(markup) = svg_markup {
+            let bytes = markup.into_bytes();
+
+            let attr_w = get_attr(&el.attrs_raw, "width")
+                .and_then(|v| parse_dim_attr(v, max_w - state.cursor_x));
+            let attr_h = get_attr(&el.attrs_raw, "height")
+                .and_then(|v| parse_dim_attr(v, state.ctx.viewport_height));
+
+            let mut style_w = attr_w;
+            let mut style_h = attr_h;
+            if let Some(style_raw) = get_attr(&el.attrs_raw, "style") {
+                for part in style_raw.split(';') {
+                    if let Some(colon) = part.find(':') {
+                        let k = part[..colon].trim();
+                        let v = part[colon + 1..].trim();
+                        match k {
+                            "width"  => style_w = parse_dim_attr(v, max_w - state.cursor_x),
+                            "height" => style_h = parse_dim_attr(v, state.ctx.viewport_height),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            // SVG is block-level: start on its own line
+            if state.cursor_x > state.line_start_x {
+                state.cursor_y += state.line_height;
+                state.cursor_x = state.line_start_x;
+            }
+
+            if let Some((_dw, dh)) = paint_image(state, canvas, tc, &bytes, style_w, style_h, max_w) {
+                state.cursor_y += dh;
+                state.cursor_x = state.line_start_x;
+                state.last_margin_bottom = 0;
+            }
+        }
         return;
     }
 
@@ -60,6 +259,7 @@ pub fn layout_element(
     let old_transform = state.current_text_transform;
     let old_opacity = state.current_opacity;
     let old_border_radius = state.current_border_radius;
+    let old_font_family = state.current_font_family.clone();
     let old_padding_top = state.padding_top;
     let old_padding_bottom = state.padding_bottom;
     let old_padding_left = state.padding_left;
@@ -377,6 +577,7 @@ pub fn layout_element(
     state.current_text_transform = old_transform;
     state.current_opacity = old_opacity;
     state.current_border_radius = old_border_radius;
+    state.current_font_family = old_font_family;
     state.fixed_width = old_fixed_width;
     state.padding_top = old_padding_top;
     state.padding_bottom = old_padding_bottom;
@@ -617,8 +818,59 @@ fn apply_style_prop(state: &mut LayoutState, prop: &str, val: &str) {
                 state.line_height = v as i32;
             }
         }
+        "font-family" => {
+            state.current_font_family = parse_font_family(val);
+        }
         _ => {}
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Font family parsing
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Parse a CSS `font-family` value into a `FontFamily`.
+///
+/// The value is a comma-separated priority list; we walk left-to-right and
+/// return the first token we recognise.  Generic keywords (`serif`,
+/// `sans-serif`, `monospace`) are mapped directly; everything else becomes
+/// `FontFamily::Custom(name)` so the font cache can look it up in its
+/// `@font-face` registry or the system font search path.
+fn parse_font_family(val: &str) -> crate::html5::node::FontFamily {
+    use crate::html5::node::FontFamily;
+
+    for token in val.split(',') {
+        // Strip surrounding whitespace and quotes (' or ")
+        let name = token.trim().trim_matches(|c| c == '\'' || c == '"').trim();
+        if name.is_empty() { continue; }
+        let lower = name.to_ascii_lowercase();
+        match lower.as_str() {
+            "sans-serif" | "arial" | "helvetica" | "verdana"
+            | "-apple-system" | "system-ui" | "blinkmacsystemfont"
+            | "segoe ui" | "open sans" | "helvetica neue"
+            | "roboto" | "ubuntu" | "cantarell" | "noto sans" => {
+                return FontFamily::SansSerif;
+            }
+            "serif" | "times" | "times new roman" | "georgia"
+            | "garamond" | "palatino" | "book antiqua" => {
+                return FontFamily::Serif;
+            }
+            "monospace" | "courier" | "courier new" | "lucida console"
+            | "consolas" | "monaco" | "menlo" | "source code pro"
+            | "fira code" | "jetbrains mono" | "inconsolata"
+            | "noto sans mono" => {
+                return FontFamily::Monospace;
+            }
+            _ => {
+                // Unknown name — return as Custom so the font cache can try
+                // to resolve it via @font-face or system paths.
+                return FontFamily::Custom(name.to_string());
+            }
+        }
+    }
+
+    // Empty or unparseable — fall back to sans-serif
+    crate::html5::node::FontFamily::SansSerif
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

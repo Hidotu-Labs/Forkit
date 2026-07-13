@@ -229,6 +229,67 @@
     </section>
     </section>
 
+  <!-- ── FONT FAMILY ── -->
+  <h2>10. Font Family</h2>
+  <div>
+    <div>
+      <div>sans-serif (default)</div>
+      <div style="font-family: sans-serif;">The quick brown fox jumps over the lazy dog. (sans-serif)</div>
+    </div>
+    <br>
+    <div>
+      <div>serif</div>
+      <div style="font-family: serif;">The quick brown fox jumps over the lazy dog. (serif)</div>
+    </div>
+    <br>
+    <div>
+      <div>monospace</div>
+      <div style="font-family: monospace;">The quick brown fox jumps over the lazy dog. (monospace)</div>
+    </div>
+    <br>
+    <div>
+      <div>font stack: system-ui, sans-serif (like example.com)</div>
+      <div style="font-family: -apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', 'Open Sans', Helvetica, Arial, sans-serif;">
+        The quick brown fox jumps over the lazy dog. (system-ui stack)
+      </div>
+    </div>
+    <br>
+    <div>
+      <div>monospace stack (code fonts)</div>
+      <div style="font-family: 'Fira Code', 'JetBrains Mono', Consolas, 'Courier New', monospace;">
+        function greet(name) { return "Hello, " + name; }
+      </div>
+    </div>
+    <br>
+    <div>
+      <div>font-family inherits into children</div>
+      <div style="font-family: monospace;">
+        Parent is monospace.
+        <span> Child span should also be monospace.</span>
+        <b> Bold child too.</b>
+      </div>
+    </div>
+    <br>
+    <div>
+      <div>font-family + font-size + color combined</div>
+      <div style="font-family: monospace; font-size: 14px; color: #16a34a;">
+        Green monospace code at 14px.
+      </div>
+      <div style="font-family: serif; font-size: 20px; color: #7c3aed; font-style: italic;">
+        Purple serif italic at 20px.
+      </div>
+    </div>
+    <br>
+    <div>
+      <div>font-family overridden in child</div>
+      <div style="font-family: serif;">
+        Outer is serif.
+        <span style="font-family: monospace;"> This span switches to monospace.</span>
+        Back to serif after the span.
+      </div>
+    </div>
+  </div>
+
 </body>
 
 </html>
