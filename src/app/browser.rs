@@ -4,7 +4,7 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::ttf::Sdl2TtfContext;
 
-use crate::dom::node::Node;
+use crate::html5::node::Node;
 use crate::net::resolve_url;
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
@@ -145,7 +145,7 @@ pub struct Tab {
     pub event_areas:    Vec<crate::render::layout::state::EventArea>,
     /// Active timeouts for this tab.
     pub timers:         Vec<JsTimer>,
-    pub stylesheets:    Vec<crate::dom::css::Stylesheet>,
+    pub stylesheets:    Vec<crate::css::Stylesheet>,
 }
 
 impl Tab {
@@ -326,7 +326,7 @@ impl Tab {
                              </body></html>"
                         );
                         // Parse the error page directly.
-                        let error_node = crate::dom::parser::parse_dom(&error_html);
+                        let error_node = crate::html5::parser::parse_dom(&error_html);
                         self.dom          = error_node;
                         self.page_title   = "Error".to_owned();
                         self.favicon_url  = None;
@@ -555,7 +555,7 @@ impl Tab {
     }
     pub fn toggle_details(&mut self, ptr: usize) {
         if let Some(el) = find_element_mut_by_ptr(&mut self.dom, ptr) {
-            let is_open = crate::dom::parser::get_attr(&el.attrs_raw, "open").is_some();
+            let is_open = crate::html5::parser::get_attr(&el.attrs_raw, "open").is_some();
             if is_open {
                 // Remove "open"
                 el.attrs_raw = el.attrs_raw.replace(" open", "").replace("open ", "").replace("open", "");
@@ -578,35 +578,35 @@ impl Tab {
 
     pub fn collect_styles(&mut self) {
         self.stylesheets.clear();
-        fn traverse(node: &crate::dom::node::Node, sheets: &mut Vec<crate::dom::css::Stylesheet>) {
+        fn traverse(node: &crate::html5::node::Node, sheets: &mut Vec<crate::css::Stylesheet>) {
             match node {
-                crate::dom::node::Node::Element(el) => {
+                crate::html5::node::Node::Element(el) => {
                     if el.tag == "style" {
                         let mut css_text = String::new();
                         for child in &el.children {
-                            if let crate::dom::node::Node::Text(txt) = child {
+                            if let crate::html5::node::Node::Text(txt) = child {
                                 css_text.push_str(&txt.text);
                             }
                         }
                         if !css_text.is_empty() {
-                            sheets.push(crate::dom::css::parse_stylesheet(&css_text));
+                            sheets.push(crate::css::parse_stylesheet(&css_text));
                         }
                     }
                     for child in &el.children {
                         traverse(child, sheets);
                     }
                 }
-                crate::dom::node::Node::Text(_) => {}
+                crate::html5::node::Node::Text(_) => {}
             }
         }
         traverse(&self.dom, &mut self.stylesheets);
     }
 }
 
-fn find_element_mut_by_ptr(node: &mut Node, ptr: usize) -> Option<&mut crate::dom::node::Element> {
+fn find_element_mut_by_ptr(node: &mut Node, ptr: usize) -> Option<&mut crate::html5::node::Element> {
     match node {
         Node::Element(el) => {
-            if (el as *mut crate::dom::node::Element as usize) == ptr {
+            if (el as *mut crate::html5::node::Element as usize) == ptr {
                 return Some(el);
             }
             for child in &mut el.children {
@@ -1149,6 +1149,7 @@ impl<'ttf> Browser<'ttf> {
                 &base_url,
                 &tab.dom,
                 content_w - SCROLLBAR_W - 4,
+                &[],
             );
             tab.link_areas     = state.link_areas;
             tab.input_areas    = state.input_areas;

@@ -1,7 +1,7 @@
 use sdl2::render::{Canvas, TextureCreator};
 use sdl2::video::{Window, WindowContext};
 
-use crate::dom::node::Node;
+use crate::html5::node::Node;
 use crate::render::font::FontCache;
 use crate::render::image::ImageCache;
 use crate::render::renderer::RenderCtx;
@@ -113,6 +113,14 @@ pub struct AudioPlayback {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Display {
+    Block,
+    Inline,
+    InlineBlock,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextTransform {
     None,
     Uppercase,
@@ -120,10 +128,26 @@ pub enum TextTransform {
     Capitalize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Margin {
+    Px(i32),
+    Auto,
+}
+
+impl Margin {
+    pub fn get_px(&self) -> i32 {
+        match self {
+            Margin::Px(v) => *v,
+            Margin::Auto => 0,
+        }
+    }
+}
+
 pub struct LayoutState<'ctx> {
     pub ctx:         &'ctx RenderCtx,
     pub cursor_x:    i32,
     pub cursor_y:    i32,
+    pub line_start_x: i32,
     pub line_height: i32,
     pub boxes:       Vec<LayoutBox>,
     pub link_areas:  Vec<LinkArea>,
@@ -145,8 +169,19 @@ pub struct LayoutState<'ctx> {
     pub current_text_transform: TextTransform,
     pub current_opacity: f32,
     pub current_border_radius: i32,
-    pub current_padding: i32,
-    pub stylesheets: Vec<crate::dom::css::Stylesheet>,
+    pub fixed_width: Option<i32>,
+    pub padding_top: i32,
+    pub padding_bottom: i32,
+    pub padding_left: i32,
+    pub padding_right: i32,
+    pub margin_top: i32,
+    pub margin_bottom: i32,
+    pub margin_left: Margin,
+    pub margin_right: Margin,
+    pub last_margin_bottom: i32,
+    pub current_display: Display,
+    pub root_font_size: f32,
+    pub stylesheets: Vec<crate::css::Stylesheet>,
     pub paint: bool,
 }
 
@@ -156,6 +191,7 @@ impl<'ctx> LayoutState<'ctx> {
             ctx,
             cursor_x:      8,
             cursor_y:      8,
+            line_start_x:  8,
             line_height:   16,
             boxes:         Vec::new(),
             link_areas:    Vec::new(),
@@ -177,31 +213,42 @@ impl<'ctx> LayoutState<'ctx> {
             current_text_transform: TextTransform::None,
             current_opacity: 1.0,
             current_border_radius: 0,
-            current_padding: 0,
+            fixed_width: None,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+            margin_top: 0,
+            margin_bottom: 0,
+            margin_left: Margin::Px(0),
+            margin_right: Margin::Px(0),
+            last_margin_bottom: 0,
+            current_display: Display::Inline,
+            root_font_size: 16.0,
             stylesheets: Vec::new(),
             paint: true,
         }
     }
 
-    pub fn collect_styles(&mut self, node: &crate::dom::node::Node) {
+    pub fn collect_styles(&mut self, node: &crate::html5::node::Node) {
         match node {
-            crate::dom::node::Node::Element(el) => {
+            crate::html5::node::Node::Element(el) => {
                 if el.tag == "style" {
                     let mut css_text = String::new();
                     for child in &el.children {
-                        if let crate::dom::node::Node::Text(txt) = child {
+                        if let crate::html5::node::Node::Text(txt) = child {
                             css_text.push_str(&txt.text);
                         }
                     }
                     if !css_text.is_empty() {
-                        self.stylesheets.push(crate::dom::css::parse_stylesheet(&css_text));
+                        self.stylesheets.push(crate::css::parse_stylesheet(&css_text));
                     }
                 }
                 for child in &el.children {
                     self.collect_styles(child);
                 }
             }
-            crate::dom::node::Node::Text(_) => {}
+            crate::html5::node::Node::Text(_) => {}
         }
     }
 
@@ -225,12 +272,13 @@ impl<'ctx> LayoutState<'ctx> {
         base_url: &str,
         node:     &Node,
         max_w:    i32,
+        ancestors: &[&crate::html5::node::Element],
     ) {
         match node {
             Node::Text(t)    => {
                 inline::paint_text(self, canvas, tc, fonts, &t.text, max_w);
             }
-            Node::Element(e) => block::layout_element(self, canvas, tc, fonts, images, base_url, e, max_w),
+            Node::Element(e) => block::layout_element(self, canvas, tc, fonts, images, base_url, e, max_w, ancestors),
         }
         let bottom = self.cursor_y + self.line_height;
         if bottom > self.content_height {

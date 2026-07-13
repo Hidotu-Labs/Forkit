@@ -2,7 +2,7 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
-use crate::dom::node::Node;
+use crate::html5::node::Node;
 use super::font::FontCache;
 use super::image::ImageCache;
 use super::layout::{LayoutBox, LayoutState};
@@ -33,6 +33,6 @@ pub fn render(
     let tc = canvas.texture_creator();
 
     let mut state = LayoutState::new(ctx);
-    state.layout_node(canvas, &tc, fonts, images, base_url, root, ctx.viewport_width - 16);
+    state.layout_node(canvas, &tc, fonts, images, base_url, root, ctx.viewport_width, &[]);
     state.into_boxes()
 }

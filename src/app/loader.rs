@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use crate::dom::node::Node;
-use crate::dom::parser::{parse_dom, extract_page_meta, extract_head_meta};
+use crate::html5::node::Node;
+use crate::html5::parser::{parse_dom, extract_page_meta, extract_head_meta};
 use crate::js;
 use crate::net;
 
@@ -212,7 +212,7 @@ fn extract_scripts(html: &str, base_url: &str) -> Vec<(String, String)> {
 
         let tag_orig = &html[abs..tag_end.min(html.len())];
 
-        if let Some(src) = crate::dom::parser::get_attr(tag_orig, "src") {
+        if let Some(src) = crate::html5::parser::get_attr(tag_orig, "src") {
             if !src.is_empty() && ext_count < MAX_EXTERNAL_SCRIPTS {
                 let url = crate::net::resolve_url(src, base_url);
                 match crate::net::fetch_url(&url) {

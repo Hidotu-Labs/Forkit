@@ -1,4 +1,4 @@
-use crate::dom::node::{Node, Element, TextNode};
+use crate::html5::node::{Node, Element, TextNode};
 
 use super::attr::get_attr;
 use super::lexer::{Lexer, TokKind};
@@ -154,10 +154,10 @@ pub fn parse_fragment(html: &str) -> Vec<Node> {
 
 fn clone_node(node: &Node) -> Node {
     match node {
-        Node::Text(t) => Node::Text(crate::dom::node::TextNode {
+        Node::Text(t) => Node::Text(crate::html5::node::TextNode {
             text:  t.text.clone(),
         }),
-        Node::Element(e) => Node::Element(crate::dom::node::Element {
+        Node::Element(e) => Node::Element(crate::html5::node::Element {
             tag:        e.tag.clone(),
             id:         e.id.clone(),
             class_name: e.class_name.clone(),

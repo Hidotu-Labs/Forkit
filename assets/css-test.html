@@ -159,6 +159,76 @@
     Transparent background with rounded corners
   </div>
 
+  <!-- ── MARGIN & LAYOUT ── -->
+    <style>
+        .margin-test {
+            background: #f97316;
+            margin: 30px;
+            color: white;
+            border-radius: 10px;
+        }
+        
+        section#s7 div {
+            margin-bottom: 10px;
+        }
+    </style>
+
+    <section id="s7">
+        <h2>7. Margin & Layout (CSS4 Logical)</h2>
+        <div style="background: #10b981; margin: 20px; color: white;">This box has 20px margin on all sides.</div>
+        <div style="background: #f59e0b; margin-inline: 40px; color: white;">This box has 40px inline margin (horizontal).</div>
+        <div style="background: #8b5cf6; margin-block: 20px; color: white;">This box has 20px block margin (vertical).</div>
+        
+        <h3>Margin Individual Sides</h3>
+        <div style="background: #ef4444; margin-top: 30px; color: white;">30px margin-top only.</div>
+        <div style="background: #3b82f6; margin-left: 60px; color: white;">60px margin-left only.</div>
+        <div style="background: #ec4899; margin-bottom: 50px; color: white;">50px margin-bottom (affects next element).</div>
+        <div style="background: #6366f1; color: white;">Box pushed by previous margin-bottom.</div>
+
+    <h3>Test: Style Tag Support</h3>
+        <p>The orange box below should be styled via the &lt;style&gt; tag above (30px margin, rounded corners).</p>
+        <div class="margin-test" style="background: #f97316; color: white;">I am styled via a global selector!</div>
+
+    <!-- ── PADDING & INNER LAYOUT ── -->
+    <section id="s8">
+        <h2>8. Padding & Inner Layout (CSS4 Logical)</h2>
+        <div style="background: #10b981; padding: 20px; color: white; margin-bottom: 20px;">
+            This box has 20px padding on all sides. Notice the text doesn't touch the edges!
+        </div>
+        <div style="background: #f59e0b; padding-inline: 40px; color: white; margin-bottom: 20px;">
+            This box has 40px inline padding (horizontal side spacing).
+        </div>
+        <div style="background: #8b5cf6; padding-block: 20px; color: white; margin-bottom: 20px;">
+            This box has 20px block padding (vertical top/bottom spacing).
+        </div>
+        
+        <div style="background: #ef4444; padding-left: 60px; color: white; margin-bottom: 20px;">
+            60px padding-left! The text is pushed way over but the background starts at the edge.
+        </div>
+    </section>
+
+    <!-- ── MARGIN AUTO & CENTERING ── -->
+    <section id="s9">
+        <h2>9. Margin Auto & Centering</h2>
+        <p>The boxes below should be horizontally centered if margin: auto is working.</p>
+        
+        <div style="background: #3b82f6; width: 300px; margin: 20px auto; color: white; padding: 10px; border-radius: 8px;">
+            This box has <b>width: 300px; margin: 20px auto;</b><br>
+            It should be centered!
+        </div>
+
+        <div style="background: #ec4899; width: 400px; margin-left: auto; color: white; padding: 10px; border-radius: 8px;">
+            This box has <b>width: 400px; margin-left: auto;</b><br>
+            It should be pushed to the right.
+        </div>
+
+        <div style="background: #8b5cf6; width: 200px; margin-right: auto; color: white; padding: 10px; border-radius: 8px;">
+            This box has <b>width: 200px; margin-right: auto;</b><br>
+            It should be pushed to the left (default, but testing margin-right: auto).
+        </div>
+    </section>
+    </section>
+
 </body>
 
 </html>

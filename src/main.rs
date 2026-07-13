@@ -1,5 +1,6 @@
 use forkit::app;
-use forkit::dom;
+use forkit::html5;
+use forkit::css;
 use forkit::js;
 use forkit::net;
 use forkit::render;

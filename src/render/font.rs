@@ -1,7 +1,7 @@
 use sdl2::ttf::{Font, Sdl2TtfContext};
 use sdl2::render::TextureCreator;
 use sdl2::video::WindowContext;
-use crate::dom::node::FontFamily;
+use crate::html5::node::FontFamily;
 use std::collections::HashMap;
 use std::collections::HashSet;
 

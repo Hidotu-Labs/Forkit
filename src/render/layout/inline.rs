@@ -54,14 +54,15 @@ pub fn paint_text(
         let (w, h) = fonts.measure_text(word, font_size, bold, italic);
         if state.cursor_x + w > max_w {
             state.cursor_y += state.line_height;
-            state.cursor_x = 8;
+            state.cursor_x = state.line_start_x;
         }
         
         if state.paint {
             let is_link = state.active_link.is_some();
             let tex = fonts.get_text_texture(tc, word, font_size, text_color, bold, italic, is_link);
             if let Some(t) = tex {
-                let target = sdl2::rect::Rect::new(state.cursor_x, state.cursor_y - state.ctx.scroll_y, w as u32, h as u32);
+                let y_offset = (state.line_height - h) / 2;
+                let target = sdl2::rect::Rect::new(state.cursor_x, state.cursor_y + y_offset - state.ctx.scroll_y, w as u32, h as u32);
                 let _ = canvas.copy(&t, None, Some(target));
 
                 if let Some(href) = &state.active_link {
@@ -77,6 +78,5 @@ pub fn paint_text(
         }
         
         state.cursor_x += w + space_width;
-        state.line_height = state.line_height.max(h);
     }
 }

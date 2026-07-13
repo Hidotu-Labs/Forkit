@@ -28,8 +28,8 @@
 ///   el.remove()
 
 use std::sync::Mutex;
-use crate::dom::node::{Node, Element, TextNode};
-use crate::dom::parser::get_attr;
+use crate::html5::node::{Node, Element, TextNode};
+use crate::html5::parser::get_attr;
 
 // ---------------------------------------------------------------------------
 // Pending DOM write operations
@@ -417,7 +417,7 @@ fn remove_attr_raw(attrs_raw: &mut String, name: &str) {
 /// Parse a very simple HTML fragment into a list of `Node`s.
 /// Supports plain text and `<tag>text</tag>` elements (one level deep).
 fn parse_html_fragment(html: &str) -> Vec<Node> {
-    crate::dom::parser::parse_fragment(html)
+    crate::html5::parser::parse_fragment(html)
 }
 
 // ---------------------------------------------------------------------------
