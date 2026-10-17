@@ -4,13 +4,99 @@
 <head>
   <title>Forkit — CSS Test</title>
   <style>
+    :root {
+      --brand-primary: #2563eb;
+      --brand-bg: #eff6ff;
+      --brand-radius: 8px;
+      --brand-padding: 12px;
+      --theme-color: #0d9488;
+    }
+
     h1 {
-      color: #2563eb;
+      color: var(--brand-primary);
     }
     h2 {
       color: #1e293b;
       background-color: #f1f5f9;
       border-radius: 4px;
+    }
+
+    /* CSS Variables Demo */
+    .var-card {
+      background-color: var(--brand-bg);
+      color: var(--brand-primary);
+      border-radius: var(--brand-radius);
+      padding: var(--brand-padding);
+    }
+
+    .var-override {
+      --brand-primary: #db2777;
+      --brand-bg: #fdf2f8;
+      background-color: var(--brand-bg);
+      color: var(--brand-primary);
+      border-radius: var(--brand-radius);
+      padding: var(--brand-padding);
+    }
+
+    .var-fallback {
+      background-color: var(--non-existent-bg, #f3f4f6);
+      color: var(--non-existent-color, #4b5563);
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    /* Example.com Card & Modern Features */
+    .example-box {
+      font: 16px/1.6 system-ui, sans-serif;
+      max-width: 26em;
+      margin: 20px auto;
+      padding: 2em;
+      text-align: center;
+      background: light-dark(#eee, #222);
+      color: light-dark(#111, #eee);
+      border-radius: 12px;
+    }
+
+    /* CSS4 Selectors Level 4 */
+    :is(.selector-group-a, .selector-group-b) {
+      background-color: #dbeafe;
+      color: #1d4ed8;
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    :where(.where-test-1, .where-test-2) {
+      background-color: #fef3c7;
+      color: #b45309;
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    .not-list-container div:not(.exclude-me, .skip-me) {
+      color: #059669;
+      font-weight: bold;
+    }
+
+    .exclude-me {
+      color: #dc2626;
+      font-style: italic;
+    }
+
+    /* Case-insensitive attribute selector [attr="val" i] */
+    input[data-role="primary-btn" i] {
+      background-color: #7c3aed;
+      color: #ffffff;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: bold;
+    }
+
+    /* Complex combinators: direct child */
+    .tree-box > .direct-child {
+      background-color: #ede9fe;
+      color: #6d28d9;
+      padding: 10px;
+      border-radius: 6px;
     }
   </style>
 </head>
@@ -286,6 +372,81 @@
         Outer is serif.
         <span style="font-family: monospace;"> This span switches to monospace.</span>
         Back to serif after the span.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CSS4 SELECTORS LEVEL 4 ── -->
+  <h2>11. CSS4 Selectors Level 4 Support</h2>
+  <div>
+    <div>
+      <div>:is(.selector-group-a, .selector-group-b)</div>
+      <div class="selector-group-a">Matched via :is() group A (blue background, dark blue text)</div>
+      <br>
+      <div class="selector-group-b">Matched via :is() group B (blue background, dark blue text)</div>
+    </div>
+    <br>
+    <div>
+      <div>:where(.where-test-1, .where-test-2)</div>
+      <div class="where-test-1">Matched via :where() test 1 (amber theme)</div>
+      <br>
+      <div class="where-test-2">Matched via :where() test 2 (amber theme)</div>
+    </div>
+    <br>
+    <div>
+      <div>:not() with selector list (:not(.exclude-me, .skip-me))</div>
+      <div class="not-list-container">
+        <div>Matched :not (green, bold text)</div>
+        <div class="exclude-me">Excluded by :not (red, italic text)</div>
+      </div>
+    </div>
+    <br>
+    <div>
+      <div>Case-insensitive attribute selector [data-role="primary-btn" i]</div>
+      <input type="button" data-role="PRIMARY-BTN" value="Submit Button (Matched UPPERCASE data-role)">
+    </div>
+    <br>
+    <div>
+      <div>Child combinator (.tree-box &gt; .direct-child)</div>
+      <div class="tree-box">
+        <div class="direct-child">Direct child of tree-box (purple theme)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CSS VARIABLES / CUSTOM PROPERTIES ── -->
+  <h2>12. CSS Custom Properties / CSS Variables (var(--...))</h2>
+  <div>
+    <div>
+      <div>Global :root variables (--brand-primary, --brand-bg, --brand-radius, --brand-padding)</div>
+      <div class="var-card">Styled using global CSS variables from :root (blue theme, 8px radius, 12px padding)</div>
+    </div>
+    <br>
+    <div>
+      <div>Locally scoped variable overrides</div>
+      <div class="var-override">Locally overrides --brand-primary and --brand-bg (pink theme, inherits radius &amp; padding)</div>
+    </div>
+    <br>
+    <div>
+      <div>Fallback value support (var(--missing, fallback))</div>
+      <div class="var-fallback">Uses fallback values for non-existent variables (gray card theme)</div>
+    </div>
+    <br>
+    <div>
+      <div>Inline style with CSS variable (--inline-theme)</div>
+      <div style="--inline-theme: #059669; color: white; background-color: var(--inline-theme); padding: 10px; border-radius: 6px;">
+        Inline defined --inline-theme: #059669 used with background-color: var(--inline-theme) (green box)
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODERN CSS LAYOUT & LIGHT-DARK ── -->
+  <h2>13. Modern CSS Layout, light-dark(), &amp; text-align: center</h2>
+  <div>
+    <div>
+      <div>Centered Card: max-width: 26em; margin: auto; text-align: center; background: light-dark(#eee, #222)</div>
+      <div class="example-box">
+        <p>This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.</p>
       </div>
     </div>
   </div>

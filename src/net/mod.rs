@@ -1,9 +1,25 @@
 use std::io::Read;
+use std::time::Duration;
+use std::sync::OnceLock;
+
+/// Shared HTTP client with connection pooling, keep-alive, and sane timeouts.
+fn get_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(5))
+            .timeout_read(Duration::from_secs(10))
+            .max_idle_connections(32)
+            .max_idle_connections_per_host(8)
+            .build()
+    })
+}
 
 /// Fetch an HTTP/HTTPS URL, returning `(final_url, bytes)`.
 pub fn fetch_url_bytes(url: &str) -> Result<(String, Vec<u8>), String> {
-    let resp = ureq::get(url)
+    let resp = get_agent().get(url)
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
@@ -19,8 +35,9 @@ pub fn fetch_url_bytes(url: &str) -> Result<(String, Vec<u8>), String> {
 
 /// Fetch an HTTP/HTTPS URL, returning `(final_url, body)`.
 pub fn fetch_url(url: &str) -> Result<(String, String), String> {
-    let resp = ureq::get(url)
+    let resp = get_agent().get(url)
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
@@ -29,7 +46,7 @@ pub fn fetch_url(url: &str) -> Result<(String, String), String> {
     // Extract charset from Content-Type header (e.g. "text/html; charset=ISO-8859-9")
     let charset = resp
         .header("Content-Type")
-        .and_then(|ct| {
+        .and_then(|ct: &str| {
             let lower = ct.to_ascii_lowercase();
             let cs_pos = lower.find("charset=")?;
             let rest = ct[cs_pos + 8..].trim_start_matches(|c: char| c == '"' || c == '\'');
@@ -192,6 +209,10 @@ pub fn resolve_url(input: &str, base: &str) -> String {
 
     // Absolute path on same origin
     if input.starts_with('/') {
+        if !base.contains("://") || base.starts_with("file://") {
+            let base_dir = base_directory(base.strip_prefix("file://").unwrap_or(base));
+            return format!("{}{}", base_dir.trim_end_matches('/'), input);
+        }
         return format!("{}{}", origin, input);
     }
 
@@ -231,13 +252,14 @@ pub fn fetch_with_auto_https(url: &str) -> Result<(String, String), String> {
 
 /// Extract `scheme://host` from a URL.
 fn url_origin(url: &str) -> &str {
-    // Find end of "scheme://host[:port]"
-    if let Some(after_scheme) = url.find("://") {
+    if let Some(rest) = url.strip_prefix("file://") {
+        base_directory(rest)
+    } else if let Some(after_scheme) = url.find("://") {
         let rest = &url[after_scheme + 3..];
         let path_start = rest.find('/').unwrap_or(rest.len());
         &url[..after_scheme + 3 + path_start]
     } else {
-        url
+        base_directory(url)
     }
 }
 

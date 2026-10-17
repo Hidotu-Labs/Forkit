@@ -7,6 +7,7 @@ pub enum Token {
     Number(f64),
     // Punctuation
     Dot,
+    DotDotDot, // ...
     LParen,
     RParen,
     LBrace,
@@ -235,7 +236,15 @@ impl Lexer {
                 else { Token::Slash }
             }
             '%' => Token::Percent,
-            '.' => Token::Dot,
+            '.' => {
+                if self.peek() == Some('.') && self.peek2() == Some('.') {
+                    self.bump();
+                    self.bump();
+                    Token::DotDotDot
+                } else {
+                    Token::Dot
+                }
+            }
             '(' => Token::LParen,
             ')' => Token::RParen,
             '{' => Token::LBrace,

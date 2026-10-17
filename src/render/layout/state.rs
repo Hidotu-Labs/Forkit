@@ -115,8 +115,10 @@ pub struct AudioPlayback {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
     Block,
+    FlowRoot,
     Inline,
     InlineBlock,
+    Grid,
     None,
 }
 
@@ -129,9 +131,30 @@ pub enum TextTransform {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Margin {
     Px(i32),
     Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Float {
+    None,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListStyle {
+    Disc,
+    Square,
+    None,
 }
 
 impl Margin {
@@ -167,6 +190,7 @@ pub struct LayoutState<'ctx> {
     pub current_bold: bool,
     pub current_italic: bool,
     pub current_text_transform: TextTransform,
+    pub text_align: TextAlign,
     pub current_opacity: f32,
     pub current_border_radius: i32,
     pub current_font_family: crate::html5::node::FontFamily,
@@ -181,18 +205,28 @@ pub struct LayoutState<'ctx> {
     pub margin_right: Margin,
     pub last_margin_bottom: i32,
     pub current_display: Display,
+    pub current_float: Float,
+    pub list_style: ListStyle,
     pub root_font_size: f32,
     pub stylesheets: Vec<crate::css::Stylesheet>,
+    pub css_variables: std::collections::HashMap<String, String>,
+    pub max_x: i32,
+    pub float_bottom: i32,
+    pub float_right_w: i32,
+    pub grid_columns: usize,
+    pub grid_gap: i32,
     pub paint: bool,
+    pub visibility: bool,
+    pub text_decoration_underline: bool,
 }
 
 impl<'ctx> LayoutState<'ctx> {
     pub fn new(ctx: &'ctx RenderCtx) -> Self {
         LayoutState {
             ctx,
-            cursor_x:      8,
-            cursor_y:      8,
-            line_start_x:  8,
+            cursor_x:      0,
+            cursor_y:      0,
+            line_start_x:  0,
             line_height:   16,
             boxes:         Vec::new(),
             link_areas:    Vec::new(),
@@ -206,12 +240,18 @@ impl<'ctx> LayoutState<'ctx> {
             focused_input: None,
             active_link:   None,
             content_height: 0,
+            max_x:         0,
+            float_bottom:  0,
+            float_right_w: 0,
+            grid_columns:  1,
+            grid_gap:      0,
             current_color: [0, 0, 0, 255],
             current_bg_color: None,
             current_font_size: 16,
             current_bold: false,
             current_italic: false,
             current_text_transform: TextTransform::None,
+            text_align: TextAlign::Left,
             current_opacity: 1.0,
             current_border_radius: 0,
             current_font_family: crate::html5::node::FontFamily::SansSerif,
@@ -226,9 +266,14 @@ impl<'ctx> LayoutState<'ctx> {
             margin_right: Margin::Px(0),
             last_margin_bottom: 0,
             current_display: Display::Inline,
+            current_float: Float::None,
+            list_style: ListStyle::Disc,
             root_font_size: 16.0,
             stylesheets: Vec::new(),
+            css_variables: std::collections::HashMap::new(),
             paint: true,
+            visibility: true,
+            text_decoration_underline: false,
         }
     }
 
@@ -276,15 +321,33 @@ impl<'ctx> LayoutState<'ctx> {
         max_w:    i32,
         ancestors: &[&crate::html5::node::Element],
     ) {
+        self.layout_node_with_siblings(canvas, tc, fonts, images, base_url, node, max_w, ancestors, &[]);
+    }
+
+    pub fn layout_node_with_siblings(
+        &mut self,
+        canvas:   &mut Canvas<Window>,
+        tc:       &TextureCreator<WindowContext>,
+        fonts:    &mut FontCache,
+        images:   &mut ImageCache,
+        base_url: &str,
+        node:     &Node,
+        max_w:    i32,
+        ancestors: &[&crate::html5::node::Element],
+        prev_siblings: &[&crate::html5::node::Element],
+    ) {
         match node {
             Node::Text(t)    => {
                 inline::paint_text(self, canvas, tc, fonts, &t.text, max_w);
             }
-            Node::Element(e) => block::layout_element(self, canvas, tc, fonts, images, base_url, e, max_w, ancestors),
+            Node::Element(e) => block::layout_element(self, canvas, tc, fonts, images, base_url, e, max_w, ancestors, prev_siblings),
         }
         let bottom = self.cursor_y + self.line_height;
         if bottom > self.content_height {
             self.content_height = bottom;
+        }
+        if self.cursor_x > self.max_x {
+            self.max_x = self.cursor_x;
         }
     }
 }

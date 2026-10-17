@@ -142,8 +142,7 @@ impl<'ttf> FontCache<'ttf> {
         has
     }
 
-    /// Measure `text` using the given font, with results memoised per (text, FontKey).
-    /// Returns `(width, height)` or a fallback estimate.
+    /// Measure `text` using the given font (or script-specific fallback), with results memoised.
     pub fn size_of_cached(&mut self, text: &str, size: u16, bold: bool, italic: bool, family: FontFamily) -> (i32, i32) {
         let size = size.clamp(8, 96);
         let key = FontKey { size, bold, italic, underline: false, family: family.clone() };
@@ -151,11 +150,31 @@ impl<'ttf> FontCache<'ttf> {
         if let Some(&cached) = self.measure_cache.get(&cache_key) {
             return cached;
         }
-        let result = self.get_family(size, bold, italic, false, family)
+
+        // Script-aware fallback selection
+        let has_arabic = text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c) || ('\u{0750}'..='\u{077F}').contains(&c) || ('\u{FB50}'..='\u{FDFF}').contains(&c) || ('\u{FE70}'..='\u{FEFF}').contains(&c));
+        let has_cjk = text.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c) || ('\u{3000}'..='\u{303F}').contains(&c) || ('\u{FF00}'..='\u{FFEF}').contains(&c));
+        let has_symbols = text.chars().any(|c| ('\u{2190}'..='\u{21FF}').contains(&c) || ('\u{2600}'..='\u{26FF}').contains(&c) || ('\u{2700}'..='\u{27BF}').contains(&c));
+
+        let font_opt = if has_arabic {
+            self.get_arabic_fallback(size)
+        } else if has_cjk {
+            self.get_cjk_fallback(size)
+        } else if has_symbols {
+            if self.get_fallback(size).is_some() {
+                self.get_fallback(size)
+            } else {
+                self.get_family(size, bold, italic, false, family)
+            }
+        } else {
+            self.get_family(size, bold, italic, false, family)
+        };
+
+        let result = font_opt
             .and_then(|f| f.size_of(text).ok())
             .map(|(w, h)| (w as i32, h as i32))
             .unwrap_or((text.len() as i32 * (size as i32 / 2).max(4), size as i32));
-        // Only cache reasonably short strings to bound memory use.
+
         if text.len() <= 256 {
             self.measure_cache.insert(cache_key, result);
         }
@@ -182,7 +201,7 @@ impl<'ttf> FontCache<'ttf> {
         self.size_of_cached(text, size, bold, italic, family)
     }
 
-    /// Like `get_text_texture` but honours the given `FontFamily`.
+    /// Like `get_text_texture` but honours the given `FontFamily` and script fallbacks.
     pub fn get_text_texture_family<'a>(
         &mut self,
         tc:        &'a TextureCreator<WindowContext>,
@@ -194,11 +213,29 @@ impl<'ttf> FontCache<'ttf> {
         underline: bool,
         family:    FontFamily,
     ) -> Option<sdl2::render::Texture<'a>> {
-        let font = self.get_family(size, bold, italic, underline, family)?;
+        let has_arabic = text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c) || ('\u{0750}'..='\u{077F}').contains(&c) || ('\u{FB50}'..='\u{FDFF}').contains(&c) || ('\u{FE70}'..='\u{FEFF}').contains(&c));
+        let has_cjk = text.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c) || ('\u{3000}'..='\u{303F}').contains(&c) || ('\u{FF00}'..='\u{FFEF}').contains(&c));
+        let has_symbols = text.chars().any(|c| ('\u{2190}'..='\u{21FF}').contains(&c) || ('\u{2600}'..='\u{26FF}').contains(&c) || ('\u{2700}'..='\u{27BF}').contains(&c));
+
+        let font = if has_arabic {
+            self.get_arabic_fallback(size)?
+        } else if has_cjk {
+            self.get_cjk_fallback(size)?
+        } else if has_symbols {
+            if let Some(f) = self.get_fallback(size) {
+                f
+            } else {
+                self.get_family(size, bold, italic, underline, family)?
+            }
+        } else {
+            self.get_family(size, bold, italic, underline, family)?
+        };
+
         let c = sdl2::pixels::Color::RGBA(color[0], color[1], color[2], color[3]);
         let surf = font.render(text).blended(c).ok()?;
         let mut tex = tc.create_texture_from_surface(&surf).ok()?;
         tex.set_blend_mode(sdl2::render::BlendMode::Blend);
+        tex.set_alpha_mod(color[3]);
         Some(tex)
     }
 
@@ -218,6 +255,7 @@ impl<'ttf> FontCache<'ttf> {
         let surf = font.render(text).blended(c).ok()?;
         let mut tex = tc.create_texture_from_surface(&surf).ok()?;
         tex.set_blend_mode(sdl2::render::BlendMode::Blend);
+        tex.set_alpha_mod(color[3]);
         Some(tex)
     }
 
@@ -242,6 +280,40 @@ impl<'ttf> FontCache<'ttf> {
             self.cache.insert(key.clone(), font);
         }
 
+        self.cache.get(&key)
+    }
+
+    /// Get the Arabic fallback font at the given size.
+    pub fn get_arabic_fallback(&mut self, size: u16) -> Option<&Font<'ttf, 'static>> {
+        let size = size.clamp(8, 96);
+        let key = FontKey {
+            size,
+            bold:      false,
+            italic:    false,
+            underline: false,
+            family:    FontFamily::Custom("__arabic__".into()),
+        };
+        if !self.cache.contains_key(&key) {
+            let font = self.load_arabic_font(size);
+            self.cache.insert(key.clone(), font?);
+        }
+        self.cache.get(&key)
+    }
+
+    /// Get the CJK fallback font at the given size.
+    pub fn get_cjk_fallback(&mut self, size: u16) -> Option<&Font<'ttf, 'static>> {
+        let size = size.clamp(8, 96);
+        let key = FontKey {
+            size,
+            bold:      false,
+            italic:    false,
+            underline: false,
+            family:    FontFamily::Custom("__cjk__".into()),
+        };
+        if !self.cache.contains_key(&key) {
+            let font = self.load_cjk_font(size);
+            self.cache.insert(key.clone(), font?);
+        }
         self.cache.get(&key)
     }
 
@@ -280,6 +352,41 @@ impl<'ttf> FontCache<'ttf> {
             self.cache.insert(key.clone(), font?);
         }
         self.cache.get(&key)
+    }
+
+    fn load_arabic_font(&self, size: u16) -> Option<Font<'ttf, 'static>> {
+        let candidates = [
+            "/usr/share/fonts/noto/NotoSansArabic-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansArabicUI-Regular.ttf",
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                if let Ok(font) = self.ttf.load_font(std::path::Path::new(path), size) {
+                    return Some(font);
+                }
+            }
+        }
+        None
+    }
+
+    fn load_cjk_font(&self, size: u16) -> Option<Font<'ttf, 'static>> {
+        let candidates = [
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                if let Ok(font) = self.ttf.load_font(std::path::Path::new(path), size) {
+                    return Some(font);
+                }
+            }
+        }
+        None
     }
 
     fn load_fallback_font(&self, size: u16) -> Option<Font<'ttf, 'static>> {
@@ -439,5 +546,25 @@ impl<'ttf> FontCache<'ttf> {
         }
 
         fonts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_arabic_and_cjk_character_detection() {
+        let arabic_sample = "مثال";
+        let cjk_sample = "例";
+        let english_sample = "Example";
+
+        let is_arabic = |s: &str| s.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c));
+        let is_cjk = |s: &str| s.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+
+        assert!(is_arabic(arabic_sample));
+        assert!(!is_arabic(english_sample));
+        assert!(is_cjk(cjk_sample));
+        assert!(!is_cjk(english_sample));
     }
 }

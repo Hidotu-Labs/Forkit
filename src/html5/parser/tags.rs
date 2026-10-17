@@ -4,7 +4,7 @@ pub const VOID_TAGS: &[&str] = &[
 ];
 
 pub const SKIP_TAGS: &[&str] = &[
-    "script", "noscript", "template", "math", "title",
+    "script", "noscript", "template", "math",
 ];
 
 pub const STYLE_HARVEST_TAGS: &[&str] = &["head"];

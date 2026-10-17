@@ -121,22 +121,28 @@ fn run_statement(
         // ── Variable declaration: let / const / var ──────────────────────────
         Token::Ident(ref id) if matches!(id.as_str(), "var" | "let" | "const") => {
             lexer.next_token(); // consume keyword
-            let name = match lexer.next_token() {
-                Token::Ident(n) => n,
-                _ => { skip_statement(lexer); return Signal::None; }
-            };
-            // Handle destructuring: let { a, b } = ... or let [ a ] = ...
-            if matches!(name.as_str(), "") {
-                skip_statement(lexer);
-                return Signal::None;
+            loop {
+                let name = match lexer.next_token() {
+                    Token::Ident(n) => n,
+                    _ => { skip_statement(lexer); return Signal::None; }
+                };
+                if name.is_empty() {
+                    skip_statement(lexer);
+                    return Signal::None;
+                }
+                let val = if lexer.peek_token() == Token::Eq {
+                    lexer.next_token();
+                    eval_expr_with_dom(lexer, scope, dom)
+                } else {
+                    JsValue::Undefined
+                };
+                scope.declare(&name, val);
+                if lexer.peek_token() == Token::Comma {
+                    lexer.next_token();
+                    continue;
+                }
+                break;
             }
-            let val = if lexer.peek_token() == Token::Eq {
-                lexer.next_token();
-                eval_expr_with_dom(lexer, scope, dom)
-            } else {
-                JsValue::Undefined
-            };
-            scope.declare(&name, val);
             if lexer.peek_token() == Token::Semi { lexer.next_token(); }
             return Signal::None;
         }
@@ -288,13 +294,51 @@ fn run_statement(
                         if lexer.peek_token() == Token::Semi { lexer.next_token(); }
                         return Signal::None;
                     }
-                    // ── DOM element write or method call ─────────────────────────────────
+                    // ── DOM element write or method call / chained access ─
                     if let JsValue::Str(ref s) = var_val {
                         if s.starts_with("\x00elem\x00") {
                             let encoded = s.clone();
+                            let saved_dot = lexer.pos;
                             if handle_element_write(lexer, scope, entries, dom, &encoded, &name) {
                                 if lexer.peek_token() == Token::Semi { lexer.next_token(); }
                                 return Signal::None;
+                            }
+                            // Reset to before the `.` so chained access can try
+                            lexer.pos = saved_dot;
+                        }
+                    }
+                    // ── Chained access / method call: e.g. B.children[0].insertAdjacentHTML(...) ──
+                    // Read the first property from var_val
+                    lexer.next_token(); // consume `.`
+                    let prop = match lexer.next_token() {
+                        Token::Ident(p) => p,
+                        _ => { lexer.pos = saved; skip_statement(lexer); return Signal::None; }
+                    };
+                    let chained_val = if let JsValue::Str(ref s) = var_val {
+                        if s.starts_with("\x00elem\x00") {
+                            read_element_prop(s, &prop, lexer, dom)
+                        } else {
+                            JsValue::Undefined
+                        }
+                    } else {
+                        JsValue::Undefined
+                    };
+                    // Now chained_val is an Array (e.g. children)
+                    if lexer.peek_token() == Token::LBracket {
+                        if let JsValue::Array(ref arr) = chained_val {
+                            lexer.next_token(); // consume `[`
+                            let idx = eval_expr_with_dom(lexer, scope, dom);
+                            if lexer.peek_token() == Token::RBracket { lexer.next_token(); }
+                            let i = idx.to_number() as usize;
+                            let target_item = arr.lock().unwrap().get(i).cloned().unwrap_or(JsValue::Undefined);
+                            if let JsValue::Str(ref s) = target_item {
+                                if s.starts_with("\x00elem\x00") {
+                                    let encoded = s.clone();
+                                    if handle_element_write(lexer, scope, entries, dom, &encoded, "") {
+                                        if lexer.peek_token() == Token::Semi { lexer.next_token(); }
+                                        return Signal::None;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1158,10 +1202,20 @@ pub fn eval_document_expr(
         _ => return JsValue::Undefined,
     };
 
-    // document.title — property, no parens
+    // document.title / document.body / document.head — properties, no parens
     if method == "title" {
         let val = dom.map(|d| JsValue::Str(d.title())).unwrap_or(JsValue::Str(String::new()));
         return chain_string_props(lexer, val, dom);
+    }
+    if method == "body" {
+        let el = dom.and_then(|d| d.get_elements_by_tag_name("body").into_iter().next());
+        let val = element_to_value(el);
+        return chain_element_props(lexer, val, dom);
+    }
+    if method == "head" {
+        let el = dom.and_then(|d| d.get_elements_by_tag_name("head").into_iter().next());
+        let val = element_to_value(el);
+        return chain_element_props(lexer, val, dom);
     }
 
     // All other document methods require ()
@@ -1307,6 +1361,41 @@ fn handle_element_write(
             }
             true
         }
+        // ── el.insertAdjacentHTML("position", "html") ────────────────────────
+        "insertAdjacentHTML" if lexer.peek_token() == Token::LParen => {
+            lexer.next_token();
+            let pos_val = eval_expr_with_dom(lexer, scope, dom).to_display();
+            let html_val = if lexer.peek_token() == Token::Comma {
+                lexer.next_token();
+                eval_expr_with_dom(lexer, scope, dom).to_display()
+            } else { String::new() };
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            if !detached {
+                if let Some(d) = dom {
+                    d.insert_adjacent_html(el.path.clone(), &pos_val, &html_val);
+                }
+            }
+            true
+        }
+        // ── el.prepend(child) ─────────────────────────────────────────────────
+        "prepend" if lexer.peek_token() == Token::LParen => {
+            lexer.next_token();
+            let child_val = eval_expr_with_dom(lexer, scope, dom);
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            if let JsValue::Str(ref s) = child_val {
+                if s.starts_with("\x00elem\x00") {
+                    let child_el = decode_element(s);
+                    if !detached && !child_el.path.is_empty() {
+                        if let Some(d) = dom {
+                            d.prepend_child(el.path.clone(), child_el.path);
+                        }
+                    }
+                }
+            }
+            true
+        }
         // ── el.setAttribute("name", "value") ────────────────────────────────
         "setAttribute" if lexer.peek_token() == Token::LParen => {
             lexer.next_token();
@@ -1398,6 +1487,21 @@ fn handle_element_write(
             }
             true
         }
+        // ── generic attribute setter: el.lang = "...", el.dir = "...", etc. ──
+        other_prop if lexer.peek_token() == Token::Eq => {
+            lexer.next_token();
+            let val = eval_expr_with_dom(lexer, scope, dom).to_display();
+            if !detached {
+                if let Some(d) = dom {
+                    d.push_mutation(crate::js::dom::DomMutation::SetAttribute {
+                        path: el.path.clone(),
+                        name: other_prop.to_string(),
+                        value: val,
+                    });
+                }
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -1439,11 +1543,11 @@ fn chain_props_inner(
         eval_array_method(lexer, arr, &prop)
     } else if let JsValue::Str(ref s) = val {
         if s.starts_with("\x00elem\x00") {
-            read_element_prop(s, &prop, lexer)
+            read_element_prop(s, &prop, lexer, dom)
         } else if s.starts_with("\x00list\x00") {
             read_list_prop(s, &prop)
         } else {
-            read_string_prop(s, &prop)
+            eval_string_method(lexer, s, &prop)
         }
     } else {
         JsValue::Undefined
@@ -1472,11 +1576,11 @@ fn chain_with_scope(
         eval_array_method_full(lexer, scope, dom, arr, &prop)
     } else if let JsValue::Str(ref s) = val {
         if s.starts_with("\x00elem\x00") {
-            read_element_prop(s, &prop, lexer)
+            read_element_prop(s, &prop, lexer, dom)
         } else if s.starts_with("\x00list\x00") {
             read_list_prop(s, &prop)
         } else {
-            read_string_prop(s, &prop)
+            eval_string_method(lexer, s, &prop)
         }
     } else {
         JsValue::Undefined
@@ -1485,7 +1589,7 @@ fn chain_with_scope(
     chain_with_scope(lexer, next_val, scope, dom)
 }
 
-fn read_element_prop(encoded: &str, prop: &str, lexer: &mut Lexer) -> JsValue {
+fn read_element_prop(encoded: &str, prop: &str, lexer: &mut Lexer, dom: Option<&JsDom<'_>>) -> JsValue {
     let el = decode_element(encoded);
     match prop {
         "id"          => JsValue::Str(el.id),
@@ -1496,7 +1600,55 @@ fn read_element_prop(encoded: &str, prop: &str, lexer: &mut Lexer) -> JsValue {
         "innerText"   => JsValue::Str(el.text_content),
         "href"        => JsValue::Str(el.href),
         "length"      => JsValue::Number(1.0),
-        "children"    => JsValue::Number(el.children.len() as f64),
+        "lang"        => el.get_attribute("lang").map(JsValue::Str).unwrap_or(JsValue::Str(String::new())),
+        "dir"         => el.get_attribute("dir").map(JsValue::Str).unwrap_or(JsValue::Str(String::new())),
+        "children"    => {
+            // Return an array of child elements
+            let children_els = if let Some(d) = dom {
+                // Read fresh children from dom
+                fn navigate_ref<'a>(node: &'a crate::html5::node::Node, path: &[usize]) -> Option<&'a crate::html5::node::Node> {
+                    if path.is_empty() { return Some(node); }
+                    if let crate::html5::node::Node::Element(el) = node {
+                        let idx = path[0];
+                        if idx < el.children.len() {
+                            return navigate_ref(&el.children[idx], &path[1..]);
+                        }
+                    }
+                    None
+                }
+                if let Some(crate::html5::node::Node::Element(target_el)) = navigate_ref(d.root(), &el.path) {
+                    target_el.children.iter().enumerate().filter_map(|(i, c)| {
+                        if let crate::html5::node::Node::Element(child_el) = c {
+                            let mut child_path = el.path.clone();
+                            child_path.push(i);
+                            Some(JsValue::Str(encode_element(&JsElement::from_element(child_el, child_path))))
+                        } else {
+                            None
+                        }
+                    }).collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+            JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(children_els)))
+        }
+        "querySelectorAll" => {
+            if lexer.peek_token() == Token::LParen {
+                lexer.next_token();
+                let sel = match lexer.peek_token() {
+                    Token::Str(s)   => { lexer.next_token(); s }
+                    Token::Ident(s) => { lexer.next_token(); s }
+                    _ => String::new(),
+                };
+                if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+                let els = dom.map(|d| d.query_selector_all_on(&el.path, &sel)).unwrap_or_default();
+                node_list_value(els)
+            } else {
+                JsValue::Undefined
+            }
+        }
         "getAttribute" => {
             if lexer.peek_token() == Token::LParen {
                 lexer.next_token();
@@ -1511,7 +1663,14 @@ fn read_element_prop(encoded: &str, prop: &str, lexer: &mut Lexer) -> JsValue {
                 JsValue::Undefined
             }
         }
-        _ => JsValue::Undefined,
+        _ => {
+            // Try reading as element attribute
+            if let Some(attr_val) = el.get_attribute(prop) {
+                JsValue::Str(attr_val)
+            } else {
+                JsValue::Undefined
+            }
+        }
     }
 }
 
@@ -1519,6 +1678,58 @@ fn read_string_prop(s: &str, prop: &str) -> JsValue {
     match prop {
         "length" => JsValue::Number(s.chars().count() as f64),
         _        => JsValue::Undefined,
+    }
+}
+
+fn eval_string_method(lexer: &mut Lexer, s: &str, prop: &str) -> JsValue {
+    if lexer.peek_token() != Token::LParen {
+        return read_string_prop(s, prop);
+    }
+    lexer.next_token(); // consume `(`
+    match prop {
+        "split" => {
+            let sep = match lexer.peek_token() {
+                Token::Str(sep_str) => { lexer.next_token(); sep_str }
+                Token::RParen | Token::Eof => String::new(),
+                _ => {
+                    let mut sep_str = String::new();
+                    while !matches!(lexer.peek_token(), Token::RParen | Token::Comma | Token::Eof) {
+                        if let Token::Ident(id) = lexer.next_token() {
+                            sep_str = id;
+                        }
+                    }
+                    sep_str
+                }
+            };
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            let parts: Vec<JsValue> = if sep.is_empty() {
+                s.chars().map(|c| JsValue::Str(c.to_string())).collect()
+            } else {
+                s.split(&sep).map(|p| JsValue::Str(p.to_string())).collect()
+            };
+            JsValue::Array(std::sync::Arc::new(std::sync::Mutex::new(parts)))
+        }
+        "trim" => {
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            JsValue::Str(s.trim().to_string())
+        }
+        "toLowerCase" => {
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            JsValue::Str(s.to_lowercase())
+        }
+        "toUpperCase" => {
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            JsValue::Str(s.to_uppercase())
+        }
+        _ => {
+            while !matches!(lexer.peek_token(), Token::RParen | Token::Eof) { lexer.next_token(); }
+            if lexer.peek_token() == Token::RParen { lexer.next_token(); }
+            JsValue::Undefined
+        }
     }
 }
 
@@ -1579,8 +1790,8 @@ fn element_to_value(el: Option<JsElement>) -> JsValue {
 fn decode_element(s: &str) -> JsElement {
     let parts: Vec<&str> = s.split('\x00').collect();
     let get = |i: usize| parts.get(i).copied().unwrap_or("").to_owned();
-    // Format: \x00elem\x00tag\x00id\x00class\x00text\x00html\x00attrs\x00children_len\x00path
-    // Indices:  0      1      2    3    4      5     6     7      8             9
+    // Format: \x00elem\x00tag\x00id\x00class\x00text\x00html\x00attrs\x00children_len\x00path\x00href
+    // Indices:  0      1   2   3     4    5     6     7         8          9      10
     let path_str = unescape_field(&get(9));
     let path: Vec<usize> = if path_str.is_empty() {
         Vec::new()
@@ -1624,8 +1835,32 @@ fn eval_array_literal(
         match lexer.peek_token() {
             Token::RBracket | Token::Eof => break,
             Token::Comma => { lexer.next_token(); items.push(JsValue::Undefined); }
+            Token::DotDotDot => {
+                lexer.next_token(); // consume `...`
+                let v = eval_expr_with_dom(lexer, scope, dom);
+                match v {
+                    JsValue::Array(other) => {
+                        items.extend(other.lock().unwrap().iter().cloned());
+                    }
+                    JsValue::Str(ref s) if s.starts_with("\x00list\x00") => {
+                        // Spread NodeList into array of elements
+                        let parts: Vec<&str> = s.split('\x00').collect();
+                        // Format: \x00list\x00count\x00el1\x01el2...
+                        if let Some(list_data) = parts.get(3) {
+                            for elem_str in list_data.split('\x01') {
+                                if !elem_str.is_empty() {
+                                    items.push(JsValue::Str(elem_str.to_string()));
+                                }
+                            }
+                        }
+                    }
+                    other => items.push(other),
+                }
+                if lexer.peek_token() == Token::Comma { lexer.next_token(); }
+            }
             _ => {
-                items.push(eval_expr_with_dom(lexer, scope, dom));
+                let v = eval_expr_with_dom(lexer, scope, dom);
+                items.push(v);
                 if lexer.peek_token() == Token::Comma { lexer.next_token(); }
             }
         }
@@ -2141,12 +2376,9 @@ fn eval_postfix_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>
                     _ => JsValue::Undefined,
                 };
             }
-            // Dot access on array: arr.push / arr.length etc. — handled via chain_with_scope
+            // Dot access: handled via chain_with_scope
             Token::Dot => {
-                if let JsValue::Array(_) = &val {
-                    val = chain_with_scope(lexer, val, scope, dom);
-                    break;
-                }
+                val = chain_with_scope(lexer, val, scope, dom);
                 break;
             }
             _ => break,
@@ -2167,12 +2399,53 @@ fn eval_primary_dom(lexer: &mut Lexer, scope: &mut Scope, dom: Option<&JsDom<'_>
             "NaN"       => JsValue::Number(f64::NAN),
             "Infinity"  => JsValue::Number(f64::INFINITY),
             "document"  => eval_document_expr(lexer, scope, dom),
+            "navigator" => {
+                if lexer.peek_token() == Token::Dot {
+                    lexer.next_token(); // consume `.`
+                    let prop = match lexer.next_token() {
+                        Token::Ident(p) => p,
+                        _ => return JsValue::Undefined,
+                    };
+                    match prop.as_str() {
+                        "languages" => {
+                            let langs = vec![JsValue::Str("en-US".into()), JsValue::Str("en".into())];
+                            let arr = std::sync::Arc::new(std::sync::Mutex::new(langs));
+                            return chain_with_scope(lexer, JsValue::Array(arr), scope, dom);
+                        }
+                        "language" => {
+                            return chain_with_scope(lexer, JsValue::Str("en-US".into()), scope, dom);
+                        }
+                        "userAgent" => {
+                            return chain_with_scope(lexer, JsValue::Str("Forkit/0.1.0".into()), scope, dom);
+                        }
+                        _ => return JsValue::Undefined,
+                    }
+                }
+                JsValue::Undefined
+            }
             // Anonymous function expression: `function(...) { ... }`
             "function"  => {
                 let func = parse_function_value(lexer);
                 JsValue::Function(Box::new(func))
             }
             name => {
+                // Check if this identifier is the single parameter of an arrow function: `p => ...`
+                if lexer.peek_token() == Token::Eq {
+                    let saved_pos = lexer.pos;
+                    lexer.next_token(); // consume `=`
+                    if lexer.peek_token() == Token::Gt {
+                        // Confirmed arrow function `name => body`
+                        let params = vec![name.to_string()];
+                        let func = parse_arrow_body(lexer, params);
+                        return JsValue::Function(Box::new(func));
+                    }
+                    // Not arrow, restore and treat as inline assignment `name = expr`
+                    lexer.pos = saved_pos;
+                    lexer.next_token(); // consume `=`
+                    let val = eval_expr_with_dom(lexer, scope, dom);
+                    scope.set(name, val.clone());
+                    return val;
+                }
                 let val = scope.get(name);
                 // Dot-chain: property access on DOM elements / lists / arrays
                 if lexer.peek_token() == Token::Dot {
@@ -2481,3 +2754,20 @@ fn skip_call_args(lexer: &mut Lexer) {
     if lexer.peek_token() != Token::LParen { return; }
     skip_balanced(lexer, Token::LParen, Token::RParen);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jquery_exec() {
+        let src = std::fs::read_to_string("/home/offihito/.gemini/antigravity/brain/c4ae3338-513c-4cd3-a3d8-f293f8ddaca7/scratch/jquery.js").unwrap();
+        let dom = crate::html5::parser::parse_dom("<html></html>");
+        let js_dom = crate::js::dom::JsDom::with_title(&dom, "test".to_string());
+        let mut js_scope = crate::js::scope::Scope::new();
+        let t0 = std::time::Instant::now();
+        execute_with_dom_and_scope(&src, &js_dom, &mut js_scope);
+        println!("jQuery execution took {:?}", t0.elapsed());
+    }
+}
+

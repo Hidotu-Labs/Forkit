@@ -40,16 +40,7 @@ pub fn parse_dom(html: &str) -> Node {
 
                 if is_skip(tag) {
                     if !is_void(tag) && tok.kind != TokKind::SelfClose {
-                        let mut depth = 1usize;
-                        while depth > 0 {
-                            let t2 = lexer.next_token();
-                            match t2.kind {
-                                TokKind::Eof                            => break,
-                                TokKind::Open  if t2.tag == tok.tag    => depth += 1,
-                                TokKind::Close if t2.tag == tok.tag    => depth -= 1,
-                                _                                       => {}
-                            }
-                        }
+                        lexer.skip_raw_until(tag);
                     }
                     continue;
                 }

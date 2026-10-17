@@ -74,6 +74,10 @@ impl CssColor {
             return parse_color_mix(&s);
         }
 
+        if s.starts_with("light-dark") {
+            return parse_light_dark(&s);
+        }
+
         // Named colors
         parse_named_color(&s)
     }
@@ -253,6 +257,39 @@ fn parse_color_mix(s: &str) -> Option<CssColor> {
     })
 }
 
+fn parse_light_dark(s: &str) -> Option<CssColor> {
+    // light-dark(light_val, dark_val)
+    let inner = extract_inner(s, "light-dark")?;
+    // Split at top-level comma
+    let mut light_str = String::new();
+    let mut dark_str = String::new();
+    let mut paren_depth = 0;
+    let mut found_comma = false;
+
+    for c in inner.chars() {
+        if c == '(' { paren_depth += 1; }
+        else if c == ')' && paren_depth > 0 { paren_depth -= 1; }
+
+        if c == ',' && paren_depth == 0 && !found_comma {
+            found_comma = true;
+            continue;
+        }
+
+        if found_comma {
+            dark_str.push(c);
+        } else {
+            light_str.push(c);
+        }
+    }
+
+    if !found_comma { return None; }
+
+    // Forkit default canvas is light, so pick light_val first, falling back to dark_val.
+    let light_col = CssColor::parse(light_str.trim());
+    let dark_col = CssColor::parse(dark_str.trim());
+    light_col.or(dark_col)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -345,11 +382,9 @@ fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
 
 fn hwb_to_rgb(h: f32, w: f32, b: f32) -> (f32, f32, f32) {
     let mut w = w;
-    let mut b = b;
     if w + b >= 1.0 {
         let s = w + b;
         w /= s;
-        b /= s;
         return (w, w, w);
     }
     let (r, g, b_val) = hsl_to_rgb(h, 1.0, 0.5);
@@ -437,5 +472,18 @@ fn parse_named_color(s: &str) -> Option<CssColor> {
         "pink"        => Some(CssColor { r: 1.0, g: 0.75, b: 0.8, a: 1.0 }),
         "rebeccapurple" => Some(CssColor { r: 0.4, g: 0.2, b: 0.6, a: 1.0 }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_light_dark() {
+        let col = CssColor::parse("light-dark(#eee, #222)").unwrap();
+        // #eee in rgb
+        let (r, g, b, _) = col.to_rgba8();
+        assert_eq!((r, g, b), (238, 238, 238));
     }
 }

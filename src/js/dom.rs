@@ -57,6 +57,10 @@ pub enum DomMutation {
     Remove          { path: Vec<usize> },
     /// Add an event listener.
     AddEventListener { path: Vec<usize>, event_type: String, callback: crate::js::types::JsFunction },
+    /// Insert HTML fragment relative to the element (beforebegin, afterbegin, beforeend, afterend).
+    InsertAdjacentHtml { path: Vec<usize>, position: String, html: String },
+    /// Prepend a child node (identified by its path) to this element.
+    PrependChild { parent_path: Vec<usize>, child_path: Vec<usize> },
     /// Set a timer to execute a callback after `delay_ms`.
     SetTimeout { callback: crate::js::types::JsFunction, delay_ms: u32 },
 }
@@ -84,7 +88,7 @@ pub struct JsElement {
 }
 
 impl JsElement {
-    fn from_element(el: &Element, path: Vec<usize>) -> Self {
+    pub(crate) fn from_element(el: &Element, path: Vec<usize>) -> Self {
         let children: Vec<JsElement> = el.children.iter().enumerate().filter_map(|(i, n)| {
             if let Node::Element(c) = n {
                 let mut child_path = path.clone();
@@ -139,6 +143,10 @@ impl<'a> JsDom<'a> {
         JsDom { root, title, mutations: Mutex::new(Vec::new()) }
     }
 
+    pub fn root(&self) -> &'a Node {
+        self.root
+    }
+
     /// Consume and return all pending mutations.
     pub fn take_mutations(&self) -> Vec<DomMutation> {
         self.mutations.lock().unwrap().drain(..).collect()
@@ -186,6 +194,27 @@ impl<'a> JsDom<'a> {
         find_all(self.root, &pred, &[])
     }
 
+    /// element.querySelectorAll — search inside an element by path
+    pub fn query_selector_all_on(&self, path: &[usize], sel: &str) -> Vec<JsElement> {
+        let sel = sel.trim();
+        let pred = build_predicate(sel);
+        fn navigate_ref<'a>(node: &'a Node, path: &[usize]) -> Option<&'a Node> {
+            if path.is_empty() { return Some(node); }
+            if let Node::Element(el) = node {
+                let idx = path[0];
+                if idx < el.children.len() {
+                    return navigate_ref(&el.children[idx], &path[1..]);
+                }
+            }
+            None
+        }
+        if let Some(target) = navigate_ref(self.root, path) {
+            find_all(target, &pred, path)
+        } else {
+            Vec::new()
+        }
+    }
+
     /// document.createElement("tag") — creates a detached element snapshot
     /// that can be appended via el.appendChild(child).
     pub fn create_element(&self, tag: &str) -> JsElement {
@@ -209,6 +238,21 @@ impl<'a> JsDom<'a> {
             path,
             event_type: event_type.to_owned(),
             callback,
+        });
+    }
+
+    pub fn insert_adjacent_html(&self, path: Vec<usize>, position: &str, html: &str) {
+        self.push_mutation(DomMutation::InsertAdjacentHtml {
+            path,
+            position: position.to_owned(),
+            html: html.to_owned(),
+        });
+    }
+
+    pub fn prepend_child(&self, parent_path: Vec<usize>, child_path: Vec<usize>) {
+        self.push_mutation(DomMutation::PrependChild {
+            parent_path,
+            child_path,
         });
     }
 
@@ -332,6 +376,65 @@ pub fn apply_one(root: &mut Node, mutation: DomMutation) {
         DomMutation::AddEventListener { path, event_type, callback } => {
             if let Some(el) = navigate_mut(root, &path) {
                 el.event_listeners.push((event_type, callback));
+            }
+        }
+        DomMutation::InsertAdjacentHtml { path, position, html } => {
+            let new_nodes = parse_html_fragment(&html);
+            if new_nodes.is_empty() { return; }
+            match position.to_ascii_lowercase().as_str() {
+                "beforebegin" => {
+                    if path.is_empty() { return; }
+                    let parent_path = &path[..path.len() - 1];
+                    let child_idx = path[path.len() - 1];
+                    if let Some(parent) = navigate_mut(root, parent_path) {
+                        for (offset, node) in new_nodes.into_iter().enumerate() {
+                            parent.children.insert((child_idx + offset).min(parent.children.len()), node);
+                        }
+                    }
+                }
+                "afterbegin" => {
+                    if let Some(el) = navigate_mut(root, &path) {
+                        for (offset, node) in new_nodes.into_iter().enumerate() {
+                            el.children.insert(offset.min(el.children.len()), node);
+                        }
+                    }
+                }
+                "beforeend" => {
+                    if let Some(el) = navigate_mut(root, &path) {
+                        el.children.extend(new_nodes);
+                    }
+                }
+                "afterend" => {
+                    if path.is_empty() { return; }
+                    let parent_path = &path[..path.len() - 1];
+                    let child_idx = path[path.len() - 1];
+                    if let Some(parent) = navigate_mut(root, parent_path) {
+                        for (offset, node) in new_nodes.into_iter().enumerate() {
+                            parent.children.insert((child_idx + 1 + offset).min(parent.children.len()), node);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        DomMutation::PrependChild { parent_path, child_path } => {
+            // Find and remove the child from its current location
+            if child_path.is_empty() { return; }
+            let old_parent_path = &child_path[..child_path.len() - 1];
+            let old_idx = child_path[child_path.len() - 1];
+            let removed_node = if let Some(old_parent) = navigate_mut(root, old_parent_path) {
+                if old_idx < old_parent.children.len() {
+                    Some(old_parent.children.remove(old_idx))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(node) = removed_node {
+                if let Some(new_parent) = navigate_mut(root, &parent_path) {
+                    new_parent.children.insert(0, node);
+                }
             }
         }
         DomMutation::SetTimeout { .. } => {}
@@ -535,4 +638,65 @@ fn serialize_inner(nodes: &[Node]) -> String {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::html5::parser::parse_dom;
+
+    #[test]
+    fn test_example_script_execution() {
+        let html = "<!doctype html><html><body><p>Initial English text</p></body></html>";
+        let mut dom = parse_dom(html);
+        let js_dom = JsDom::with_title(&dom, "Example Domain".into());
+        let mut js_scope = crate::js::scope::Scope::new();
+
+        let script = r#"
+            var B=document.body,P,p;
+            B.children[0].insertAdjacentHTML("afterend","<p lang=fr>Texte en francais</p><a href=https://iana.org>Learn more</a>");
+            P=[...B.querySelectorAll("p")];
+            P[0].lang="en";
+            navigator.languages.some(l=>p=P.find(p=>p.lang==l.split("-")[0]));
+            p=p||P[0];
+            B.prepend(p);
+            B.insertAdjacentHTML("afterbegin", '<style>svg{display:block}</style><svg width=44 height=44></svg>');
+        "#;
+
+        let _ = crate::js::interpreter::execute_with_dom_and_scope(script, &js_dom, &mut js_scope);
+        let mutations = js_dom.take_mutations();
+        assert!(!mutations.is_empty(), "Script should generate mutations");
+
+        for muta in mutations {
+            apply_one(&mut dom, muta);
+        }
+
+        // Verify that <style> and <svg> were inserted into <body>
+        fn find_tag(node: &Node, tag: &str) -> bool {
+            match node {
+                Node::Element(el) => {
+                    if el.tag == tag { return true; }
+                    el.children.iter().any(|c| find_tag(c, tag))
+                }
+                _ => false,
+            }
+        }
+
+        assert!(find_tag(&dom, "style"), "Injected <style> block must exist in DOM");
+        assert!(find_tag(&dom, "svg"), "Injected <svg> block must exist in DOM");
+        assert!(find_tag(&dom, "a"), "Injected <a> link must exist in DOM");
+    }
+
+    #[test]
+    fn test_example_svg_rasterization() {
+        use sdl2::rwops::RWops;
+        use sdl2::image::ImageRWops;
+
+        let raw_svg = r#"<svg viewBox=0,0,20,20 width=44 height=44 fill=currentColor aria-hidden=true><path fill=none stroke=currentColor stroke-width=1.3 stroke-linejoin=round d="M6 4H3v12q4 0 7 1.5-1-3.5-4-4.5V2q3.5 1 4 3v12.5q3-1.5 7-1.5V4q-4.5 0-7 1"/><g transform=rotate(-6,13.6,8.3)><path id=q d="M11.5 6.6h1.8v1.8l-1 1.6-.6-.3.8-1.3h-1z"/><use href=#q x=2.4 /></g></svg>"#;
+        let (processed, _) = crate::render::image::preprocess_svg(raw_svg.as_bytes());
+        let rw = RWops::from_bytes(&processed).expect("Failed to create RWops from processed SVG");
+        let surface = rw.load_typed("SVG").expect("Failed to rasterize SVG via SDL2_image");
+        assert_eq!(surface.width(), 44);
+        assert_eq!(surface.height(), 44);
+    }
 }

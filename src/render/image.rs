@@ -78,19 +78,17 @@ fn fetch_image(url: &str, base_url: &str) -> Option<Vec<u8>> {
         return None;
     }
 
-    let resolved = net::resolve_url(url, base_url);
+    let resolved = if url.starts_with("http://") || url.starts_with("https://")
+        || url.starts_with("file://") || (url.starts_with('/') && std::path::Path::new(url).exists())
+    {
+        url.to_owned()
+    } else {
+        net::resolve_url(url, base_url)
+    };
 
     if resolved.starts_with("http://") || resolved.starts_with("https://") {
-        match ureq::get(&resolved)
-            .set("User-Agent", "Forkit/0.1 (Rust browser)")
-            .call()
-        {
-            Ok(resp) => {
-                let mut buf = Vec::new();
-                use std::io::Read;
-                resp.into_reader().read_to_end(&mut buf).ok()?;
-                Some(buf)
-            }
+        match net::fetch_url_bytes(&resolved) {
+            Ok((_, bytes)) => Some(bytes),
             Err(e) => {
                 eprintln!("Image fetch {resolved}: {e}");
                 None
@@ -142,31 +140,264 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
 // SVG pre-processing
 // ---------------------------------------------------------------------------
 
-/// Returns modified_svg_bytes.
+/// Returns modified_svg_bytes and opacity.
 pub fn preprocess_svg(bytes: &[u8]) -> (Vec<u8>, u8) {
     let src = match std::str::from_utf8(bytes) {
         Ok(s)  => s,
         Err(_) => return (bytes.to_vec(), 255),
     };
 
-    let lower = src.to_ascii_lowercase();
-    if !lower.contains("<style") {
-        return (bytes.to_vec(), 255);
+    let mut current = sanitize_and_prepare_svg(src);
+
+    let lower = current.to_ascii_lowercase();
+    if lower.contains("<style") {
+        let css = extract_svg_style_css(&current);
+        if !css.is_empty() {
+            let rules = parse_svg_css_rules(&css);
+            if !rules.is_empty() {
+                current = rewrite_svg_elements(&current, &rules);
+            }
+        }
     }
 
-    let css = extract_svg_style_css(src);
-    if css.is_empty() {
-        return (bytes.to_vec(), 255);
-    }
-
-    let rules = parse_svg_css_rules(&css);
-    if rules.is_empty() {
-        return (bytes.to_vec(), 255);
-    }
-
-    let rewritten = rewrite_svg_elements(src, &rules);
-    (rewritten.into_bytes(), 255)
+    (current.into_bytes(), 255)
 }
+
+/// Ensure SVG has properly quoted XML attributes, xmlns declaration, resolved currentColor,
+/// and expanded <use> elements so nanosvg (SDL2_image) can parse and render it.
+fn sanitize_and_prepare_svg(svg: &str) -> String {
+    // 1. Quote attributes in all tags (HTML5 allows <svg viewBox=0,0,20,20 ...> but nanosvg's XML parser requires quotes)
+    let mut quoted = quote_xml_tag_attributes(svg);
+
+    // 2. Ensure xmlns="http://www.w3.org/2000/svg"
+    let lower = quoted.to_ascii_lowercase();
+    if !lower.contains("xmlns=") {
+        if let Some(pos) = lower.find("<svg") {
+            let insert_pos = pos + 4;
+            quoted.insert_str(insert_pos, " xmlns=\"http://www.w3.org/2000/svg\"");
+        }
+    }
+
+    // 3. Resolve currentColor -> default dark color if present
+    if quoted.contains("currentColor") {
+        quoted = quoted.replace("currentColor", "#000000");
+    }
+
+    // 4. Resolve <use href="#id" ...> tags by expanding them into copies of the referenced element
+    resolve_svg_use_elements(&quoted)
+}
+
+/// Quote unquoted attribute values inside XML/SVG tags.
+fn quote_xml_tag_attributes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 64);
+    let mut pos = 0;
+    let len = s.len();
+
+    while pos < len {
+        let next_lt = match s[pos..].find('<') {
+            Some(i) => pos + i,
+            None => {
+                out.push_str(&s[pos..]);
+                break;
+            }
+        };
+        out.push_str(&s[pos..next_lt]);
+        pos = next_lt;
+
+        let end = find_tag_end(s, pos);
+        let tag_chunk = &s[pos..end];
+        pos = end;
+
+        if tag_chunk.starts_with("</") || tag_chunk.starts_with("<!--") || tag_chunk.starts_with("<![") {
+            out.push_str(tag_chunk);
+            continue;
+        }
+
+        // Parse tag name and attributes
+        let is_self_closing = tag_chunk.trim_end().ends_with("/>");
+        let body = if is_self_closing {
+            let t = tag_chunk.trim_end();
+            &t[1..t.len() - 2]
+        } else {
+            let t = tag_chunk.trim_end();
+            &t[1..t.len() - 1]
+        };
+
+        let tag_name_len = body.find(|c: char| c.is_ascii_whitespace() || c == '/').unwrap_or(body.len());
+        let tag_name = &body[..tag_name_len];
+        let rest = &body[tag_name_len..];
+
+        out.push('<');
+        out.push_str(tag_name);
+
+        // Scan attributes in rest
+        let mut i = 0;
+        let bytes = rest.as_bytes();
+        let rlen = bytes.len();
+
+        while i < rlen {
+            while i < rlen && bytes[i].is_ascii_whitespace() { i += 1; }
+            if i >= rlen { break; }
+
+            let key_start = i;
+            while i < rlen && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' && bytes[i] != b'>' {
+                i += 1;
+            }
+            let key = &rest[key_start..i];
+            if key.is_empty() {
+                i += 1;
+                continue;
+            }
+
+            while i < rlen && bytes[i].is_ascii_whitespace() { i += 1; }
+            if i < rlen && bytes[i] == b'=' {
+                i += 1; // skip '='
+                while i < rlen && bytes[i].is_ascii_whitespace() { i += 1; }
+                if i < rlen && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                    let q = bytes[i];
+                    i += 1;
+                    let val_start = i;
+                    while i < rlen && bytes[i] != q { i += 1; }
+                    let val = &rest[val_start..i];
+                    if i < rlen && bytes[i] == q { i += 1; }
+                    out.push(' ');
+                    out.push_str(key);
+                    out.push_str("=\"");
+                    out.push_str(val);
+                    out.push('"');
+                } else {
+                    let val_start = i;
+                    while i < rlen && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' && bytes[i] != b'>' {
+                        i += 1;
+                    }
+                    let val = &rest[val_start..i];
+                    out.push(' ');
+                    out.push_str(key);
+                    out.push_str("=\"");
+                    out.push_str(val);
+                    out.push('"');
+                }
+            } else {
+                // Boolean or valueless attribute
+                out.push(' ');
+                out.push_str(key);
+                out.push_str("=\"");
+                out.push_str(key);
+                out.push('"');
+            }
+        }
+
+        if is_self_closing {
+            out.push('/');
+        }
+        out.push('>');
+    }
+
+    out
+}
+
+/// Resolves `<use href="#id" ...>` by duplicating the referenced element with coordinates
+fn resolve_svg_use_elements(svg: &str) -> String {
+    // 1. Collect all elements with id="..."
+    // Map of id -> (tag_name, attrs_string_without_id)
+    let mut elements_by_id: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    let mut pos = 0;
+    let len = svg.len();
+
+    while pos < len {
+        let next_lt = match svg[pos..].find('<') {
+            Some(i) => pos + i,
+            None => break,
+        };
+        pos = next_lt;
+        let end = find_tag_end(svg, pos);
+        let tag_chunk = &svg[pos..end];
+        pos = end;
+
+        if tag_chunk.starts_with("</") || tag_chunk.starts_with("<!--") {
+            continue;
+        }
+
+        if let Some(id_val) = extract_attr_val(tag_chunk, "id") {
+            let is_self_closing = tag_chunk.trim_end().ends_with("/>");
+            let body = if is_self_closing {
+                let t = tag_chunk.trim_end();
+                &t[1..t.len() - 2]
+            } else {
+                let t = tag_chunk.trim_end();
+                &t[1..t.len() - 1]
+            };
+            let tag_name_len = body.find(|c: char| c.is_ascii_whitespace() || c == '/').unwrap_or(body.len());
+            let tag_name = body[..tag_name_len].to_string();
+            let attrs = body[tag_name_len..].to_string();
+            let clean_attrs = remove_xml_attr(&attrs, "id");
+            elements_by_id.insert(id_val, (tag_name, clean_attrs));
+        }
+    }
+
+    if elements_by_id.is_empty() || !svg.contains("<use") {
+        return svg.to_string();
+    }
+
+    // 2. Replace <use ...>
+    let mut out = String::with_capacity(svg.len() + 128);
+    pos = 0;
+    while pos < len {
+        let next_lt = match svg[pos..].find('<') {
+            Some(i) => pos + i,
+            None => {
+                out.push_str(&svg[pos..]);
+                break;
+            }
+        };
+        out.push_str(&svg[pos..next_lt]);
+        pos = next_lt;
+
+        let end = find_tag_end(svg, pos);
+        let tag_chunk = &svg[pos..end];
+        pos = end;
+
+        if tag_chunk.starts_with("<use") {
+            let href = extract_attr_val(tag_chunk, "href")
+                .or_else(|| extract_attr_val(tag_chunk, "xlink:href"));
+            if let Some(href_val) = href {
+                let target_id = href_val.trim_start_matches('#');
+                if let Some((ref_tag, ref_attrs)) = elements_by_id.get(target_id) {
+                    let x_val = extract_attr_val(tag_chunk, "x").unwrap_or_else(|| "0".to_string());
+                    let y_val = extract_attr_val(tag_chunk, "y").unwrap_or_else(|| "0".to_string());
+                    out.push('<');
+                    out.push_str(ref_tag);
+                    out.push_str(ref_attrs);
+                    out.push_str(&format!(" transform=\"translate({},{})\"/>", x_val, y_val));
+                    continue;
+                }
+            }
+        }
+
+        out.push_str(tag_chunk);
+    }
+
+    out
+}
+
+fn extract_attr_val(tag: &str, attr_name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let needle = format!("{}=", attr_name.to_ascii_lowercase());
+    let idx = lower.find(&needle)?;
+    let after_eq = idx + needle.len();
+    if after_eq >= tag.len() { return None; }
+    let quote = tag.as_bytes()[after_eq];
+    if quote == b'"' || quote == b'\'' {
+        let rest = &tag[after_eq + 1..];
+        let end = rest.find(quote as char)?;
+        Some(rest[..end].to_string())
+    } else {
+        let rest = &tag[after_eq..];
+        let end = rest.find(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>').unwrap_or(rest.len());
+        Some(rest[..end].to_string())
+    }
+}
+
 
 
 
@@ -468,3 +699,26 @@ fn remove_xml_attr(tag: &str, attr: &str) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_logo_render() {
+        std::env::set_var("SDL_VIDEODRIVER", "dummy");
+        let bytes = match std::fs::read("/home/offihito/.gemini/antigravity/brain/743217cd-8055-4c48-b65c-7649576160e8/scratch/logo-dark.svg") {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let (processed, _) = preprocess_svg(&bytes);
+        let _sdl = sdl2::init().unwrap();
+        let _image_ctx = sdl2::image::init(sdl2::image::InitFlag::all()).unwrap();
+        use sdl2::rwops::RWops;
+        use sdl2::image::ImageRWops;
+        let rw = RWops::from_bytes(&processed).unwrap();
+        let surf = rw.load_typed("SVG").unwrap();
+        println!("Logo Surf size: {} x {}", surf.width(), surf.height());
+    }
+}
+

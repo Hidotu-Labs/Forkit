@@ -106,22 +106,52 @@ impl<'a> Lexer<'a> {
         Token { kind, tag, attrs }
     }
 
+    fn match_end_tag(&self, pos: usize, end_tag: &str) -> Option<usize> {
+        let prefix = format!("</{}", end_tag).into_bytes();
+        if pos + prefix.len() > self.src.len() {
+            return None;
+        }
+        if !self.src[pos..pos + prefix.len()].eq_ignore_ascii_case(&prefix) {
+            return None;
+        }
+        let mut p = pos + prefix.len();
+        while p < self.src.len() && self.src[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        while p < self.src.len() && self.src[p] != b'>' {
+            p += 1;
+        }
+        if p < self.src.len() && self.src[p] == b'>' {
+            Some(p + 1 - pos)
+        } else {
+            None
+        }
+    }
+
     /// Read raw bytes until `</end_tag>`, returning the decoded string.
-    /// Used for `<pre>`, `<textarea>`, etc.
+    /// Used for `<pre>`, `<textarea>`, `<style>`, etc.
     pub fn read_raw_until(&mut self, end_tag: &str) -> String {
         let mut out = Vec::new();
-        let close = format!("</{}>", end_tag).into_bytes();
         while self.pos < self.src.len() {
-            if self.pos + close.len() <= self.src.len() {
-                let slice = &self.src[self.pos..self.pos+close.len()];
-                if slice.eq_ignore_ascii_case(&close) {
-                    self.pos += close.len();
-                    break;
-                }
+            if let Some(len) = self.match_end_tag(self.pos, end_tag) {
+                self.pos += len;
+                break;
             }
             out.push(self.src[self.pos]);
             self.pos += 1;
         }
         decode_entities(&String::from_utf8_lossy(&out))
+    }
+
+    /// Fast-forward until `</end_tag>`, discarding content without allocations.
+    /// Used for `<script>`, `<noscript>`, etc.
+    pub fn skip_raw_until(&mut self, end_tag: &str) {
+        while self.pos < self.src.len() {
+            if let Some(len) = self.match_end_tag(self.pos, end_tag) {
+                self.pos += len;
+                break;
+            }
+            self.pos += 1;
+        }
     }
 }

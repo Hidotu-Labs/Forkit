@@ -84,6 +84,24 @@ fn main() {
                 browser.need_draw = true;
                 browser.draw();
             } else {
+                if let Ok(path) = env::var("FORKIT_SCREENSHOT") {
+                    if let Ok(sy) = env::var("FORKIT_SCROLL_Y") {
+                        if let Ok(val) = sy.parse::<i32>() {
+                            browser.tabs[browser.active].scroll_y = val;
+                        }
+                    }
+                    browser.need_draw = true;
+                    browser.draw();
+                    println!("content_height: {}", browser.tabs[browser.active].content_height);
+                    if let Ok((w, h)) = browser.window.canvas.output_size() {
+                        if let Ok(mut pixels) = browser.window.canvas.read_pixels(None, sdl2::pixels::PixelFormatEnum::RGB24) {
+                            if let Ok(surf) = sdl2::surface::Surface::from_data(&mut pixels, w, h, w * 3, sdl2::pixels::PixelFormatEnum::RGB24) {
+                                let _ = surf.save_bmp(&path);
+                                break 'main;
+                            }
+                        }
+                    }
+                }
                 std::thread::sleep(std::time::Duration::from_millis(16));
             }
         }

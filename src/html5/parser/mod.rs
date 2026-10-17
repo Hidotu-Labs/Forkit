@@ -1,7 +1,7 @@
 mod attr;
 mod builder;
 mod entities;
-mod lexer;
+pub mod lexer;
 mod meta;
 mod tags;
 

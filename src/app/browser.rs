@@ -81,6 +81,8 @@ pub struct LoadResult {
     pub js_scope:        crate::js::scope::Scope,
     /// Timers created during initial script execution.
     pub timers:          Vec<JsTimer>,
+    /// Stylesheets loaded for this page.
+    pub stylesheets:     Vec<crate::css::Stylesheet>,
 }
 
 /// Lifecycle state of a single tab's background loader.
@@ -152,11 +154,11 @@ impl Tab {
     /// Synchronously load the initial tab (only used for startup — after that
     /// all navigation is async).
     fn new(url: &str) -> Option<Self> {
-        let (resolved, dom, meta, console_entries, js_scope, timers) = load_dom(url)?;
-        let mut tab = Tab {
+        let (resolved, dom, meta, console_entries, js_scope, timers, stylesheets, images) = load_dom(url)?;
+        let tab = Tab {
             dom,
             scroll_y:       0,
-            images:         ImageCache::new(),
+            images,
             history:        History::new(&resolved),
             link_areas:     Vec::new(),
             input_areas:    Vec::new(),
@@ -176,9 +178,8 @@ impl Tab {
             js_scope,
             event_areas:    Vec::new(),
             timers,
-            stylesheets:    Vec::new(),
+            stylesheets,
         };
-        tab.collect_styles();
         Some(tab)
     }
 
@@ -267,15 +268,16 @@ impl Tab {
             let send_val = match result {
                 Err(msg) => Err(msg),
                 Ok(None) => Err(format!("Failed to load: {url}")),
-                Ok(Some((final_url, dom, meta, console_entries, js_scope, timers))) => Ok(LoadResult {
+                Ok(Some((final_url, dom, meta, console_entries, js_scope, timers, stylesheets, images))) => Ok(LoadResult {
                     final_url,
                     dom,
                     meta,
-                    images: ImageCache::new(),
+                    images,
                     push_history,
                     console_entries,
                     js_scope,
                     timers,
+                    stylesheets,
                 }),
             };
 
@@ -297,6 +299,7 @@ impl Tab {
                     Ok(Ok(result)) => {
                         // Success — apply the loaded page.
                         self.dom           = result.dom;
+                        self.images        = result.images;
                         self.scroll_y      = 0;
                         self.input_values  = Vec::new();
                         self.focused_input = None;
@@ -312,8 +315,8 @@ impl Tab {
                         }
                         self.js_scope   = result.js_scope;
                         self.timers     = result.timers;
+                        self.stylesheets = result.stylesheets;
                         self.load_state = LoadState::Idle;
-                        self.collect_styles();
                         true
                     }
                     Ok(Err(msg)) => {
@@ -578,28 +581,8 @@ impl Tab {
 
     pub fn collect_styles(&mut self) {
         self.stylesheets.clear();
-        fn traverse(node: &crate::html5::node::Node, sheets: &mut Vec<crate::css::Stylesheet>) {
-            match node {
-                crate::html5::node::Node::Element(el) => {
-                    if el.tag == "style" {
-                        let mut css_text = String::new();
-                        for child in &el.children {
-                            if let crate::html5::node::Node::Text(txt) = child {
-                                css_text.push_str(&txt.text);
-                            }
-                        }
-                        if !css_text.is_empty() {
-                            sheets.push(crate::css::parse_stylesheet(&css_text));
-                        }
-                    }
-                    for child in &el.children {
-                        traverse(child, sheets);
-                    }
-                }
-                crate::html5::node::Node::Text(_) => {}
-            }
-        }
-        traverse(&self.dom, &mut self.stylesheets);
+        let base_url = self.current_url().to_owned();
+        crate::app::loader::collect_dom_stylesheets(&self.dom, &base_url, &mut self.stylesheets);
     }
 }
 
@@ -1289,6 +1272,19 @@ impl<'ttf> Browser<'ttf> {
         );
         self.window.canvas.set_viewport(None);
 
+
+        if !self.tabs[self.active].is_loading() {
+            if let Ok(path) = std::env::var("FORKIT_SCREENSHOT") {
+                if let Ok((w, h)) = self.window.canvas.output_size() {
+                    if let Ok(mut pixels) = self.window.canvas.read_pixels(None, sdl2::pixels::PixelFormatEnum::RGB24) {
+                        if let Ok(surf) = sdl2::surface::Surface::from_data(&mut pixels, w, h, w * 3, sdl2::pixels::PixelFormatEnum::RGB24) {
+                            let _ = surf.save_bmp(&path);
+                            std::process::exit(0);
+                        }
+                    }
+                }
+            }
+        }
 
         self.window.canvas.present();
         self.need_draw = false;

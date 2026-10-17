@@ -18,7 +18,7 @@ pub struct PageMeta {
     pub viewport_initial_scale: f32,
 }
 
-pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<ConsoleEntry>, crate::js::scope::Scope, Vec<super::browser::JsTimer>)> {
+pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<ConsoleEntry>, crate::js::scope::Scope, Vec<super::browser::JsTimer>, Vec<crate::css::Stylesheet>, crate::render::image::ImageCache)> {
     let (final_url, html) = fetch_html(source)?;
 
     // --- Parse <meta charset>, <meta viewport>, <base href> from the HTML ----
@@ -49,6 +49,9 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<ConsoleEntr
         viewport_initial_scale:  head_meta.viewport_initial_scale,
     };
 
+    let mut stylesheets = Vec::new();
+    collect_dom_stylesheets(&dom, &effective_base, &mut stylesheets);
+
     let mut console_entries: Vec<ConsoleEntry> = Vec::new();
     let js_dom = js::JsDom::with_title(&dom, meta.title.clone());
     let mut js_scope = js::scope::Scope::new();
@@ -73,7 +76,45 @@ pub fn load_dom(source: &str) -> Option<(String, Node, PageMeta, Vec<ConsoleEntr
         }
     }
 
-    Some((final_url, dom, meta, console_entries, js_scope, initial_timers))
+    let mut images = crate::render::image::ImageCache::new();
+    collect_dom_images(&dom, &effective_base, &mut images);
+    for sheet in &stylesheets {
+        for rule in &sheet.rules {
+            for (_, val) in &rule.properties {
+                if val.contains("url(") {
+                    if let Some(u_start) = val.find("url(") {
+                        let rest = &val[u_start + 4..];
+                        if let Some(u_end) = rest.find(')') {
+                            let raw_u = rest[..u_end].trim().trim_matches(|c| c == '\'' || c == '"');
+                            if !raw_u.is_empty() && (raw_u.ends_with(".svg") || raw_u.ends_with(".png") || raw_u.ends_with(".jpg")) {
+                                let _ = images.get_bytes(raw_u, &effective_base);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some((final_url, dom, meta, console_entries, js_scope, initial_timers, stylesheets, images))
+}
+
+pub fn collect_dom_images(node: &Node, base_url: &str, images: &mut crate::render::image::ImageCache) {
+    match node {
+        Node::Element(el) => {
+            if el.tag == "img" {
+                if let Some(src) = crate::html5::parser::get_attr(&el.attrs_raw, "src") {
+                    if !src.is_empty() {
+                        let _ = images.get_bytes(src, base_url);
+                    }
+                }
+            }
+            for child in &el.children {
+                collect_dom_images(child, base_url, images);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// If the HTML head declares a single-byte charset that differs from UTF-8,
@@ -247,4 +288,178 @@ fn extract_scripts(html: &str, base_url: &str) -> Vec<(String, String)> {
     }
 
     scripts
+}
+
+pub fn collect_dom_stylesheets(node: &Node, base_url: &str, sheets: &mut Vec<crate::css::Stylesheet>) {
+    match node {
+        Node::Element(el) => {
+            if el.tag == "style" {
+                let mut css_text = String::new();
+                for child in &el.children {
+                    if let Node::Text(txt) = child {
+                        css_text.push_str(&txt.text);
+                    }
+                }
+                if !css_text.is_empty() {
+                    sheets.push(crate::css::parse_stylesheet(&css_text));
+                }
+            } else if el.tag == "link" {
+                let rel = crate::html5::parser::get_attr(&el.attrs_raw, "rel").unwrap_or("");
+                if rel.split_ascii_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
+                    if let Some(href) = crate::html5::parser::get_attr(&el.attrs_raw, "href") {
+                        if !href.is_empty() {
+                            let resolved = crate::net::resolve_url(href, base_url);
+                            let css_res = if resolved.starts_with("http://") || resolved.starts_with("https://") {
+                                crate::net::fetch_url(&resolved).map(|(_, body)| body)
+                            } else if let Some(path) = resolved.strip_prefix("file://") {
+                                std::fs::read_to_string(path).map_err(|e| e.to_string())
+                            } else {
+                                std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+                            };
+                            if let Ok(css_text) = css_res {
+                                sheets.push(crate::css::parse_stylesheet(&css_text));
+                            }
+                        }
+                    }
+                }
+            }
+            for child in &el.children {
+                collect_dom_stylesheets(child, base_url, sheets);
+            }
+        }
+        Node::Text(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collect_link_and_style_stylesheets() {
+        let html = r#"
+            <html>
+            <head>
+                <style>
+                    body { background: #123456; }
+                </style>
+            </head>
+            <body>
+                <p>Hello</p>
+            </body>
+            </html>
+        "#;
+        let dom = parse_dom(html);
+        let mut sheets = Vec::new();
+        collect_dom_stylesheets(&dom, "https://example.com/", &mut sheets);
+        assert_eq!(sheets.len(), 1);
+        assert_eq!(sheets[0].rules[0].selector, "body");
+        assert_eq!(sheets[0].rules[0].properties[0], ("background".to_string(), "#123456".to_string()));
+    }
+
+    #[test]
+    fn test_load_xorg() {
+        let t0 = std::time::Instant::now();
+        let res = load_dom("/home/offihito/.gemini/antigravity/brain/743217cd-8055-4c48-b65c-7649576160e8/scratch/xorg.html");
+        println!("load_dom xorg took {:?}", t0.elapsed());
+        if let Some(r) = &res {
+            println!("URL: {}", r.0);
+            println!("Title: {}", r.2.title);
+            let ctx = crate::render::renderer::RenderCtx {
+                viewport_width: 1024,
+                viewport_height: 768,
+                scroll_y: 0,
+                base_url: r.0.clone(),
+            };
+            let mut state = crate::render::layout::LayoutState::new(&ctx);
+            state.stylesheets = r.6.clone();
+            let _sdl = sdl2::init().unwrap();
+            let video = _sdl.video().unwrap();
+            let window = video.window("test", 1024, 768).build().unwrap();
+            let mut canvas = window.into_canvas().build().unwrap();
+            let tc = canvas.texture_creator();
+            let ttf = sdl2::ttf::init().unwrap();
+            let mut fonts = crate::render::font::FontCache::new(&ttf);
+            for sheet in &state.stylesheets {
+                for rule in &sheet.rules {
+                    let html_el = crate::html5::node::Element {
+                        tag: "html".to_string(),
+                        id: "".to_string(),
+                        class_name: "".to_string(),
+                        href: "".to_string(),
+                        attrs_raw: "".to_string(),
+                        children: Vec::new(),
+                        event_listeners: Vec::new(),
+                    };
+                    let doc_el = crate::html5::node::Element {
+                        tag: "#document".to_string(),
+                        id: "".to_string(),
+                        class_name: "".to_string(),
+                        href: "".to_string(),
+                        attrs_raw: "".to_string(),
+                        children: Vec::new(),
+                        event_listeners: Vec::new(),
+                    };
+                    let m_alone = rule.matches_element(&[&html_el], &[]);
+                    let m_with_doc = rule.matches_element(&[&doc_el, &html_el], &[]);
+                    if rule.selector == ":root" || rule.selector == "html" {
+                        println!("Rule '{}': alone={}, with_doc={}", rule.selector, m_alone, m_with_doc);
+                    }
+                }
+            }
+            let mut images = crate::render::image::ImageCache::new();
+            state.layout_node(&mut canvas, &tc, &mut fonts, &mut images, &r.0, &r.1, 1024, &[]);
+            println!("Done layout! css_variables: {:?}", state.css_variables);
+        }
+        assert!(res.is_some());
+    }
+
+    #[test]
+    fn test_load_google() {
+        let t0 = std::time::Instant::now();
+        let res = load_dom("https://www.google.com/");
+        println!("load_dom google took {:?}", t0.elapsed());
+        if let Some(r) = &res {
+            println!("URL: {}", r.0);
+            println!("Title: {}", r.2.title);
+            println!("Stylesheets count: {}", r.6.len());
+            fn count_nodes(n: &crate::html5::node::Node) -> (usize, usize) {
+                match n {
+                    crate::html5::node::Node::Element(el) => {
+                        let mut els = 1;
+                        let mut txt = 0;
+                        for c in &el.children {
+                            let (e, t) = count_nodes(c);
+                            els += e;
+                            txt += t;
+                        }
+                        (els, txt)
+                    }
+                    crate::html5::node::Node::Text(_) => (0, 1),
+                }
+            }
+            let (els, txts) = count_nodes(&r.1);
+            println!("DOM parsed: {} elements, {} text nodes", els, txts);
+            let ctx = crate::render::renderer::RenderCtx {
+                viewport_width: 1024,
+                viewport_height: 768,
+                scroll_y: 0,
+                base_url: r.0.clone(),
+            };
+            let mut state = crate::render::layout::LayoutState::new(&ctx);
+            state.stylesheets = r.6.clone();
+            let _sdl = sdl2::init().unwrap();
+            let video = _sdl.video().unwrap();
+            let window = video.window("test", 1024, 768).build().unwrap();
+            let mut canvas = window.into_canvas().build().unwrap();
+            let tc = canvas.texture_creator();
+            let ttf = sdl2::ttf::init().unwrap();
+            let mut fonts = crate::render::font::FontCache::new(&ttf);
+            let mut images = crate::render::image::ImageCache::new();
+            state.layout_node(&mut canvas, &tc, &mut fonts, &mut images, &r.0, &r.1, 1024, &[]);
+            println!("Done layout! content_height: {}, link_areas: {}, input_areas: {}, button_areas: {}",
+                state.content_height, state.link_areas.len(), state.input_areas.len(), state.button_areas.len());
+        }
+        assert!(res.is_some());
+    }
 }

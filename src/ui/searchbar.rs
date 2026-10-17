@@ -178,17 +178,47 @@ impl SearchBar {
 }
 
 fn normalise_url(raw: &str) -> String {
+    let raw = raw.trim();
     if raw.starts_with("http://")
         || raw.starts_with("https://")
         || raw.starts_with("file://")
         || raw.starts_with("about:")
         || raw.starts_with("forkit://")
     {
-        raw.to_owned()
+        return raw.to_owned();
+    }
+
+    // If input contains spaces or has no domain dot or port, treat it as a web search query
+    let has_space = raw.contains(char::is_whitespace);
+    let is_localhost = raw.starts_with("localhost") || raw.starts_with("127.0.0.1");
+    let has_dot = raw.find('.').map(|pos| pos > 0 && pos + 1 < raw.len()).unwrap_or(false);
+
+    if has_space || (!has_dot && !is_localhost) {
+        // Encode search query parameters
+        let encoded_query = url_encode(raw);
+        format!("https://html.duckduckgo.com/html/?q={}", encoded_query)
     } else {
-        // Default to HTTPS; net::fetch_with_auto_https will fall back to HTTP
+        // Default to HTTPS domain
         format!("https://{}", raw)
     }
+}
+
+fn url_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 3);
+    for b in input.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => {
+                out.push('+');
+            }
+            _ => {
+                out.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    out
 }
 
 fn draw_nav_button(
